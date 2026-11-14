@@ -1,0 +1,23 @@
+# Compiled binaries
+*.exe
+*.exe~
+*.dll
+*.test
+*.out
+
+# Go build artifacts
+vendor/
+*.prof
+
+# Everything mod-rebuild writes: the overlay map, the generated enable file
+# and the check executable. Paths in them are absolute and machine-specific.
+build/
+
+# Local editor settings
+.claude/
+.vscode/
+.idea/
+
+# Logs and scratch
+*.log
+nul

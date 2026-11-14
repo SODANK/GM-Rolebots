@@ -1,0 +1,6 @@
+# Auto detect text files and perform LF normalization
+* text=auto
+# mod-rebuild.ps1 used to patch core files by quoting multi-line anchors,
+# and core is read LF-normalised. A CRLF checkout of the script (a fresh Windows
+# clone under core.autocrlf=true) made every multi-line anchor miss.
+*.ps1 text eol=lf
