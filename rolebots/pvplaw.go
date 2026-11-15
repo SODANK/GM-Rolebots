@@ -91,6 +91,48 @@ func (m *Mod) huntMarkLegal(ctx context.Context, lb *botRun, doc Doctrine, tb *b
 	return ok
 }
 
+// ── who in a fleet may fire ─────────────────────────────────────────────────
+
+// lawfulShot answers whether a pilot may open fire on a mark in this band. Pure. Outside
+// policed space nothing here stops a shot. Inside it the mark must be an outlaw, carry a
+// criminal flag, or be at war with the shooter's own corp or alliance.
+func lawfulShot(band SecBand, markOutlaw, markCriminal, atWar bool) bool {
+	return band != BandPoliced || markOutlaw || markCriminal || atWar
+}
+
+// lawfulAttackers is the part of a side that may open fire on every pilot of the other side
+// in sysID. A fleet picks its mark on its commander's war (roe.go), but the core judges each
+// shot on the shooter's own corp and alliance, so a gangmate from a corp outside that war
+// stands aside instead of committing a crime. Outside policed space the side is returned
+// whole.
+func (m *Mod) lawfulAttackers(ctx context.Context, sysID int64, band SecBand, ours, theirs []*pvpCombatant) []*pvpCombatant {
+	if band != BandPoliced {
+		return ours
+	}
+	out := make([]*pvpCombatant, 0, len(ours))
+	for _, a := range ours {
+		if a == nil {
+			continue
+		}
+		lawful := true
+		for _, v := range theirs {
+			if v == nil {
+				continue
+			}
+			atWar := warEverywhere() && relAtWar(a.CorpID, m.corpAllianceID(ctx, a.CorpID),
+				v.CorpID, m.corpAllianceID(ctx, v.CorpID))
+			if !lawfulShot(band, v.SecStatus <= seclaw.OutlawStatus, criminalSince(sysID, v.CharID) > 0, atWar) {
+				lawful = false
+				break
+			}
+		}
+		if lawful {
+			out = append(out, a)
+		}
+	}
+	return out
+}
+
 // ── CONCORD, abstractly ─────────────────────────────────────────────────────
 
 // concordCatches is the stopwatch: CONCORD lands on an offender that is still

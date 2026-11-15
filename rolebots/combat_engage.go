@@ -177,17 +177,14 @@ func (m *Mod) engageSide(ctx context.Context, leaderCharID, sysID int64, g *Gang
 func (m *Mod) engageResolve(ctx context.Context, lb *botRun, sysID int64, g *Gang,
 	ours []*pvpCombatant, cands []engageCand) bool {
 	leaderCharID := lb.CharID
-	var oDPS, oEHP float64
-	for _, c := range ours {
-		oDPS += c.DPS
-		oEHP += c.EHP
-	}
+	band := secBand(m.systemSecurity(ctx, sysID))
 
 	// A candidate is judged on whether it can be caught, not on whether the patrol outweighs it
 	// (pvpescape.go engageVerdict). With the dial off the old margin test applies.
 	type pick struct {
 		fb        *botRun
 		foe       *pvpCombatant
+		side      []*pvpCombatant // the part of ours that may fire on theirs (lawfulAttackers)
 		theirs    []*pvpCombatant
 		foeFights bool
 		odds      float64
@@ -234,6 +231,17 @@ func (m *Mod) engageResolve(ctx context.Context, lb *botRun, sysID int64, g *Gan
 			have[id] = true
 		}
 		theirs = append(theirs, m.siblingCombatants(ctx, fb.CorpID, foeGang, sysID, have)...)
+		// The mark was picked on the commander's war; only the pilots who may fire on all of
+		// theirs fly in, and the odds are weighed on them (pvplaw.go lawfulAttackers).
+		side := m.lawfulAttackers(ctx, sysID, band, ours, theirs)
+		if len(side) == 0 {
+			continue
+		}
+		var oDPS, oEHP float64
+		for _, s := range side {
+			oDPS += s.DPS
+			oEHP += s.EHP
+		}
 		var tDPS, tEHP float64
 		for _, t := range theirs {
 			tDPS += t.DPS
@@ -245,7 +253,7 @@ func (m *Mod) engageResolve(ctx context.Context, lb *botRun, sysID int64, g *Gan
 			seenStand++
 		}
 		if lethalityOn() {
-			odds = engageVerdict(ours, theirs, foeFights)
+			odds = engageVerdict(side, theirs, foeFights)
 			floor := engageFloor(c.atWar, dialMinKillOdds.Get(), dialWarMinKillOdds.Get())
 			if odds > seenOdds || seenFloor == 0 {
 				seenOdds, seenFloor = odds, floor
@@ -263,7 +271,7 @@ func (m *Mod) engageResolve(ctx context.Context, lb *botRun, sysID int64, g *Gan
 			}
 		}
 		if best == nil || score > best.score {
-			best = &pick{fb: fb, foe: foe, theirs: theirs, foeFights: foeFights, odds: odds, score: score, why: c.why}
+			best = &pick{fb: fb, foe: foe, side: side, theirs: theirs, foeFights: foeFights, odds: odds, score: score, why: c.why}
 		}
 	}
 	if best == nil {
@@ -279,6 +287,9 @@ func (m *Mod) engageResolve(ctx context.Context, lb *botRun, sysID int64, g *Gan
 		return false
 	}
 	fb, foe, theirs, foeFights := best.fb, best.foe, best.theirs, best.foeFights
+	// From here on ours is the lawful side: the fight, the bill, the killmails and the help
+	// calls all count the pilots who fired.
+	ours = best.side
 	foeID := foe.CharID
 	noteHostileEncounter(gangScope(g), sysID)
 	m.logBot(leaderCharID, logInfo, "combat", "engaged %s in %s — %s",
@@ -450,7 +461,8 @@ func (m *Mod) pickEngageTargets(ctx context.Context, lb *botRun, doc Doctrine,
 		// (criminalcarry.go).
 		criminal := criminalSince(sysID, charID) > 0
 		// War is asked about the leader's owners, the side the stance and nerve are read from: one
-		// fleet, one decision (roe.go). Kin and friendship are the only per-member vetoes.
+		// fleet, one decision (roe.go). Kin and friendship are the per-member vetoes on the pick;
+		// who then fires is per member (engageResolve, lawfulAttackers).
 		atWar := false
 		if warEverywhere() {
 			atWar = relAtWar(lb.CorpID, m.corpAllianceID(ctx, lb.CorpID),

@@ -1437,6 +1437,12 @@ func (m *Mod) huntOnce(ctx context.Context, gs *GangState, gangID, leaderID int6
 			}
 		}
 	}
+	// The mark passed the leader's rules (huntMarkLegal); each member's shot is judged on its own
+	// corp and alliance, so a member who may not fire on all of them stands aside (pvplaw.go).
+	side = m.lawfulAttackers(ctx, tb.SystemID, secBand(m.systemSecurity(ctx, tb.SystemID)), side, targetSide)
+	if len(side) == 0 {
+		return drop("nobody in the pack may lawfully open fire there")
+	}
 
 	var hDPS, hEHP, tDPS, tEHP float64
 	for _, c := range side {
