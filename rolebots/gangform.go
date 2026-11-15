@@ -1257,7 +1257,13 @@ func (m *Mod) gangRecruitFrom(ctx context.Context, lb *botRun, activity string, 
 	kept := cands[:0]
 	for _, c := range cands {
 		j, ok := reach[c.systemID]
-		if !ok || popIsOffline(c.charID) || tzShortHours(c.charID) {
+		// A pilot paged for a call to arms (armsping.go) comes from anywhere and whatever its hours:
+		// it travels to the fight.
+		held := armsHeld(c.charID)
+		if !ok && held {
+			j, ok = gangRecruitMaxJumps, true
+		}
+		if !ok || popIsOffline(c.charID) || (tzShortHours(c.charID) && !held) {
 			continue
 		}
 		cRace, cBlood := raceOf(c.charID), bloodlineOf(c.charID)

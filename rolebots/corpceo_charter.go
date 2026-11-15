@@ -142,6 +142,9 @@ type Charter struct {
 	TitheTolerance     int
 	ExecutorIncumbency float64
 	MaxSovTargets      int
+	// StationPolicy is what a station the corporation owns lets in (stationpolicy.go): a freeport,
+	// or blues only.
+	StationPolicy string
 
 	// War (corpceo_war.go, merc.go): WarAt is the motive a quarrel must reach before
 	// the CEO goes to CONCORD. WarMaxOdds is the worst enemy ratio it fights itself
@@ -483,6 +486,9 @@ func resolveCharter(p pilotIdentity) Charter {
 	ch.MaxSovTargets = bendInt(p.trait(TraitLeadership), 1, 2, 4)
 	why("Names for the alliance", fmt.Sprintf("up to %d sovereignty targets at once", ch.MaxSovTargets),
 		"leadership — how many systems an executor asks its members to hold together")
+	ch.StationPolicy = stationPolicyFor(ch.Xenophobia, p.violentPole(), posPole(p.trait(TraitLeadership)), p.greedyPole())
+	why("A station it owns", stationPolicyLabel(ch.StationPolicy),
+		"tolerance, aggression and leadership close the doors to all but blues; greed keeps them open for trade")
 
 	// ── war ─────────────────────────────────────────────────────────────
 	// Polarity: LOW caution careful, LOW patience unhurried, HIGH greed and aggression.

@@ -68,7 +68,6 @@ var moduleCharacterSteps = []purgeStep{
 	{"rolebot_corp_bench", `DELETE FROM rolebot_corp_bench WHERE characterID = ?`},
 	{"rolebot_corp_grants", `DELETE FROM rolebot_corp_grants WHERE characterID = ?`},
 	{"rolebot_corp_pos_grants", `DELETE FROM rolebot_corp_pos_grants WHERE characterID = ?`},
-	{"rolebot_tower_residents", `DELETE FROM rolebot_tower_residents WHERE characterID = ?`},
 	{"rolebot_corp_invites", `DELETE FROM rolebot_corp_invites WHERE characterID = ?`},
 	// A member's rank, merit trail, assignments and offer clock
 	// (corpmerit.go, corpassign.go, corphuman.go).

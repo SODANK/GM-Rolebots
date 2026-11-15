@@ -340,7 +340,11 @@ func (m *Mod) ceoTryRentOffice(ctx context.Context, c *corpCEO, facts *CorpFacts
 	if m.stationOfficesFull(ctx, at.StationID) {
 		return false, fmt.Errorf("rent at %s: %w", at.Name, evedb.ErrNoFreeOffices)
 	}
-	cost := evedb.OfficeRentQuote(ctx, m.db, at.StationID)
+	// An owner that refuses the corporation office rent (stationaccess.go) is a full station to it.
+	if m.stationRefuses(ctx, at.StationID, c.CharID, evedb.StationServiceOfficeRental) {
+		return false, fmt.Errorf("rent at %s: the owner refuses us: %w", at.Name, evedb.ErrNoFreeOffices)
+	}
+	cost := evedb.OfficeRentQuoteFor(ctx, m.db, at.StationID, c.CorpID)
 	balance, err := evedb.GetCorpBalance(ctx, m.db, c.CorpID)
 	if err != nil {
 		return false, err

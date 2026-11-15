@@ -255,6 +255,9 @@ func (m *Mod) cloningStationIn(ctx context.Context, sysID int64, prof *Profile) 
 		if err := rows.Scan(&stationID, &corpID); err != nil {
 			return fallback
 		}
+		if prof != nil && m.stationRefuses(ctx, stationID, prof.CharacterID, serviceCloning) {
+			continue // the owner refuses this pilot its medical bay (stationaccess.go)
+		}
 		if fallback == 0 {
 			fallback = stationID
 		}
@@ -263,6 +266,11 @@ func (m *Mod) cloningStationIn(ctx context.Context, sysID int64, prof *Profile) 
 		}
 	}
 	return fallback
+}
+
+// clonesHere reports whether a station has a medical bay its owner lets this pilot use.
+func (m *Mod) clonesHere(ctx context.Context, stationID, charID int64) bool {
+	return m.stationHasCloning(ctx, stationID) && !m.stationRefuses(ctx, stationID, charID, serviceCloning)
 }
 
 // despisesStationOwner reports whether the pilot's standings put this owner
@@ -331,18 +339,18 @@ func (m *Mod) cloneStationFor(ctx context.Context, b *botRun) (stationID, system
 	// A pinned address beats everything, the factory anchor included. It is checked here since
 	// installClone writes home to the clone's station. If the pinned bay is gone, fall through.
 	if b.Profile != nil && b.Profile.HomePinned {
-		if home := m.homeStationFor(ctx, b.CharID); home != 0 && m.stationHasCloning(ctx, home) {
+		if home := m.homeStationFor(ctx, b.CharID); home != 0 && m.clonesHere(ctx, home, b.CharID) {
 			loc, lerr := evedb.GetStationLocation(ctx, m.db, home)
 			if lerr == nil {
 				return home, loc.SolarSystemID, nil
 			}
 		}
 	}
-	if station, sysID, ok := m.industryAnchor(ctx, b); ok {
+	if station, sysID, ok := m.industryAnchor(ctx, b); ok && !m.stationRefuses(ctx, station, b.CharID, serviceCloning) {
 		return station, sysID, nil
 	}
 	home := m.homeStationFor(ctx, b.CharID)
-	if home != 0 && m.stationHasCloning(ctx, home) {
+	if home != 0 && m.clonesHere(ctx, home, b.CharID) {
 		loc, err := evedb.GetStationLocation(ctx, m.db, home)
 		if err != nil {
 			return 0, 0, fmt.Errorf("home station %d: %w", home, err)

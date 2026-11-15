@@ -38,7 +38,6 @@ type StickyState struct {
 	// which the market could not supply that fit. While cooling down the selector will not propose
 	// buying it (a live ship of it still flies). Expired entries are pruned on write.
 	ProcureFailAt map[int64]int64 `json:"procureFailAt,omitempty"`
-	PosStagedAt   int64           `json:"posStagedAt,omitempty"`
 
 	// RideFailAt holds off the ride-home errand (unix) after a pass where nothing in reach sold a
 	// shuttle (shuttle.go). Same shape as RestockAfter and ProcureFailAt: it stops the market sweep

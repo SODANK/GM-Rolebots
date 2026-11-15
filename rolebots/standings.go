@@ -321,8 +321,10 @@ func factionStationClause(ids []int64) (string, []any) {
 // (tolerance.go) joins both passes; the employer's friends are exempt.
 func stationFilterPasses(p *Profile, tn Tuning) []stationFilter {
 	xSoft, xHard := xenoStationFactions(raceOf(p.CharacterID), tn, p.LikedFactions())
+	// A station whose owner refuses this pilot docking is out of every pass (stationaccess.go).
+	doorClause, doorArgs := refusedStationClause(p.CharacterID)
 	hardClause, hardArgs := factionStationClause(mergeIDs(p.DespisedFactions(), xHard))
-	hard := stationFilter{Clause: hardClause, Args: hardArgs}
+	hard := stationFilter{Clause: hardClause + doorClause, Args: append(hardArgs, doorArgs...)}
 	if !tn.HonourSoftStationPass {
 		return []stationFilter{hard}
 	}
@@ -330,7 +332,7 @@ func stationFilterPasses(p *Profile, tn Tuning) []stationFilter {
 	if softClause == hardClause {
 		return []stationFilter{hard}
 	}
-	return []stationFilter{{Clause: softClause, Args: softArgs, Soft: true}, hard}
+	return []stationFilter{{Clause: softClause + doorClause, Args: append(softArgs, doorArgs...), Soft: true}, hard}
 }
 
 // ── retired pilot standings ───────────────────────────────

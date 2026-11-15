@@ -1001,6 +1001,15 @@ func ensureTables(ctx context.Context, db *sql.DB) error {
 			PRIMARY KEY (entryID),
 			KEY idx_rbab_alliance (allianceID, at)
 		)`,
+		// The rungs of the alliance's ladder it has reached, first time each (allianceladder.go).
+		`CREATE TABLE IF NOT EXISTS rolebot_alliance_milestones (
+			allianceID BIGINT NOT NULL,
+			milestone  VARCHAR(16) NOT NULL,
+			reachedAt  BIGINT NOT NULL DEFAULT 0,
+			systemID   BIGINT NOT NULL DEFAULT 0,
+			stationID  BIGINT NOT NULL DEFAULT 0,
+			PRIMARY KEY (allianceID, milestone)
+		)`,
 		// Systems the executor named for the alliance (alliancesov.go): sov targets its members' Infrastructure departments plant towards,
 		// and staging systems its fleets muster in.
 		`CREATE TABLE IF NOT EXISTS rolebot_alliance_targets (
@@ -1455,6 +1464,9 @@ func ensureTables(ctx context.Context, db *sql.DB) error {
 			since         BIGINT NOT NULL DEFAULT 0,
 			PRIMARY KEY (corporationID)
 		)`,
+		// The doors a capital keeps (stationpolicy.go): the policy last written and when.
+		`ALTER TABLE rolebot_corp_fronts ADD COLUMN IF NOT EXISTS policy VARCHAR(10) NOT NULL DEFAULT ''`,
+		`ALTER TABLE rolebot_corp_fronts ADD COLUMN IF NOT EXISTS policyAt BIGINT NOT NULL DEFAULT 0`,
 		// The department job roles the arm pass holds for a capsuleer at its base (corpbaseroles.go), so only those bits are ever taken back.
 		// A corporation's war chest (corpdivisions.go): the hangar division each borrowed purpose (armory, yard, spoils) lives in; purposes may share one.
 		`CREATE TABLE IF NOT EXISTS rolebot_corp_divisions (

@@ -415,6 +415,9 @@ func (m *Mod) Init(ctx *modapi.Context) error {
 	m.startStarbaseEvents()
 	// Sov flips reach the alliance's book and mailbox (alliancesov.go).
 	m.startAllianceSovHook()
+	// Station captures and station attacks (stationsiege.go); owners' doors (stationaccess.go).
+	m.stationSiegeEvents()
+	stationAccessMod.Store(m)
 	// The share desk's journal poller (corpshares.go): a player's Give Money
 	// payment whose text says "shares" is a purchase order.
 	m.startShareDesk()

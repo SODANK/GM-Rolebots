@@ -493,6 +493,11 @@ func (m *Mod) huntMiningOffice(ctx context.Context, c *corpCEO, facts *CorpFacts
 		return false, nil
 	}
 	oreAt := m.corpFleetOreStation(ctx, c.CorpID)
+	if f := m.loadCorpFront(ctx, c.CorpID); f.Kind != "" && f.StationID == oreAt {
+		// The fleets live at the front or capital and deliver there (openFront, ceoCapital).
+		huntRest(c.CorpID, officeMining)
+		return false, nil
+	}
 	cur := 0.0
 	if oreAt != 0 {
 		cur = sysScore(m.stationSystemID(ctx, oreAt))

@@ -218,6 +218,11 @@ func (m *Mod) combatSite(ctx context.Context, b *botRun, cfg combatConfig) (int6
 				homeGround = append(homeGround, a.sysID)
 			}
 		}
+		// A corporation living out of a front or capital patrols the sov its alliance holds around it.
+		if front := m.frontOfficeOf(ctx, b.CorpID); front != 0 {
+			held := m.allianceHeldSystems(ctx, m.corpAllianceID(ctx, b.CorpID))
+			homeGround = appendSovHomeGround(homeGround, held, bfsJumps(u, m.stationSystemOf(ctx, front), sovHomeJumps))
+		}
 	}
 	var homePlain int64
 	for _, sysID := range homeGround {

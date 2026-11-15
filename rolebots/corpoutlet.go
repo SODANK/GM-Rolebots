@@ -5,7 +5,90 @@ import (
 	"fmt"
 	"math"
 	"sort"
+
+	evedb "gurimoon/db"
 )
+
+// stationLocalMarket reports whether a station a corporation owns can carry a local market: it offers
+// the Market service. Outposts do; conquerables do not, so their production ships home
+// (exportFromNoMarket). The outposts' local-market desk hangs on this test.
+func (m *Mod) stationLocalMarket(ctx context.Context, stationID int64) bool {
+	return evedb.StationHasService(ctx, m.db, stationID, evedb.ServiceMarket)
+}
+
+// exportOutlet is where a corporation's 0.0 production is sold: its trading post (officeSales),
+// else its headquarters, when that station has a market and an office of the corporation's. 0 when
+// neither does.
+func (m *Mod) exportOutlet(ctx context.Context, corpID int64) int64 {
+	var cands []int64
+	if st, err := int64Column(ctx, m, `
+		SELECT stationID FROM rolebot_corp_offices
+		 WHERE corporationID = ? AND (purposes & ?) <> 0 AND state <> 'dropping' ORDER BY stationID`,
+		corpID, officeSales); err == nil {
+		cands = append(cands, st...)
+	}
+	cands = append(cands, m.corpHQStation(ctx, corpID))
+	for _, st := range cands {
+		if st != 0 && m.officeAt(ctx, corpID, st) != 0 && evedb.StationHasService(ctx, m.db, st, evedb.ServiceMarket) {
+			return st
+		}
+	}
+	return 0
+}
+
+// exportFromNoMarket posts move legs carrying a market-less factory's Production lots (ships,
+// modules, charges, drones; never what the corporation's own programs need) to its export outlet,
+// outletHaulsPerPass a pass, and answers every type on its way out.
+func (m *Mod) exportFromNoMarket(ctx context.Context, c *corpCEO, stationID, officeID int64, outbound map[int64]bool) map[int64]bool {
+	to := m.exportOutlet(ctx, c.CorpID)
+	if to == 0 || to == stationID {
+		return outbound
+	}
+	rows, err := m.db.QueryContext(ctx, `
+		SELECT e.typeID, SUM(e.quantity)
+		  FROM entity e
+		  JOIN invTypes t ON t.typeID = e.typeID
+		  JOIN invGroups g ON g.groupID = t.groupID
+		 WHERE e.ownerID = ? AND e.locationID = ? AND e.flag = ? AND e.quantity > 0
+		   AND g.categoryID IN (?, ?, ?, ?)
+		 GROUP BY e.typeID ORDER BY e.typeID`, c.CorpID, officeID, corpDivProduct, catShip, catModule, catCharge, catDrone)
+	if err != nil {
+		return outbound
+	}
+	type lot struct{ typeID, qty int64 }
+	var lots []lot
+	for rows.Next() {
+		var l lot
+		if rows.Scan(&l.typeID, &l.qty) == nil {
+			lots = append(lots, l)
+		}
+	}
+	rows.Close()
+	programParts := m.programPartTypes(ctx, c.CorpID)
+	label := m.stationLabel(ctx, to)
+	posted := 0
+	for _, l := range lots {
+		if posted >= outletHaulsPerPass {
+			break
+		}
+		if outbound[l.typeID] || programParts[l.typeID] {
+			continue
+		}
+		if _, err := m.postHaul(ctx, c, haulLeg{Kind: haulKindMove, FromKind: haulFromOffice, FromID: officeID,
+			FromStationID: stationID, FromFlag: corpDivProduct, ToKind: haulToOffice, ToStationID: to,
+			ToFlag: corpDivProduct, Items: []haulItem{{TypeID: l.typeID, Qty: l.qty, Flag: corpDivProduct}},
+			PostedBy: "sales", Deadline: clock.Unix() + outletLegDeadlineSec,
+			Note: fmt.Sprintf("%s %s %s", m.typeNameOr(ctx, l.typeID), outletNote, label)}); err != nil {
+			rlogf("rolebots: corp export haul %d: %v", c.CorpID, err)
+			continue
+		}
+		outbound[l.typeID] = true
+		posted++
+		m.ceoLog(ctx, c, powerProduction, "export", l.typeID, 0,
+			"shipped %d× %s home to %s: there is no market out here", l.qty, m.typeNameOr(ctx, l.typeID), label)
+	}
+	return outbound
+}
 
 // Corporation outlets: a corporation's goods go to where its buyers are. ceoOutput lists the Production
 // division at the factory office, but a shopper comes to a counter that fills its list (reach.go), and the
@@ -103,6 +186,11 @@ func (m *Mod) ceoOutletHauls(ctx context.Context, c *corpCEO, stationID, officeI
 				outbound[it.TypeID] = true
 			}
 		}
+	}
+	// A factory at a station with no market (a conquerable capital) lists nothing: everything it
+	// builds ships home to be sold (exportFromNoMarket).
+	if !evedb.StationHasService(ctx, m.db, stationID, evedb.ServiceMarket) {
+		return m.exportFromNoMarket(ctx, c, stationID, officeID, outbound)
 	}
 	if !m.outletEnabled(ctx) {
 		return outbound

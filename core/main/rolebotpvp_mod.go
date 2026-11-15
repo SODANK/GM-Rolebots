@@ -41,7 +41,31 @@ func init() {
 		NoteTheft:            noteLootTheftFor,
 		SpawnCorpse:          modSpawnCorpse,
 		StructureHit:         modStructureHit,
+		StationHit:           modStationHit,
+		ConquerStation:       modConquerStation,
 	})
+}
+
+// modStationHit broadcasts a station ball's damage state and captures it for corpID once its
+// shield is gone (conquerStation), as the player weapon paths do.
+func modStationHit(ss *destiny.SolarSystem, station *destiny.Entity, corpID, charID int64) bool {
+	if ss == nil || station == nil || globalDB == nil || !ss.IsStationEntity(station.ID) {
+		return false
+	}
+	noteStationHit(ss, station, corpID, charID)
+	dmg := station.DamageStateFrac()
+	dmg.Timestamp = server.Win32TimeNow()
+	broadcastDamageStateTo(ss, station.ID, dmg)
+	if corpID == 0 || !stationShieldDown(station) {
+		return false
+	}
+	conquerStation(ss, station, corpID, charID, globalDB)
+	return true
+}
+
+// modConquerStation is conquerStationHeadless with main's DB handle.
+func modConquerStation(stationID, corpID, charID int64) error {
+	return conquerStationHeadless(globalDB, stationID, corpID, charID)
 }
 
 // modStructureHit is structureDamaged with main's DB handle, then the structure's

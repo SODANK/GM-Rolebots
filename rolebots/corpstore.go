@@ -161,6 +161,15 @@ func (m *Mod) ceoOutput(ctx context.Context, c *corpCEO, ch Charter) error {
 	factoryStation := stationID
 	outbound := m.ceoOutletHauls(ctx, c, stationID, officeID)
 	listWhere := func(stationID, officeID, flag int64, kind, cats string) error {
+		// No market at the station (a conquerable): nothing is listed there; the export legs carry
+		// it home (corpoutlet.go exportFromNoMarket). Moon goo and reaction output never list in
+		// 0.0: they are exported too (listTowerGoods).
+		if !evedb.StationHasService(ctx, m.db, stationID, evedb.ServiceMarket) {
+			return nil
+		}
+		if m.systemSecurity(ctx, m.stationSystemID(ctx, stationID)) < 0 {
+			cats += fmt.Sprintf(" AND t.groupID NOT IN (%d, %d, %d)", moonMaterialGroup, intermediateGroup, compositeGroup)
+		}
 		rows, err := m.db.QueryContext(ctx, `
 			SELECT e.itemID, e.typeID, e.quantity
 			  FROM entity e

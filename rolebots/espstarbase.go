@@ -586,6 +586,9 @@ func (m *Mod) ceoStarbaseView(ctx context.Context, corpID int64) *ceoStarbaseVie
 func (m *Mod) siegeViewRowOf(ctx context.Context, s *siegeRow) siegeViewRow {
 	row := siegeViewRow{System: systemNameOf(ctx, m, s.SystemID), Phase: s.Stage, Result: s.Result,
 		Defender: corpNameOf(ctx, m.db, s.DefenderCorpID)}
+	if s.isStation() {
+		row.System += " — " + stationNameOf(ctx, m, s.TowerID)
+	}
 	if reg := m.systemRegion(ctx, s.SystemID); reg != 0 {
 		row.Region = regionNameOf(ctx, m, reg)
 	}
@@ -796,19 +799,6 @@ func (m *Mod) handleStarbaseBoard(w http.ResponseWriter, r *http.Request) {
 			}
 			redirect(w, r, self, "saved", "")
 			return
-		case "residents":
-			n, err := strconv.Atoi(strings.TrimSpace(r.FormValue("value")))
-			if err != nil || n < 0 || n > 100 {
-				redirect(w, r, self, "", "a whole number from 0 to 100")
-				return
-			}
-			if err := evedb.SetServerSetting(ctx, m.db, settingStarbaseResident, strconv.Itoa(n)); err != nil {
-				redirect(w, r, self, "", err.Error())
-				return
-			}
-			starbaseResidntV.Store(int64(n))
-			redirect(w, r, self, "saved", "")
-			return
 		case "consider":
 			// Back to the page the button sat on: this board, or the corporation's.
 			back := self
@@ -886,7 +876,6 @@ func (m *Mod) handleStarbaseBoard(w http.ResponseWriter, r *http.Request) {
 		"Msg":       r.URL.Query().Get("msg"),
 		"Err":       r.URL.Query().Get("err"),
 		"Power":     StarbasePower(),
-		"Residents": towerResidentCap(),
 		"IceDemand": fmt.Sprintf("%.2f", iceDemandIndex()),
 		"Stats":     towerStatsOf(towers),
 		"Board":     newTowerBoard("sbx-all", true, towers),
@@ -929,9 +918,6 @@ const tmplStarbases = `{{define "content"}}
       <input type="hidden" name="on" value="{{if .Power}}0{{else}}1{{end}}">
       Bot CEOs plant and run towers: {{if .Power}}<b>on</b>{{else}}<b style="color:#eab308">off</b>{{end}}
       <button type="submit" style="padding:3px 8px;font-size:11px">{{if .Power}}switch off{{else}}switch on{{end}}</button></form>
-    <form method="POST" style="display:inline"><input type="hidden" name="action" value="residents">
-      Residents per depot or fortress tower: <input type="text" name="value" value="{{.Residents}}" size="3" style="padding:3px 6px;font-size:12px">
-      <button type="submit" style="padding:3px 8px;font-size:11px">save</button></form>
     <span style="color:#6b7280">Ice demand index <b>{{.IceDemand}}</b> (1 = shelf value) &middot; towers lost {{.Lost}} &middot; plans closed {{.Gone}}</span>
   </div>
   {{if .Picks}}

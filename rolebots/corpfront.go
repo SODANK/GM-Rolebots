@@ -46,13 +46,66 @@ func fieldArm(a corpArm) bool {
 	return a == armSecurity || a == armMining || a == armInfrastructure
 }
 
-// stageBits is the office purposes an arm is posted to beside its own: a capital for every arm, a
-// front for the field arms. Pure.
+// stageBits is the office purposes an arm is posted to beside its own: a capital for every arm but
+// sales, a front for the field arms. Sales stays at the empire market, where the goo is sold. Pure.
 func stageBits(a corpArm) int {
-	if fieldArm(a) {
+	switch {
+	case fieldArm(a):
 		return officeCapital | officeFront
+	case a == armSales:
+		return 0
 	}
 	return officeCapital
+}
+
+// sovHomeJumps is how far from its front or capital a corporation's pilots treat the sov their
+// alliance holds as home: ratting home ground (appendSovHomeGround) and the belt discount.
+const sovHomeJumps = 5
+
+// appendSovHomeGround adds to ground the held systems within near (jumps from the front), nearest
+// first, skipping any already in it. Pure.
+func appendSovHomeGround(ground []int64, held map[int64]bool, near map[int64]int) []int64 {
+	seen := make(map[int64]bool, len(ground))
+	for _, s := range ground {
+		seen[s] = true
+	}
+	var add []int64
+	for s := range held {
+		if _, ok := near[s]; ok && !seen[s] {
+			add = append(add, s)
+		}
+	}
+	sort.Slice(add, func(i, j int) bool {
+		if near[add[i]] != near[add[j]] {
+			return near[add[i]] < near[add[j]]
+		}
+		return add[i] < add[j]
+	})
+	return append(ground, add...)
+}
+
+// sovMinePullJumps is how many jumps cheaper a belt in held sov near the front costs a pilot of a
+// corporation living there (findMiningTargetIn).
+const sovMinePullJumps = 2.0
+
+// sovMineHome is the alliance-held systems within sovHomeJumps of the pilot's corporation's front
+// or capital; empty for a corporation with neither.
+func (m *Mod) sovMineHome(ctx context.Context, b *botRun, u *universe) map[int64]bool {
+	out := map[int64]bool{}
+	if b.CorpID == 0 || u == nil {
+		return out
+	}
+	front := m.frontOfficeOf(ctx, b.CorpID)
+	if front == 0 {
+		return out
+	}
+	near := bfsJumps(u, m.stationSystemOf(ctx, front), sovHomeJumps)
+	for s := range m.allianceHeldSystems(ctx, m.corpAllianceID(ctx, b.CorpID)) {
+		if _, ok := near[s]; ok {
+			out[s] = true
+		}
+	}
+	return out
 }
 
 // frontShare is the share of a field arm posted to the front after it has stood heldSec. Pure.
@@ -66,9 +119,10 @@ func frontShare(heldSec int64) float64 {
 	return 0.5
 }
 
-// stageQuotas lays a front or a capital over the department quotas. A capital takes every arm whole;
-// a front takes frontShare of each field arm, the rest staying at the arm's own offices. Without
-// either, base is returned as it is. Pure.
+// stageQuotas lays a front or a capital over the department quotas. A capital takes every arm but
+// sales whole (the corporation lives there; its headquarters stays in empire); a front takes
+// frontShare of each field arm, the rest staying at the arm's own offices. Without either, base is
+// returned as it is. Pure.
 func stageQuotas(base map[corpArm]map[int64]int, members []postMember, offices []postOffice, since, now int64) map[corpArm]map[int64]int {
 	var capitals, fronts []int64
 	isFront := map[int64]bool{}
@@ -95,6 +149,9 @@ func stageQuotas(base map[corpArm]map[int64]int, members []postMember, offices [
 	}
 	if len(capitals) > 0 {
 		for arm, n := range count {
+			if arm == armSales {
+				continue // sells at the empire market
+			}
 			w := map[int64]int{}
 			for _, st := range capitals {
 				w[st] = 1
@@ -207,7 +264,11 @@ func (m *Mod) refreshFrontResidents(ctx context.Context, corpID, station int64) 
 func (m *Mod) ceoFront(ctx context.Context, c *corpCEO, ch Charter, facts *CorpFacts, hq int64) (int64, error) {
 	cur := m.loadCorpFront(ctx, c.CorpID)
 	if st, sys := m.ownedNullStation(ctx, c.CorpID); st != 0 {
-		return m.ceoCapital(ctx, c, facts, hq, cur, st, sys)
+		hq, err := m.ceoCapital(ctx, c, facts, hq, cur, st, sys)
+		if err == nil && m.loadCorpFront(ctx, c.CorpID).StationID == st {
+			m.keepStationPolicy(ctx, c, ch, st) // its doors, by the CEO's personality (stationpolicy.go)
+		}
+		return hq, err
 	}
 	if cur.Kind == capitalKind {
 		m.retreatFront(ctx, c, cur, fmt.Sprintf("no longer owns %s", stationNameOf(ctx, m, cur.StationID)))
@@ -357,9 +418,10 @@ func (m *Mod) huntFrontOffice(ctx context.Context, c *corpCEO, ch Charter, facts
 		if len(near) == 0 {
 			continue
 		}
-		cd := cand{purposeStation: p, mate: mates[evedb.StationOwnerCorp(ctx, m.db, p.StationID)],
+		owner := evedb.StationOwnerCorp(ctx, m.db, p.StationID)
+		cd := cand{purposeStation: p, mate: mates[owner],
 			in: forwardIn{Near: near, HQJumps: hqDist[p.SystemID], Services: hasService[p.StationID],
-				Contestable: p.Security < 0 && !npcNull[p.SystemID]}}
+				Contestable: p.Security < 0 && !npcNull[p.SystemID], Freeport: isFreeport(owner, p.Security)}}
 		cd.score = forwardStationScore(cd.in)
 		cands = append(cands, cd)
 	}
@@ -385,8 +447,11 @@ func (m *Mod) huntFrontOffice(ctx context.Context, c *corpCEO, ch Charter, facts
 	rank()
 	for _, cd := range cands {
 		why := fmt.Sprintf("a front beside the %d system(s) its alliance holds within %d jumps", len(cd.in.Near), frontReachJumps)
-		if cd.mate {
+		switch {
+		case cd.mate:
 			why = "a front at an alliance-mate's station beside what the alliance holds"
+		case cd.in.Freeport:
+			why = "a front at a CONCORD-held conquerable beside what the alliance holds: anyone may dock there, for now"
 		}
 		at := estateCandidate{StationID: cd.StationID, Name: cd.Name, RegionID: cd.RegionID, Security: cd.Security}
 		rented, err := m.ceoTryRentOffice(ctx, c, facts, ch, at, false, true, why)
@@ -414,6 +479,10 @@ func (m *Mod) openFront(ctx context.Context, c *corpCEO, station int64, why stri
 	claimed := m.claimNewBits(ctx, c.CorpID, station, bits)
 	m.saveCorpFront(ctx, c.CorpID, corpFront{Kind: frontKind, StationID: station,
 		SystemID: m.stationSystemID(ctx, station), ClaimedBits: claimed, Since: clock.Unix()})
+	if bits&officeMining != 0 {
+		// The fleets mine out there now: their ore goes to the front, not back to empire.
+		_ = m.pointFleetOre(ctx, c, station, "its front in 0.0, where the fleets now mine")
+	}
 	m.frontChanged(c.CorpID)
 	m.ceoLog(ctx, c, powerEstate, "front", station, 0,
 		"opened its front at %s (%s): the field arms stage out there", stationNameOf(ctx, m, station), why)
@@ -439,6 +508,10 @@ func (m *Mod) retreatFront(ctx context.Context, c *corpCEO, f corpFront, why str
 		}
 	}
 	_, _ = m.db.ExecContext(ctx, `DELETE FROM rolebot_corp_fronts WHERE corporationID = ?`, c.CorpID)
+	if m.corpFleetOreStation(ctx, c.CorpID) == f.StationID {
+		// The estate pass picks a drop-off nearer home again (ceoEstate).
+		_ = m.setCorpFleetOreStation(ctx, c.CorpID, 0)
+	}
 	m.refreshFrontResidents(ctx, c.CorpID, 0)
 	m.frontChanged(c.CorpID)
 	m.ceoLog(ctx, c, powerEstate, f.Kind+".end", f.StationID, 0,
@@ -446,14 +519,13 @@ func (m *Mod) retreatFront(ctx context.Context, c *corpCEO, f corpFront, why str
 }
 
 // ceoCapital moves the corporation into a 0.0 station it owns: a free owner's office, every purpose
-// the station's services allow, the headquarters (unless the operator bars the move) and the
-// factory. A standing capital only keeps its residents and shelf. Returns the headquarters.
+// the station's services allow, and the factory. The headquarters stays where it is: a conquerable
+// is office space, never a headquarters, and the empire home stays the fallback and the market.
+// The capital is home by attendance instead (stageQuotas posts every arm but sales there). A
+// standing capital only keeps its residents and shelf. Returns the headquarters.
 func (m *Mod) ceoCapital(ctx context.Context, c *corpCEO, facts *CorpFacts, hq int64, cur corpFront, station, sys int64) (int64, error) {
 	if cur.Kind == capitalKind && cur.StationID == station {
 		m.keepFront(ctx, c, cur)
-		if hq != station && c.HQMovable {
-			return m.capitalHQ(ctx, c, facts, hq, station)
-		}
 		return hq, nil
 	}
 	if cur.Kind != "" {
@@ -475,9 +547,12 @@ func (m *Mod) ceoCapital(ctx context.Context, c *corpCEO, facts *CorpFacts, hq i
 	claimed := m.claimNewBits(ctx, c.CorpID, station, bits)
 	m.saveCorpFront(ctx, c.CorpID, corpFront{Kind: capitalKind, StationID: station, SystemID: sys,
 		ClaimedBits: claimed, Since: clock.Unix()})
+	if bits&officeMining != 0 {
+		_ = m.pointFleetOre(ctx, c, station, "its capital in 0.0")
+	}
 	name := stationNameOf(ctx, m, station)
 	m.ceoLog(ctx, c, powerEstate, "capital.move", station, 0,
-		"moves the whole corporation to %s, a station it owns in 0.0", name)
+		"moves the whole corporation to %s, a station it owns in 0.0; its headquarters stays in empire", name)
 	if m.stationHasLine(ctx, station) {
 		old := m.corpFactoryStation(ctx, c.CorpID)
 		if old != station {
@@ -488,20 +563,7 @@ func (m *Mod) ceoCapital(ctx context.Context, c *corpCEO, facts *CorpFacts, hq i
 		}
 	}
 	m.frontChanged(c.CorpID)
-	if hq == station {
-		return hq, nil
-	}
-	return m.capitalHQ(ctx, c, facts, hq, station)
-}
-
-// capitalHQ moves the headquarters to the capital. A CEO barred from moving it (corpCEO.HQMovable)
-// keeps it where it is and ceoMoveHQ logs why; everything else has moved anyway.
-func (m *Mod) capitalHQ(ctx context.Context, c *corpCEO, facts *CorpFacts, hq, station int64) (int64, error) {
-	moved, err := m.ceoMoveHQ(ctx, c, facts, hq, estateCandidate{StationID: station, Name: stationNameOf(ctx, m, station)})
-	if err != nil || !moved {
-		return hq, err
-	}
-	return station, nil
+	return hq, nil
 }
 
 // frontChanged tells what reads the front that it moved: the 0.0 view, the addresses, and the
@@ -533,7 +595,8 @@ func (m *Mod) saveCorpFront(ctx context.Context, corpID int64, f corpFront) {
 	if _, err := m.db.ExecContext(ctx, `
 		INSERT INTO rolebot_corp_fronts (corporationID, kind, stationID, systemID, claimedBits, since)
 		VALUES (?, ?, ?, ?, ?, ?)
-		ON DUPLICATE KEY UPDATE kind = VALUES(kind), stationID = VALUES(stationID), systemID = VALUES(systemID),
+		ON DUPLICATE KEY UPDATE policy = IF(stationID = VALUES(stationID), policy, ''),
+		                        kind = VALUES(kind), stationID = VALUES(stationID), systemID = VALUES(systemID),
 		                        claimedBits = VALUES(claimedBits), since = VALUES(since)`,
 		corpID, f.Kind, f.StationID, f.SystemID, f.ClaimedBits, f.Since); err != nil {
 		rlogf("rolebots: save front %d: %v", corpID, err)
@@ -608,4 +671,105 @@ func (m *Mod) frontStock(ctx context.Context, c *corpCEO, station int64, residen
 	m.ceoLog(ctx, c, powerEstate, "frontstock", station, float64(posted),
 		"looked at the front's charge shelf at %s for %d resident(s): %d line(s) asked for",
 		stationNameOf(ctx, m, station), residents, posted)
+	// A station with no market (a conquerable) cannot sell the shelf: it is handed out instead.
+	if !evedb.StationHasService(ctx, m.db, station, evedb.ServiceMarket) {
+		types := make([]int64, 0, len(lines))
+		for _, l := range lines {
+			types = append(types, l.typeID)
+		}
+		m.issueFrontShelf(ctx, c, station, office, types, residents)
+	}
+}
+
+// frontShelfHangar is the item flag a pilot's station hangar uses.
+const frontShelfHangar = 4
+
+// frontShareOf is what one resident is topped up to from the shelf: an equal share of what the
+// corporation holds there, never more than what the pilot would carry on average (avg). Pure.
+func frontShareOf(shelf int64, residents int, avg int64) int64 {
+	if shelf <= 0 || residents <= 0 {
+		return 0
+	}
+	return min(shelf/int64(residents), avg)
+}
+
+// issueFrontShelf hands the charge shelf of a market-less front to the residents docked there: each
+// is topped up toward the residents' average holding of each type, from the corporation's Production
+// division, so pilots living at a conquerable restock without a market.
+func (m *Mod) issueFrontShelf(ctx context.Context, c *corpCEO, station, office int64, types []int64, residents int) {
+	pilots, err := int64Column(ctx, m, `
+		SELECT ch.characterID FROM character_ ch
+		  JOIN chrCorporationRoles r ON r.characterID = ch.characterID
+		 WHERE r.corporationID = ? AND r.baseID = ? AND ch.stationID = ?`, c.CorpID, station, station)
+	if err != nil || len(pilots) == 0 {
+		return
+	}
+	issued := 0
+	for _, typeID := range types {
+		var total int64
+		_ = m.db.QueryRowContext(ctx, `
+			SELECT COALESCE(SUM(e.quantity), 0) FROM entity e
+			  JOIN chrCorporationRoles r ON r.characterID = e.ownerID
+			 WHERE r.corporationID = ? AND r.baseID = ? AND e.typeID = ?`, c.CorpID, station, typeID).Scan(&total)
+		avg := total / int64(max(residents, 1))
+		for _, charID := range pilots {
+			shelf := m.divisionHeld(ctx, c.CorpID, office, corpDivProduct)[typeID]
+			var have int64
+			_ = m.db.QueryRowContext(ctx, `
+				SELECT COALESCE(SUM(quantity), 0) FROM entity WHERE ownerID = ? AND locationID = ? AND typeID = ?`,
+				charID, station, typeID).Scan(&have)
+			want := frontShareOf(shelf, len(pilots), avg) - have
+			if want <= 0 {
+				continue
+			}
+			if m.moveShelfToPilot(ctx, c.CorpID, office, typeID, want, charID, station) > 0 {
+				issued++
+			}
+		}
+	}
+	if issued > 0 {
+		m.ceoLog(ctx, c, powerEstate, "frontissue", station, float64(issued),
+			"handed out the charge shelf at %s: %d issue(s) to residents (no market out here)",
+			stationNameOf(ctx, m, station), issued)
+	}
+}
+
+// moveShelfToPilot moves up to qty of a type from the corporation's Production division at an
+// office into a pilot's hangar at the station, splitting the last stack. Returns the units moved.
+func (m *Mod) moveShelfToPilot(ctx context.Context, corpID, office, typeID, qty, charID, station int64) int64 {
+	rows, err := m.db.QueryContext(ctx, `
+		SELECT itemID, quantity FROM entity
+		 WHERE ownerID = ? AND locationID = ? AND flag = ? AND typeID = ? AND singleton = 0
+		 ORDER BY quantity`, corpID, office, corpDivProduct, typeID)
+	if err != nil {
+		return 0
+	}
+	type stack struct{ id, qty int64 }
+	var stacks []stack
+	for rows.Next() {
+		var s stack
+		if rows.Scan(&s.id, &s.qty) == nil {
+			stacks = append(stacks, s)
+		}
+	}
+	rows.Close()
+	moved := int64(0)
+	for _, s := range stacks {
+		if moved >= qty {
+			break
+		}
+		id := s.id
+		take := min(s.qty, qty-moved)
+		if take < s.qty {
+			var err error
+			if id, err = evedb.SplitStackN(ctx, m.db, s.id, take); err != nil {
+				return moved
+			}
+		}
+		if _, err := evedb.MoveItemFollowingContents(ctx, m.db, id, station, charID, frontShelfHangar); err != nil {
+			return moved
+		}
+		moved += take
+	}
+	return moved
 }

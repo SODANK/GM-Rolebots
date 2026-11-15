@@ -246,7 +246,6 @@ func (m *Mod) ceoStarbase(ctx context.Context, c *corpCEO, ch Charter) error {
 	m.reviewTowers(ctx, c, ch, plans)
 	m.reconsiderTowers(ctx, c, ch, facts, plans)
 	m.ceoTowerNetwork(ctx, c, ch, plans)
-	m.dealResidents(ctx, c, plans)
 	m.ceoTowerIndustry(ctx, c, ch, plans)
 	m.ceoRefineryPass(ctx, c)
 	outcome, err := m.considerNewTower(ctx, c, ch, facts, plans)
@@ -412,7 +411,6 @@ func (m *Mod) closeTowerPlan(ctx context.Context, c *corpCEO, p *towerPlan, why 
 			m.closeHaul(ctx, l, "void", "the tower is "+why)
 		}
 	}
-	_, _ = m.db.ExecContext(ctx, `DELETE FROM rolebot_tower_residents WHERE planID = ?`, p.PlanID)
 	_, _ = m.db.ExecContext(ctx, `DELETE FROM rolebot_corp_chain WHERE fromPlanID = ? OR toPlanID = ?`, p.PlanID, p.PlanID)
 	return m.saveTowerPlan(ctx, p)
 }

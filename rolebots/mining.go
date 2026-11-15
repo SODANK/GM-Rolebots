@@ -752,9 +752,19 @@ func (m *Mod) findMiningTargetIn(ctx context.Context, b *botRun, cfg miningConfi
 
 	// Cost is in jumps, with this pilot's own weights (scoring.go). A signed mine job's
 	// pull (gmmjobs.go, zero without GMMordu) is the one bonus, so the floor subtracts it.
+	// A corporation living out of a front or capital mines the sov its alliance holds around it:
+	// those belts cost sovMinePullJumps less (sovMineHome).
 	jobPullMax := gmmMinePullMax(b.CharID)
+	sovHome := m.sovMineHome(ctx, b, u)
+	if len(sovHome) > 0 {
+		jobPullMax = max(jobPullMax, sovMinePullJumps)
+	}
 	cost := func(t *beltTarget, preferred bool) float64 {
-		return beltCost(b.Tune, t, preferred, cfg.AvoidHostileBelts) - gmmMinePull(b.CharID, t.SysID)
+		pull := gmmMinePull(b.CharID, t.SysID)
+		if sovHome[t.SysID] {
+			pull = max(pull, sovMinePullJumps)
+		}
+		return beltCost(b.Tune, t, preferred, cfg.AvoidHostileBelts) - pull
 	}
 
 	var best *beltTarget

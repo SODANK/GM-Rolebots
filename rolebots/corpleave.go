@@ -270,7 +270,6 @@ func (m *Mod) leaveCorpSteps(ctx context.Context, charID, corpID int64) {
 			rlogf("rolebots: leave %d from %d: %v", charID, corpID, err)
 		}
 	}
-	_, _ = m.db.ExecContext(ctx, `DELETE FROM rolebot_tower_residents WHERE characterID = ?`, charID)
 	_, _ = m.db.ExecContext(ctx, `UPDATE character_ SET title = '' WHERE characterID = ?`, charID)
 	if r, ok, err := m.getNPCChair(ctx, corpID); err == nil && ok && r.SecurityHeadID == charID {
 		r.SecurityHeadID = 0

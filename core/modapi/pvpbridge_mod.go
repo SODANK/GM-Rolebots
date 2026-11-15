@@ -118,6 +118,15 @@ type PvPHooks struct {
 	// SpawnCorpse leaves a pilot's Frozen Corpse ball at pos in a loaded system, as the
 	// core's spawnPodCorpse does. Blocks on a DB write; call it off any combat lock.
 	SpawnCorpse func(ss *destiny.SolarSystem, charID int64, charName string, pos destiny.Vec3)
+
+	// StationHit runs the core's rule for a hit on a conquerable station ball whose damage the
+	// caller already applied: the damage state broadcast, then the capture when the shield is
+	// gone (corpID takes it). Reports whether the station changed hands.
+	StationHit func(ss *destiny.SolarSystem, station *destiny.Entity, corpID, charID int64) bool
+
+	// ConquerStation hands a conquerable station to corpID as a shield-0 capture would, loaded
+	// system or not (a headless siege). Refuses a station that is not conquerable.
+	ConquerStation func(stationID, corpID, charID int64) error
 }
 
 var pvpHooks PvPHooks

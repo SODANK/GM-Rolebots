@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"strconv"
 	"strings"
 	"sync/atomic"
 
@@ -22,36 +21,21 @@ import (
 // becomes (posindustry.go). Every table is rolebot_-prefixed and inert without the module.
 
 // Server settings.
-const (
-	settingStarbasePower    = "rolebots.starbase.enabled"
-	settingStarbaseResident = "rolebots.starbase.residentsPerTower"
-)
+const settingStarbasePower = "rolebots.starbase.enabled"
 
-var (
-	starbasePowerV   atomic.Bool
-	starbaseResidntV atomic.Int64
-)
+var starbasePowerV atomic.Bool
 
 // StarbasePower reports whether bot CEOs may plant and run towers.
 func StarbasePower() bool { return starbasePowerV.Load() }
 
-// towerResidentCap is how many bots may call one depot/fortress tower home.
-func towerResidentCap() int { return int(starbaseResidntV.Load()) }
-
-// loadStarbaseSettings reads the starbase power switch (default on) and the resident cap
-// (default 6). Ice and sieges are standing behaviour with no switch.
+// loadStarbaseSettings reads the starbase power switch (default on). Ice and sieges are standing
+// behaviour with no switch.
 func (m *Mod) loadStarbaseSettings(ctx context.Context) {
 	starbasePowerV.Store(true)
-	starbaseResidntV.Store(6)
 	if v, ok, err := evedb.GetServerSetting(ctx, m.db, settingStarbasePower); err != nil {
 		rlogf("rolebots: read %s: %v (using the default)", settingStarbasePower, err)
 	} else if ok {
 		starbasePowerV.Store(strings.TrimSpace(v) == "1")
-	}
-	if v, ok, err := evedb.GetServerSetting(ctx, m.db, settingStarbaseResident); err == nil && ok {
-		if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil && n >= 0 && n <= 100 {
-			starbaseResidntV.Store(int64(n))
-		}
 	}
 }
 
@@ -292,14 +276,8 @@ func ensureStarbaseTables(ctx context.Context, db *sql.DB) error {
 			mask          BIGINT UNSIGNED NOT NULL DEFAULT 0,
 			PRIMARY KEY (corporationID, characterID)
 		)`,
-		// Bots that live at a depot or fortress tower (posresident.go).
-		`CREATE TABLE IF NOT EXISTS rolebot_tower_residents (
-			characterID BIGINT NOT NULL,
-			planID      BIGINT NOT NULL,
-			since       BIGINT NOT NULL DEFAULT 0,
-			PRIMARY KEY (characterID),
-			KEY idx_rbtr_plan (planID)
-		)`,
+		// The retired tower-resident cap: towers shelter whoever their force field admits.
+		`DROP TABLE IF EXISTS rolebot_tower_residents`,
 		// One job per tower array (posjobs.go).
 		towerJobDDL,
 	}
@@ -327,6 +305,9 @@ func ensureStarbaseTables(ctx context.Context, db *sql.DB) error {
 		`ALTER TABLE rolebot_corp_requisition ADD COLUMN IF NOT EXISTS progressAt BIGINT NOT NULL DEFAULT 0`,
 		// When a siege entered its current stage (possiege.go siegeStalled); 0 on older rows, read as openedAt.
 		`ALTER TABLE rolebot_corp_siege ADD COLUMN IF NOT EXISTS stageAt BIGINT NOT NULL DEFAULT 0`,
+		// What a siege is on: a tower (towerID is the tower) or a conquerable station (towerID is the
+		// stationID, stationsiege.go).
+		`ALTER TABLE rolebot_corp_siege ADD COLUMN IF NOT EXISTS targetKind VARCHAR(8) NOT NULL DEFAULT 'tower'`,
 	} {
 		if _, err := db.ExecContext(ctx, s); err != nil {
 			return fmt.Errorf("ensureStarbaseTables: %w", err)

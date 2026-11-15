@@ -455,7 +455,13 @@ func (m *Mod) allianceExecutorDuties(ctx context.Context, c *corpCEO, ch Charter
 		return err
 	}
 	// A tower in a target paid for by the members (alliancesovpledge.go).
-	return m.allianceSovPledge(ctx, c, ch, seat, members)
+	if err := m.allianceSovPledge(ctx, c, ch, seat, members); err != nil {
+		return err
+	}
+	// The ladder's milestones, then the conquerable stations around held sov
+	// (allianceladder.go, stationsiege.go).
+	m.allianceLadder(ctx, c, seat)
+	return m.allianceStationSiege(ctx, c, ch, seat)
 }
 
 // allianceAnswerApplications accepts or rejects every New application. The core's own 300 s sweep makes

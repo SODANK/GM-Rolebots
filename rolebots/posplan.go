@@ -639,6 +639,10 @@ type siteCandidate struct {
 	// Frontier: unclaimed 0.0 (unclaimedNullSystems), space nobody holds, which the corporation
 	// reaches out for (frontierSiteBonus).
 	Frontier bool
+	// HoldsSov: the corporation's alliance holds sov somewhere. Border is gate jumps from the
+	// nearest system it holds (0 = held), -1 when farther than frontierBorderJumps+1 or none.
+	HoldsSov bool
+	Border   int
 	// Reaction, Tier and Harvest are a reactions site's case: the reaction the moon supports, how
 	// far up the T2 chain its output sits (reactionTier*), and the inputs the tower would harvest
 	// there (reactionSites). Zero for every other purpose.
@@ -685,11 +689,18 @@ func siteScore(c siteCandidate, purpose string) float64 {
 		v *= sovTargetSiteBonus // where the alliance means to hold
 	}
 	jumpCost := 0.35
-	if c.Frontier && (purpose == purposeMining || purpose == purposeReactions) {
+	earner := purpose == purposeMining || purpose == purposeReactions
+	switch {
+	case c.Frontier && earner && (!c.HoldsSov || c.AllianceTarget || (c.Border >= 0 && c.Border <= frontierBorderJumps)):
 		// Unclaimed 0.0 is what the corporation reaches out for: worth more, and the long haul costs
-		// less per jump. A service tower stays a quiet moon near its work.
+		// less per jump. Once the alliance holds sov, only the ground beside it (or a target) counts
+		// this way, so it fills in around what it holds. A service tower stays a quiet moon near its work.
 		v *= frontierSiteBonus
 		jumpCost = frontierJumpCost
+	case c.Frontier && earner:
+		v *= frontierFarBonus // far frontier while the alliance has a border to fill
+	case c.HoldsSov && c.Border == 0 && earner:
+		jumpCost = frontierJumpCost // held sov is where the corporation lives: its haul is home
 	}
 	return v / (1 + dist*jumpCost + c.Danger*4)
 }
@@ -700,6 +711,9 @@ const (
 	// A frontier moon fifteen jumps out stands level with a lowsec one next door.
 	frontierSiteBonus = 2.0
 	frontierJumpCost  = 0.12
+	// frontierFarBonus is the frontier bonus for unclaimed 0.0 more than frontierBorderJumps from an
+	// alliance's held sov, once it holds any.
+	frontierFarBonus = 1.2
 )
 
 // softmaxPick draws an index by exp(score/temp) with a draw u in [0,1). Pure.

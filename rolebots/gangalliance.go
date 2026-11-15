@@ -60,6 +60,13 @@ func (m *Mod) siegeSideOwner(ctx context.Context, corpID, sysID int64, role stri
 // allianceRaiseDefend files a defend call for a member's tower under attack.
 // One open call per tower.
 func (m *Mod) allianceRaiseDefend(ctx context.Context, ownerCorp, towerID, sysID, exitAt int64) {
+	m.allianceRaiseDefendNote(ctx, ownerCorp, towerID, sysID, exitAt,
+		fmt.Sprintf("%s's tower in %s is reinforced", corpNameOf(ctx, m.db, ownerCorp), systemNameOf(ctx, m, sysID)))
+}
+
+// allianceRaiseDefendNote files a defend call for a member's tower or station (targetID) under
+// attack, with note as its text. One open call per target. exitAt 0 is a call with no timer.
+func (m *Mod) allianceRaiseDefendNote(ctx context.Context, ownerCorp, towerID, sysID, exitAt int64, note string) {
 	aid := m.corpAllianceID(ctx, ownerCorp)
 	if aid == 0 {
 		return
@@ -77,7 +84,6 @@ func (m *Mod) allianceRaiseDefend(ctx context.Context, ownerCorp, towerID, sysID
 	if exitAt > now {
 		expires = exitAt + 3600
 	}
-	note := fmt.Sprintf("%s's tower in %s is reinforced", corpNameOf(ctx, m.db, ownerCorp), systemNameOf(ctx, m, sysID))
 	if _, err := m.db.ExecContext(ctx, `
 		INSERT INTO rolebot_alliance_requests
 		  (allianceID, fromCorpID, posterID, kind, targetID, systemID, payload, note, postedAt, expiresAt, status)
@@ -92,8 +98,12 @@ func (m *Mod) allianceRaiseDefend(ctx context.Context, ownerCorp, towerID, sysID
 		if c, _ := getCEO(ctx, m.db, exec); c != nil {
 			var name string
 			_ = m.db.QueryRowContext(ctx, `SELECT allianceName FROM alliances WHERE allianceID = ?`, aid).Scan(&name)
+			when := "before the timer ends"
+			if exitAt <= 0 {
+				when = "now"
+			}
 			m.allianceBulletin(ctx, aid, c.CharID, fmt.Sprintf("%s: defend %s", name, systemNameOf(ctx, m, sysID)),
-				note+". Every member corporation's security wing is asked to form up there before the timer ends.")
+				note+". Every member corporation's security wing is asked to form up there "+when+".")
 		}
 	}
 }

@@ -24,10 +24,6 @@ type PosState struct {
 	PosSweepCaps    map[int64]float64 `json:"posSweepCaps,omitempty"`
 	PosSweepGot     map[int64]int64   `json:"posSweepGot,omitempty"`
 
-	// A tower resident's staging visit (posresident.go): which tower. Carried by idleData because it
-	// paces the visits.
-	PosStagePlanID int64 `json:"posStagePlan,omitempty"`
-
 	// The tower array a builder is flying out to install a job at (posjobs.go).
 	PosTowerJobArray int64 `json:"posTowerJob,omitempty"`
 

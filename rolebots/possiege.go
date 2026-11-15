@@ -51,16 +51,27 @@ type siegeRow struct {
 	Damage                     float64
 	LastAt, OpenedAt           int64
 	StageAt                    int64 // when Stage was entered; 0 on rows older than the column
+	// Kind is siegeKindTower (TowerID is the tower) or siegeKindStation (TowerID is a conquerable
+	// station, stationsiege.go).
+	Kind string
 }
 
-const siegeCols = `siegeID, towerID, systemID, attackerCorpID, defenderCorpID, exitAt, phase, result, damage, lastAt, openedAt, stageAt`
+const (
+	siegeKindTower   = "tower"
+	siegeKindStation = "station"
+)
+
+const siegeCols = `siegeID, towerID, systemID, attackerCorpID, defenderCorpID, exitAt, phase, result, damage, lastAt, openedAt, stageAt, targetKind`
 
 func scanSiege(sc interface{ Scan(...any) error }) (*siegeRow, error) {
 	var s siegeRow
 	err := sc.Scan(&s.SiegeID, &s.TowerID, &s.SystemID, &s.AttackerCorpID, &s.DefenderCorpID, &s.ExitAt,
-		&s.Stage, &s.Result, &s.Damage, &s.LastAt, &s.OpenedAt, &s.StageAt)
+		&s.Stage, &s.Result, &s.Damage, &s.LastAt, &s.OpenedAt, &s.StageAt, &s.Kind)
 	return &s, err
 }
+
+// isStation reports whether a siege is on a conquerable station.
+func (s *siegeRow) isStation() bool { return s.Kind == siegeKindStation }
 
 // setStage moves a siege to a stage and starts the stage clock siegeStalled reads.
 func setStage(s *siegeRow, stage string, now int64) {
@@ -147,10 +158,14 @@ func (m *Mod) closeSiege(ctx context.Context, s *siegeRow, result, note string) 
 		UPDATE rolebot_fleet_help SET closedAt = ?
 		 WHERE kind = ? AND systemID = ? AND corpID IN (?, ?) AND closedAt = 0`,
 		now, helpCallToArms, s.SystemID, s.AttackerCorpID, s.DefenderCorpID)
+	what := "the tower"
+	if s.isStation() {
+		what = stationNameOf(ctx, m, s.TowerID)
+	}
 	for _, corpID := range []int64{s.AttackerCorpID, s.DefenderCorpID} {
 		if c, _ := getCEO(ctx, m.db, corpID); c != nil {
-			m.ceoLog(ctx, c, powerWar, "siege", s.TowerID, 0, "the siege of the tower in %s ended: %s — %s",
-				systemNameOf(ctx, m, s.SystemID), result, note)
+			m.ceoLog(ctx, c, powerWar, "siege", s.TowerID, 0, "the siege of %s in %s ended: %s — %s",
+				what, systemNameOf(ctx, m, s.SystemID), result, note)
 		}
 	}
 }
@@ -160,12 +175,36 @@ func (m *Mod) closeSiege(ctx context.Context, s *siegeRow, result, note string) 
 // system from two hours before a reinforcement exit until an hour after.
 func (m *Mod) siegeOrderFor(ctx context.Context, corpID int64) (int64, string) {
 	now := clock.Unix()
-	for _, s := range m.openSieges(ctx, `(attackerCorpID = ? OR defenderCorpID = ?) ORDER BY exitAt`, corpID, corpID) {
+	for _, s := range m.sidesSieges(ctx, corpID) {
 		if ok, why := siegeArmsWindow(s, corpID, now, systemNameOf(ctx, m, s.SystemID)); ok {
 			return s.SystemID, why
 		}
 	}
 	return 0, ""
+}
+
+// sidesSieges is every open siege corpID fights in: its own, attacking or defending, and a station
+// siege an alliance-mate leads or defends, which is the whole alliance's (stationsiege.go). An
+// alliance-mate's station row comes back seen from corpID's side: corpID in the leader's or the
+// owner's seat.
+func (m *Mod) sidesSieges(ctx context.Context, corpID int64) []*siegeRow {
+	out := m.openSieges(ctx, `(attackerCorpID = ? OR defenderCorpID = ?) ORDER BY exitAt`, corpID, corpID)
+	mates := m.allianceMemberCorps(ctx, corpID)
+	if len(mates) == 0 {
+		return out
+	}
+	csv := int64CSV(mates)
+	for _, s := range m.openSieges(ctx, `targetKind = 'station' AND (attackerCorpID IN (`+csv+`) OR defenderCorpID IN (`+csv+`))
+		ORDER BY exitAt`) {
+		v := *s
+		if slices.Contains(mates, s.AttackerCorpID) {
+			v.AttackerCorpID = corpID
+		} else {
+			v.DefenderCorpID = corpID
+		}
+		out = append(out, &v)
+	}
+	return out
 }
 
 // siegeHoldMarginM is how far outside a tower's force field a siege line orbits: a ship inside
@@ -183,6 +222,14 @@ func (m *Mod) siegeHoldFor(ctx context.Context, corpID, sysID int64) (at, ball i
 	side := append([]int64{corpID}, m.allianceMemberCorps(ctx, corpID)...)
 	corps := int64CSV(side)
 	for _, s := range m.openSieges(ctx, `systemID = ? AND (attackerCorpID IN (`+corps+`) OR defenderCorpID IN (`+corps+`))`, sysID) {
+		if s.isStation() {
+			// A station: warp to it, orbit it outside its hull (stationsiege.go).
+			_, _, _, radius, ok := m.stationBall(ctx, s.TowerID)
+			if !ok {
+				continue
+			}
+			return s.TowerID, s.TowerID, radius + siegeHoldMarginM, slices.Contains(side, s.AttackerCorpID)
+		}
 		rec, ok, err := evedb.GetStarbase(ctx, m.db, s.TowerID)
 		if err != nil || !ok || rec.MoonID == 0 {
 			continue
@@ -314,10 +361,11 @@ func (m *Mod) onTowerDestroyed(ctx context.Context, ev evedb.StarbaseEvent, _ *t
 
 // ── the desk ────────────────────────────────────────────────────────────────
 
-// siegeDesk runs a corporation's sieges, attacking and defending.
+// siegeDesk runs a corporation's tower sieges, attacking and defending. Station sieges are the
+// alliance's (allianceStationSiege).
 func (m *Mod) siegeDesk(ctx context.Context, c *corpCEO, ch Charter, _ []*towerPlan) {
 	m.maybeOpenSiege(ctx, c, ch)
-	for _, s := range m.openSieges(ctx, `attackerCorpID = ?`, c.CorpID) {
+	for _, s := range m.openSieges(ctx, `attackerCorpID = ? AND targetKind = 'tower'`, c.CorpID) {
 		if err := m.advanceSiege(ctx, c, s); err != nil {
 			m.logBot(c.CharID, logError, "ceo", "siege %d: %v", s.SiegeID, err)
 		}
@@ -331,7 +379,7 @@ const siegeReachJumps = gangRecruitMaxJumps
 // maybeOpenSiege picks an enemy tower to besiege, at war, with a fleet it can field, one siege at
 // a time. It waits siegeRetrySec after a siege whose fleet never formed, on any tower.
 func (m *Mod) maybeOpenSiege(ctx context.Context, c *corpCEO, ch Charter) {
-	if !relCorpAtWar(c.CorpID) || len(m.openSieges(ctx, `attackerCorpID = ?`, c.CorpID)) >= siegeMaxOpen {
+	if !relCorpAtWar(c.CorpID) || len(m.openSieges(ctx, `attackerCorpID = ? AND targetKind = 'tower'`, c.CorpID)) >= siegeMaxOpen {
 		return
 	}
 	enemies := relWarEnemiesOf(c.CorpID)
@@ -345,7 +393,7 @@ func (m *Mod) maybeOpenSiege(ctx context.Context, c *corpCEO, ch Charter) {
 	var lastFailed int64
 	_ = m.db.QueryRowContext(ctx, `
 		SELECT COALESCE(MAX(closedAt), 0) FROM rolebot_corp_siege
-		 WHERE attackerCorpID = ? AND result = 'abandoned' AND damage = 0`, c.CorpID).Scan(&lastFailed)
+		 WHERE attackerCorpID = ? AND result = 'abandoned' AND damage = 0 AND targetKind = 'tower'`, c.CorpID).Scan(&lastFailed)
 	if lastFailed > 0 && now-lastFailed < siegeRetrySec {
 		return
 	}
@@ -404,7 +452,7 @@ func (m *Mod) maybeOpenSiege(ctx context.Context, c *corpCEO, ch Charter) {
 
 // siegeFieldable reports whether a corporation can raise a siege fleet now: neither combat
 // department is backing off after a fleet that fell apart, and at least twice siegeMinAttackers of
-// its bots are online and not on short hours.
+// its bots are ready: its Security arm, or online and not on short hours.
 func (m *Mod) siegeFieldable(ctx context.Context, corpID int64) bool {
 	if formBackedOff(corpID, ActSecurity) > 0 && formBackedOff(corpID, ActCombat) > 0 {
 		return false
@@ -416,13 +464,17 @@ func (m *Mod) siegeFieldable(ctx context.Context, corpID int64) bool {
 	if err != nil {
 		return false
 	}
-	online := 0
+	// The combat wing answers a call to arms whatever its hours (armsAlwaysAnswers), so the whole
+	// Security arm counts; other pilots count when they are on and not on short hours.
+	ready := 0
 	for _, id := range ids {
-		if !popIsOffline(id) && !tzShortHours(id) {
-			online++
+		if seat, ok := armOf(id, corpID); ok && seat.Arm == armSecurity {
+			ready++
+		} else if !popIsOffline(id) && !tzShortHours(id) {
+			ready++
 		}
 	}
-	return online >= siegeMinAttackers*2
+	return ready >= siegeMinAttackers*2
 }
 
 // siegeAttackFloor is the fewest pilots a call-to-arms fleet may set out with: siegeMinAttackers
@@ -633,6 +685,11 @@ func (m *Mod) parkAtSiege(ctx context.Context, b *botRun, towerID int64) {
 	if b.ShipID == 0 || m.isEmbodied(b.CharID) {
 		return
 	}
+	if x, y, z, radius, ok := m.stationBall(ctx, towerID); ok {
+		// A station siege: the line sits off the station's hull.
+		m.persistPosition(ctx, b.ShipID, towerID, x, y, z, max(radius+siegeHoldMarginM-parkStandoff, 0))
+		return
+	}
 	rec, ok, err := evedb.GetStarbase(ctx, m.db, towerID)
 	if err != nil || !ok {
 		return
@@ -718,6 +775,9 @@ func (m *Mod) siegeTowerEntity(s *siegeRow) (*destiny.SolarSystem, *destiny.Enti
 	ss := m.systems.Get(s.SystemID)
 	if ss == nil {
 		return nil, nil
+	}
+	if s.isStation() {
+		return ss, ss.GetStationEntity(uint32(s.TowerID))
 	}
 	e := ss.StructureEntity(uint32(s.TowerID))
 	if e == nil || e.IsDestroyed() {

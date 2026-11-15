@@ -380,6 +380,18 @@ func (m *Mod) travelDockStep(ctx context.Context, b *botRun) (bool, error) {
 		st.Data.LegEndsAt = clock.Unix() + crimewatchRetrySec
 		return false, saveState(ctx, m.db, st)
 	}
+	// The owner may have shut its doors since the trip began (stationaccess.go): dock next door, or
+	// stay in space and plan again.
+	if m.stationDockRefused(ctx, st.Data.TargetStationID, b.CharID) {
+		instead := m.stationInstead(ctx, b, st.Data.TargetStationID)
+		m.logBot(b.CharID, logInfo, "travel", "%s refused it docking at the door — %s",
+			stationNameOf(ctx, m, st.Data.TargetStationID), stationOrSpace(ctx, m, instead))
+		if instead == 0 {
+			st.Activity, st.Phase, st.Data = "", string(TaskIdle), idleData(st.Data)
+			return false, saveState(ctx, m.db, st)
+		}
+		st.Data.TargetStationID = instead
+	}
 	// The approach leg is over: dock for real.
 	if err := m.dockAt(ctx, b, st.Data.TargetStationID); err != nil {
 		m.departAborted(b.CharID)
@@ -756,6 +768,14 @@ func (m *Mod) planSolo(ctx context.Context, b *botRun) error {
 // nextPhase is entered on arrival (after docking when stationID != 0).
 func (m *Mod) beginTravel(ctx context.Context, b *botRun, toSystem, toStation int64, nextPhase string) error {
 	st := b.State
+	// An owner that refuses this pilot docking: another station in the system, or the system itself
+	// (stationaccess.go).
+	if toStation != 0 && m.stationDockRefused(ctx, toStation, b.CharID) {
+		instead := m.stationInstead(ctx, b, toStation)
+		m.logBot(b.CharID, logInfo, "travel", "%s refuses it docking — heading for %s instead",
+			stationNameOf(ctx, m, toStation), stationOrSpace(ctx, m, instead))
+		toStation = instead
+	}
 
 	// Already docked exactly where this is going? Skip the undock/redock.
 	if toStation != 0 && b.StationID == toStation {

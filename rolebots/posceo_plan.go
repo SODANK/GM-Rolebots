@@ -22,6 +22,34 @@ func maxTowersFor(members int) int {
 	return min(towerMaxPerCorp, 1+members/towerPerMembers)
 }
 
+// sovLivingTowersMax is the most towers sovLivingTowers adds over maxTowersFor.
+const sovLivingTowersMax = 3
+
+// sovLivingTowers is the extra towers a corporation living in its alliance's sov runs: one per two
+// held systems it already has a tower in, up to sovLivingTowersMax, and none for a corporation
+// too small for towers at all. Pure.
+func sovLivingTowers(base, heldWithTower int) int {
+	if base <= 0 {
+		return 0
+	}
+	return min(sovLivingTowersMax, max(heldWithTower, 0)/2)
+}
+
+// heldSystemsWithTower counts the alliance-held systems the corporation has an active plan in.
+func (m *Mod) heldSystemsWithTower(ctx context.Context, allianceID int64, plans []*towerPlan) int {
+	held := m.allianceHeldSystems(ctx, allianceID)
+	if len(held) == 0 {
+		return 0
+	}
+	seen := map[int64]bool{}
+	for _, p := range plans {
+		if p.active() && held[p.SystemID] {
+			seen[p.SystemID] = true
+		}
+	}
+	return len(seen)
+}
+
 // considerNewTower plans the next tower when the corporation has room, the appetite, a case
 // for a purpose, a site and the money. The outcome line says what it decided and why: the
 // think drops it, the Starbases board's "consider now" shows it.
@@ -40,6 +68,8 @@ func (m *Mod) considerNewTower(ctx context.Context, c *corpCEO, ch Charter, fact
 	// pledged system only.
 	pledge := m.openSovPledgeFor(ctx, c.CorpID)
 	limit := maxTowersFor(eligible)
+	// Living in the alliance's sov takes more towers than a branch in empire does.
+	limit += sovLivingTowers(limit, m.heldSystemsWithTower(ctx, m.corpAllianceID(ctx, c.CorpID), plans))
 	if pledge != nil && limit > 0 {
 		limit++
 	}
@@ -195,6 +225,7 @@ func (m *Mod) considerNewTower(ctx context.Context, c *corpCEO, ch Charter, fact
 		strictPull = holdLeft > 0
 	}
 	heldBack := false
+	border := m.allianceBorder(ctx, allianceID, u)
 
 	type choice struct {
 		sig   purposeSignal
@@ -228,6 +259,11 @@ func (m *Mod) considerNewTower(ctx context.Context, c *corpCEO, ch Charter, fact
 			cands[i].AllianceTarget = targets[cands[i].SystemID]
 			cands[i].Frontier = frontier[cands[i].SystemID]
 			cands[i].Office = via[cands[i].SystemID]
+			cands[i].HoldsSov = len(border) > 0
+			cands[i].Border = -1
+			if b, ok := border[cands[i].SystemID]; ok {
+				cands[i].Border = b
+			}
 		}
 		scores := make([]float64, len(cands))
 		for i := range cands {
@@ -341,8 +377,8 @@ const (
 	// builds before its industry alone justifies a factory tower.
 	towerFactoryWeeklyJobs = 20
 	// towerReviewGraceSec is how long a new tower runs before its first
-	// review counts: long enough for its residents, lines and harvesters to
-	// be dealt and used, so it is judged on work and not on its first fuel.
+	// review counts: long enough for its lines and harvesters to be dealt
+	// and used, so it is judged on work and not on its first fuel.
 	towerReviewGraceSec = 28 * 86400
 )
 

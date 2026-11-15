@@ -82,13 +82,6 @@ func (m *Mod) posErrandDue(ctx context.Context, b *botRun) (bool, error) {
 	}
 	towers := StarbasePower()
 	if !corpHasPosWork(b.CorpID) {
-		// Residents stage at their tower now and then whatever the boards
-		// say (posresident.go).
-		if towers {
-			if handled, err := m.towerStageDue(ctx, b); err != nil || handled {
-				return handled, err
-			}
-		}
 		// Still resume a leg this pilot was carrying, or buy the lines it was handed, when the marks
 		// were cleared (a restart empties them). Who is carrying or buying is shared for a minute.
 		busy, _ := snapshotFor(snapKey("pos-carriers"), time.Minute, func() (map[int64]bool, error) {
@@ -116,10 +109,7 @@ func (m *Mod) posErrandDue(ctx context.Context, b *botRun) (bool, error) {
 	if handled, err := m.posTowerRefineDue(ctx, b); err != nil || handled {
 		return handled, err
 	}
-	if handled, err := m.posSurveyDue(ctx, b); err != nil || handled {
-		return handled, err
-	}
-	return m.towerStageDue(ctx, b)
+	return m.posSurveyDue(ctx, b)
 }
 
 // noteBuyerBusy logs, through reqDecline's throttle, that a buyer holding

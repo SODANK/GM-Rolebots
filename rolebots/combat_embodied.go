@@ -1883,6 +1883,14 @@ func (m *Mod) landDamage(eb *embodiedBot, target *destiny.Entity, applied float6
 		m.broadcastDamageState(eb, target)
 		return destroyed
 	}
+	// A conquerable station goes through the core's station rule: the damage state, and the capture
+	// for the shooter's corporation once the shield is gone (stationsiege.go). No threat, no crime.
+	if eb.ss != nil && eb.ss.IsStationEntity(target.ID) {
+		if hit := modapi.PvP().StationHit; hit != nil {
+			return hit(eb.ss, target, eb.corpID, eb.charID)
+		}
+		return false
+	}
 
 	if !target.IsPlayer && m.npc != nil {
 		// Shooting a rat puts the bot at the top of its threat table, which is
@@ -2635,8 +2643,9 @@ func (m *Mod) clearFlee(eb *embodiedBot) {
 	eb.mu.Unlock()
 }
 
-// fleeDestination picks where a bot runs to: the nearest station a warp away, else the
-// nearest other celestial, never the grid it is running from (nearestFleeTarget).
+// fleeDestination picks where a bot runs to: the nearest station a warp away, else in 0.0 a tower
+// whose force field admits it (towerHaven), else the nearest other celestial, never the grid it is
+// running from (nearestFleeTarget).
 func (m *Mod) fleeDestination(eb *embodiedBot, from int64) *evedb.CelestialEntity {
 	var pos destiny.Vec3
 	minRange := navWarpMinRange
@@ -2646,5 +2655,12 @@ func (m *Mod) fleeDestination(eb *embodiedBot, from int64) *evedb.CelestialEntit
 		// No ball to measure from: every distance is equal, so the pick falls back to list order.
 		minRange = math.Inf(1)
 	}
-	return nearestFleeTarget(eb.celestials, pos, from, minRange)
+	dest := nearestFleeTarget(eb.celestials, pos, from, minRange)
+	if dest != nil && dest.GroupID == groupStation {
+		return dest
+	}
+	if haven := m.towerHaven(eb.corpID, eb.systemID, pos); haven != nil && haven.ItemID != from {
+		return haven
+	}
+	return dest
 }

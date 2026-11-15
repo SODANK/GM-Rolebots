@@ -4,8 +4,9 @@ package rolebots
 //
 // Sov is the majority rule (db/sovmajority.go): an online tower counts 1 and an outpost 2 for the owner's
 // current alliance, and a corporation in no alliance holds nothing. The executor's pass (alliancePlanSov)
-// scores every 0.0 system in reach (sovTargetScore) and keeps the top MaxSovTargets as rolebot_alliance_targets
-// rows. The tower planner reads them: siteCandidates scores a target system x1.5, the cluster map counts
+// scores every 0.0 system in reach (sovTargetScore) and keeps every held system plus the top MaxSovTargets
+// not yet held as rolebot_alliance_targets rows (pickSovTargets): distance runs from held sov once there is
+// any, and a system on its border scores more, so the alliance grows outward. The tower planner reads them: siteCandidates scores a target system x1.5, the cluster map counts
 // alliance-mates' towers as the corporation's own, and towerDanger ignores them. A human executor's sov
 // requests come first. A member's tower also opens to the alliance (allianceTowerPolicy). Moon intel is
 // shared (posintel.go intelFriendsOf) and a sov flip reaches the mailbox and book (evedb.SovChangeHook).
@@ -59,12 +60,24 @@ type sovTargetIn struct {
 	Held         bool
 	MemberTowers int // members' towers in the system, online or not
 	Danger       float64
-	Jumps        int // from the nearest member home or tower
+	Jumps        int // from held sov when the alliance holds any, else from the nearest member home or tower
+	// Border is gate jumps from the nearest system the alliance holds, -1 when it holds none or
+	// none is in reach; SameCon is a system sharing a constellation with one it holds.
+	Border  int
+	SameCon bool
 }
 
+const (
+	// sovBorderBonus is what a system one gate from held sov adds to sovTargetScore, and
+	// sovConstellationBonus what one further out in a held constellation adds: the alliance fills
+	// in around what it holds before it reaches anywhere else.
+	sovBorderBonus        = 1.5
+	sovConstellationBonus = 0.75
+)
+
 // sovTargetScore is how much the alliance wants a system. Holding it or being one tower short is worth
-// most, then a member's tower already there; distance and danger pull it down, and a system where
-// another alliance is far ahead scores 0. Pure.
+// most, then a member's tower already there, then lying against held sov (sovBorderBonus); distance
+// and danger pull it down, and a system where another alliance is far ahead scores 0. Pure.
 func sovTargetScore(in sovTargetIn) float64 {
 	gap := in.TheirTally - in.OurTally
 	if gap >= 3 {
@@ -78,9 +91,44 @@ func sovTargetScore(in sovTargetIn) float64 {
 	} else {
 		s += 0.5 / float64(gap)
 	}
+	if !in.Held {
+		switch {
+		case in.Border == 1:
+			s += sovBorderBonus
+		case in.SameCon:
+			s += sovConstellationBonus
+		}
+	}
 	s += 0.5 * math.Min(4, float64(in.MemberTowers))
 	s /= 1 + 0.25*float64(max(in.Jumps, 0)) + in.Danger*2
 	return s
+}
+
+// pickSovTargets keeps every held system plus the best maxNew systems not yet held, best first:
+// what the alliance holds never takes a slot from where it means to grow. A held system that
+// scores 0 is still kept. Pure.
+func pickSovTargets(cands []sovTargetCand, maxNew int) []sovTargetCand {
+	out := make([]sovTargetCand, 0, len(cands))
+	n := 0
+	for _, c := range cands {
+		if c.held {
+			out = append(out, c)
+			continue
+		}
+		if c.score > 0 && n < maxNew {
+			out = append(out, c)
+			n++
+		}
+	}
+	return out
+}
+
+// sovTargetCand is one system the executor scored.
+type sovTargetCand struct {
+	sys   int64
+	score float64
+	why   string
+	held  bool
 }
 
 // allianceTargetSystems is the set of systems an alliance has named.
@@ -198,12 +246,19 @@ func (m *Mod) alliancePlanSov(ctx context.Context, c *corpCEO, ch Charter, seat 
 			}
 		}
 	}
-	type cand struct {
-		sys   int64
-		score float64
-		why   string
+	// The border: jumps from held sov, and the constellations it lies in. Once the alliance holds
+	// anything, distance is measured from there, so it grows outward from what it holds.
+	border := map[int64]int{}
+	heldCons := map[int64]bool{}
+	for _, h := range held {
+		heldCons[u.meta[h].ConstellationID] = true
+		for sys, j := range bfsJumps(u, h, sovTargetReachJumps) {
+			if cur, ok := border[sys]; !ok || j < cur {
+				border[sys] = j
+			}
+		}
 	}
-	var cands []cand
+	var cands []sovTargetCand
 	for sys, j := range jumps {
 		if !sovContestable(u.meta[sys].Security, npcNull[sys]) {
 			continue
@@ -212,8 +267,12 @@ func (m *Mod) alliancePlanSov(ctx context.Context, c *corpCEO, ch Charter, seat 
 		if err != nil {
 			continue
 		}
-		in := sovTargetIn{MemberTowers: towerSys[sys], Jumps: j,
-			Danger: m.towerDanger(ctx, c.CorpID, sys, u.meta[sys].Security, ch.PosDangerWeight)}
+		in := sovTargetIn{MemberTowers: towerSys[sys], Jumps: j, Border: -1,
+			SameCon: heldCons[u.meta[sys].ConstellationID],
+			Danger:  m.towerDanger(ctx, c.CorpID, sys, u.meta[sys].Security, ch.PosDangerWeight)}
+		if b, ok := border[sys]; ok {
+			in.Border, in.Jumps = b, b
+		}
 		var top int64
 		topScore := 0
 		for _, t := range tallies {
@@ -228,14 +287,17 @@ func (m *Mod) alliancePlanSov(ctx context.Context, c *corpCEO, ch Charter, seat 
 		}
 		in.Held = top == seat.AllianceID && topScore > 0
 		s := sovTargetScore(in)
-		why := fmt.Sprintf("ours %d vs %d, %d member towers, %d jumps, danger %.1f", in.OurTally, in.TheirTally, in.MemberTowers, j, in.Danger)
+		why := fmt.Sprintf("ours %d vs %d, %d member towers, %d jumps, danger %.1f", in.OurTally, in.TheirTally, in.MemberTowers, in.Jumps, in.Danger)
+		if !in.Held && in.Border == 1 {
+			why += ", on the border"
+		}
 		if f, ok := forced[sys]; ok {
 			s, why = math.Max(s, 10), f
 		}
-		if s <= 0 {
+		if s <= 0 && !in.Held {
 			continue
 		}
-		cands = append(cands, cand{sys, s, why})
+		cands = append(cands, sovTargetCand{sys: sys, score: s, why: why, held: in.Held})
 	}
 	sort.Slice(cands, func(i, j int) bool {
 		if cands[i].score != cands[j].score {
@@ -248,16 +310,20 @@ func (m *Mod) alliancePlanSov(ctx context.Context, c *corpCEO, ch Charter, seat 
 	if sovMotive {
 		maxTargets++ // founded to hold 0.0 (frontier.go)
 	}
-	if len(cands) > maxTargets {
-		cands = cands[:maxTargets]
+	cands = pickSovTargets(cands, maxTargets)
+	growth := 0
+	for _, x := range cands {
+		if !x.held {
+			growth++
+		}
 	}
-	// Nothing to hold within reach (or an alliance founded to hold 0.0): stake the nearest unclaimed
+	// Nowhere to grow within reach (or an alliance founded to hold 0.0): stake the nearest unclaimed
 	// constellation, so members survey, open forward offices and plant out there (allianceStake).
-	if len(cands) == 0 || sovMotive {
+	if growth == 0 || sovMotive {
 		if err := m.allianceStake(ctx, c, ch, seat, u, sources); err != nil {
 			return err
 		}
-	} else if len(cands) > 0 {
+	} else {
 		m.dropAllianceStake(ctx, c, seat, "the alliance has systems to hold within reach")
 	}
 	// Write the set: replace, keeping what is still wanted.

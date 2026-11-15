@@ -749,6 +749,10 @@ func (m *Mod) isReactionInput(ctx context.Context, p *towerPlan, typeID int64) b
 	return false
 }
 
+// gooExportListShare is the share of the listing price a sale run out of a 0.0 staging office must
+// beat (listTowerGoods): the goo is carried to the empire market, never listed in 0.0.
+const gooExportListShare = 0.5
+
 // listTowerGoods sells moon goo and reaction output in the staging offices' Production
 // division: into a bid at the staging station when one pays the ask; else on a sale run to the
 // best bidder in reach when that beats listing (posgoosale.go); else listed, one stack per
@@ -821,8 +825,15 @@ func (m *Mod) listTowerGoods(ctx context.Context, c *corpCEO, plans []*towerPlan
 				}
 			}
 			// None here: the Sales arm carries it to a bidder in reach when that beats the listing. This
-			// runs before the open-order test, so stock behind a resting ask still goes.
-			if m.gooSaleRun(ctx, c, st, l.typeID, price, &gooOpen, hold) {
+			// runs before the open-order test, so stock behind a resting ask still goes. Goo staged in
+			// 0.0 is exported, never listed out there: the run only has to beat gooExportListShare of
+			// the ask, and with no run it waits for the next pass.
+			export := m.systemSecurity(ctx, m.stationSystemID(ctx, st)) < 0
+			runBasis := price
+			if export {
+				runBasis = price * gooExportListShare
+			}
+			if m.gooSaleRun(ctx, c, st, l.typeID, runBasis, &gooOpen, hold) || export {
 				continue
 			}
 			var open int

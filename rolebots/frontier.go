@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"sort"
+
+	evedb "gurimoon/db"
 )
 
 // The frontier push into unclaimed 0.0 (unclaimedNullSystems), where one online tower of an alliance
@@ -152,7 +154,20 @@ type forwardIn struct {
 	Services bool
 	// Contestable is a station in contestable 0.0 (an outpost or conquerable), not NPC null.
 	Contestable bool
-	Danger      float64 // towerDanger at the station's system; 0 before it is measured
+	// Freeport: a conquerable CONCORD still holds, open to everyone. Alliances live out of it and
+	// scheme to take it (forwardFreeportBonus).
+	Freeport bool
+	Danger   float64 // towerDanger at the station's system; 0 before it is measured
+}
+
+// forwardFreeportBonus is how much more a CONCORD-held conquerable counts as a forward office or a
+// front: a 0.0 station anyone may dock at, clone and stage from.
+const forwardFreeportBonus = 2.0
+
+// isFreeport reports whether a station is a 0.0 conquerable CONCORD holds as the neutral first owner.
+// Pure.
+func isFreeport(ownerCorp int64, security float64) bool {
+	return ownerCorp == evedb.OwnerCONCORD && security < 0
 }
 
 // forwardStationScore is how good a jumping-off point a station is: the worth of the unclaimed
@@ -176,6 +191,9 @@ func forwardStationScore(in forwardIn) float64 {
 	}
 	if in.Contestable {
 		s *= forwardContestBonus
+	}
+	if in.Freeport {
+		s *= forwardFreeportBonus
 	}
 	s /= 1 + forwardHQJumpCost*float64(max(in.HQJumps, 0))
 	s /= 1 + max(in.Danger, 0)
@@ -322,7 +340,8 @@ func (m *Mod) huntForwardOffice(ctx context.Context, c *corpCEO, facts *CorpFact
 		p.Jumps = hqDist[p.SystemID]
 		fc := forwardCandidate{purposeStation: p, Unclaimed: len(near),
 			in: forwardIn{Near: near, Worth: worth, Pull: pull, HQJumps: p.Jumps, Services: hasService[p.StationID],
-				Contestable: p.Security < 0 && !npcNull[p.SystemID]}}
+				Contestable: p.Security < 0 && !npcNull[p.SystemID],
+				Freeport:    isFreeport(evedb.StationOwnerCorp(ctx, m.db, p.StationID), p.Security)}}
 		fc.Score = forwardStationScore(fc.in)
 		cands = append(cands, fc)
 	}
@@ -463,6 +482,27 @@ func (m *Mod) allianceFrontierSince(ctx context.Context, allianceID int64) int64
 		SELECT COALESCE(MIN(setAt), 0) FROM rolebot_alliance_targets
 		 WHERE allianceID = ? AND kind IN ('sov', 'stake') AND setAt > 0`, allianceID).Scan(&since)
 	return since
+}
+
+// frontierBorderJumps is how far from held sov an unclaimed system still takes the full frontier
+// bonus (siteScore) once the alliance holds sov; further out it takes frontierFarBonus.
+const frontierBorderJumps = 2
+
+// allianceBorder is gate jumps from the nearest system the alliance holds, for every system within
+// frontierBorderJumps+1 of one (held systems are 0). Empty when it holds none.
+func (m *Mod) allianceBorder(ctx context.Context, allianceID int64, u *universe) map[int64]int {
+	out := map[int64]int{}
+	if u == nil {
+		return out
+	}
+	for h := range m.allianceHeldSystems(ctx, allianceID) {
+		for sys, j := range bfsJumps(u, h, frontierBorderJumps+1) {
+			if cur, ok := out[sys]; !ok || j < cur {
+				out[sys] = j
+			}
+		}
+	}
+	return out
 }
 
 // holdsSovFor is whether the corporation's alliance holds sovereignty in a system: a tower there

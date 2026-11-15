@@ -117,9 +117,7 @@ func (m *Mod) reviewTowers(ctx context.Context, c *corpCEO, ch Charter, plans []
 		bad := net < 0
 		switch p.Purpose {
 		case purposeDepot:
-			var residents int
-			_ = m.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM rolebot_tower_residents WHERE planID = ?`, p.PlanID).Scan(&residents)
-			bad = residents == 0 && net < -m.weeklyFuelCost(ctx, p)*0.5
+			bad = net < -m.weeklyFuelCost(ctx, p)*0.5
 		case purposeFortress:
 			// A fortress is judged by the sovereignty it holds down, not by ISK: bad once its system is no
 			// longer a sov hold (the alliance left, the other towers went, or it was never 0.0).

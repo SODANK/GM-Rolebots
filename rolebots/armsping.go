@@ -128,6 +128,10 @@ func armsRoll(key string, charID int64, p float64) bool {
 // (siege, corp, now).
 func siegeArmsWindow(s *siegeRow, corpID, now int64, sysName string) (bool, string) {
 	attacking := s.AttackerCorpID == corpID
+	target := "tower"
+	if s.isStation() {
+		target = "station"
+	}
 	switch s.Stage {
 	case "muster":
 		if attacking {
@@ -135,10 +139,10 @@ func siegeArmsWindow(s *siegeRow, corpID, now int64, sysName string) (bool, stri
 		}
 	case "bash", "kill", "fight":
 		if attacking {
-			return true, "besieging the enemy tower in " + sysName
+			return true, "besieging the " + target + " in " + sysName
 		}
 		if s.DefenderCorpID == corpID {
-			return true, "defending the tower in " + sysName + " — it is under fire"
+			return true, "defending the " + target + " in " + sysName + " — it is under fire"
 		}
 	case "timer":
 		if now >= s.ExitAt-siegeFormUpSec && now <= s.ExitAt+siegeAfterExitSec {
@@ -160,15 +164,34 @@ func (m *Mod) armsAlerts(ctx context.Context) []armsAlert {
 	var out []armsAlert
 	seen := map[int64]bool{}
 	for _, s := range m.openSieges(ctx, `1 = 1 ORDER BY exitAt`) {
-		for _, side := range [2][2]int64{{s.AttackerCorpID, s.DefenderCorpID}, {s.DefenderCorpID, s.AttackerCorpID}} {
-			corp, opp := side[0], side[1]
+		type seat struct {
+			corp, opp int64
+			view      *siegeRow
+		}
+		seats := []seat{{s.AttackerCorpID, s.DefenderCorpID, s}, {s.DefenderCorpID, s.AttackerCorpID, s}}
+		if s.isStation() {
+			// A station siege is the whole alliance's: every member corporation of either side is
+			// paged, each seen from its own seat.
+			for _, mate := range m.allianceMemberCorps(ctx, s.AttackerCorpID) {
+				v := *s
+				v.AttackerCorpID = mate
+				seats = append(seats, seat{mate, s.DefenderCorpID, &v})
+			}
+			for _, mate := range m.allianceMemberCorps(ctx, s.DefenderCorpID) {
+				v := *s
+				v.DefenderCorpID = mate
+				seats = append(seats, seat{mate, s.AttackerCorpID, &v})
+			}
+		}
+		for _, st := range seats {
+			corp, opp := st.corp, st.opp
 			if corp == 0 || seen[corp] {
 				continue
 			}
 			if _, managed := managedCEO(corp); !managed {
 				continue
 			}
-			if ok, why := siegeArmsWindow(s, corp, now, systemNameOf(ctx, m, s.SystemID)); ok {
+			if ok, why := siegeArmsWindow(st.view, corp, now, systemNameOf(ctx, m, s.SystemID)); ok {
 				seen[corp] = true
 				out = append(out, armsAlert{Key: fmt.Sprintf("s%d:%d", s.SiegeID, corp),
 					CorpID: corp, SystemID: s.SystemID, Why: why, OppCorpID: opp})
@@ -224,10 +247,17 @@ type armsMember struct {
 	CharID  int64
 	Loyalty int
 	Officer bool
+	// Security is a pilot of the corporation's Security arm, its combat wing: it always answers
+	// a call to arms, from anywhere, whatever its hours (armsAlwaysAnswers).
+	Security bool
 }
 
-// armsMembersInReach is a corporation's enabled bots within reach of the
-// fight.
+// armsAlwaysAnswers reports whether a member answers a call to arms without a roll: the combat wing
+// (the Security arm) shows up, timezone be damned. Pure.
+func armsAlwaysAnswers(mm armsMember) bool { return mm.Security }
+
+// armsMembersInReach is a corporation's enabled bots within reach of the fight, plus every pilot of
+// its Security arm wherever it is.
 func (m *Mod) armsMembersInReach(ctx context.Context, a armsAlert, reachJumps int) ([]armsMember, error) {
 	u, err := m.universe(ctx)
 	if err != nil || u == nil {
@@ -256,7 +286,10 @@ func (m *Mod) armsMembersInReach(ctx context.Context, a armsAlert, reachJumps in
 		if rows.Scan(&mm.CharID, &sys, &mm.Officer, &mm.Loyalty) != nil {
 			continue
 		}
-		if _, ok := reach[sys]; ok {
+		if seat, ok := armOf(mm.CharID, a.CorpID); ok && seat.Arm == armSecurity {
+			mm.Security = true
+		}
+		if _, ok := reach[sys]; ok || mm.Security {
 			out = append(out, mm)
 		}
 	}
@@ -310,11 +343,15 @@ func (m *Mod) armsPingPass(ctx context.Context) {
 			p    float64
 			away int64
 		}
-		var on []int64
+		var on, wing []int64
 		var off []cand
 		for _, mm := range members {
 			if !popIsOffline(mm.CharID) || armsHeld(mm.CharID) {
 				on = append(on, mm.CharID)
+				continue
+			}
+			if armsAlwaysAnswers(mm) {
+				wing = append(wing, mm.CharID) // the combat wing logs in, whatever its hours
 				continue
 			}
 			ts := tzNow(mm.CharID)
@@ -322,7 +359,17 @@ func (m *Mod) armsPingPass(ctx context.Context) {
 			off = append(off, cand{mm, armsOdds(away, mm.Loyalty, mm.Officer), away})
 		}
 		armsHold(on, until)
-		count := len(on)
+		armsHold(wing, until)
+		count := len(on) + len(wing)
+		for _, id := range wing {
+			armsMu.Lock()
+			already := armsRolled[a.Key][id]
+			armsMu.Unlock()
+			if !already {
+				m.logBot(id, logInfo, "presence", "answered the call to arms for %s — the combat wing always shows",
+					st.SystemName)
+			}
+		}
 
 		sort.SliceStable(off, func(i, j int) bool {
 			if off[i].p != off[j].p {
@@ -374,7 +421,7 @@ func (m *Mod) armsPingPass(ctx context.Context) {
 			ids = append(ids, cd.CharID)
 		}
 		armsHold(ids, until)
-		st.Answered, st.Held = len(answered), count
+		st.Answered, st.Held = len(answered)+len(wing), count
 		held[a.CorpID] += count
 		if paged > 0 {
 			if ceo, err := getCEO(ctx, m.db, a.CorpID); err == nil && ceo != nil {
