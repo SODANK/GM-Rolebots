@@ -325,6 +325,9 @@ type Tuning struct {
 	// aggression axis: it may join a combat fleet in the logistics seat and
 	// in no other (gangform.go pacifistMaySit, gangplan.go's muster gate).
 	Pacifist bool
+	// FightsPolice marks a careless, violent pilot (both traits at or past fightsPoliceFloor): it shoots
+	// back at CONCORD, customs or a sentry gun that engages it. Anyone else breaks off and leaves.
+	FightsPolice bool
 
 	// Piracy (piracy.go). PiracyAppetite is the product of the aggression and outlaw factors, and either at
 	// zero zeroes it. The outlaw factor is zero on the lawful half of the axis and at neutral, so a lawful
@@ -520,6 +523,15 @@ func traitScale(v int) float64 {
 		f = 1
 	}
 	return f
+}
+
+// fightsPoliceFloor is how far toward careless (caution) and violent (aggression) a pilot must sit,
+// on both axes, before it shoots back at the law instead of leaving.
+const fightsPoliceFloor = 0.5
+
+// fightsPolice is Tuning.FightsPolice from the two trait scales (-1..1).
+func fightsPolice(caution, aggression float64) bool {
+	return caution >= fightsPoliceFloor && aggression >= fightsPoliceFloor
 }
 
 // bend interpolates a tuning value from a trait: atZero at t = 0 (a no-op by construction), atLow at
@@ -895,6 +907,7 @@ func resolveTuning(traits map[string]int) Tuning {
 	tn.TackleDrive = careless
 	tn.ScoutDrive = posPole(traitScale(traits[TraitGreed]))
 	tn.Pacifist = violence <= pacifistAggressionFloor
+	tn.FightsPolice = fightsPolice(traitScale(traits[TraitCaution]), violence)
 
 	// The research career comes last: it reads the finished manufacturing disposition (SupplyDrive x
 	// IndustryAppetite, bent by every trait above) so the lab, the tag and the arm agree with the factory draw.

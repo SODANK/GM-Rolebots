@@ -218,6 +218,9 @@ var (
 	// aid (assistAllows), kept apart so helping never reads as a decision to
 	// engage the attacker.
 	assistDecisions = map[[2]int64]roeDecision{}
+	// transitWarDecisions is the sticky fight-or-flight choice of a pilot in transit that meets
+	// an enemy of its corporation's war (transitWarRoll), kept apart from the other two tables.
+	transitWarDecisions = map[[2]int64]roeDecision{}
 )
 
 // roeNerveRoll answers whether this decider takes on this stranger, rolling once
@@ -232,6 +235,22 @@ func roeNerveRoll(deciderID, targetID int64, p float64) bool {
 // decider (one fleet, one choice) and lifetime, its own table.
 func assistNerveRoll(deciderID, targetID int64, p float64) bool {
 	return stickyRoll(assistDecisions, deciderID, targetID, p)
+}
+
+// transitWarRoll is roeNerveRoll for a pilot in transit meeting a war target: the same decider
+// (one fleet, one choice) and lifetime, its own table.
+func transitWarRoll(deciderID, targetID int64, p float64) bool {
+	return stickyRoll(transitWarDecisions, deciderID, targetID, p)
+}
+
+// transitWarOdds is the chance a pilot in transit stands and fights a war target rather than
+// flying on: the operator's base chance scaled by the pilot's (or its fleet's) nerve against the
+// default nerve, so a typical pilot rolls the base and a hothead nearly always stays. Clamped 0..1.
+func transitWarOdds(base, nerve float64) float64 {
+	if base <= 0 || nerve <= 0 {
+		return 0
+	}
+	return clampRange(base*nerve/neutralAggressionDefault, 0, 1)
 }
 
 // stickyRoll rolls once per [decider, target] in table and remembers the

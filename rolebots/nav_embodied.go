@@ -381,6 +381,41 @@ func (m *Mod) embodyJumpFX(charID, nextSysID int64) {
 	}
 }
 
+// travelFightHoldMaxSec is the longest a trip waits on one fight. The grid clearing (attackers age
+// out after combatAggroMemorySec) or the pilot breaking off ends nearly every fight long before it;
+// the ceiling is for one that never settles, so it cannot strand the trip.
+const travelFightHoldMaxSec = 180
+
+// travelHoldsForFight is the pure rule behind projectionHoldsTravel: hold while the projection is
+// engaged, which covers a break-off under fire too (the engagement stays up while it flees), but not
+// past travelFightHoldMaxSec after the fight began. A pre-emptive flee, with nothing shooting, does
+// not hold: its own latch (beltbail.go) settles it.
+func travelHoldsForFight(fighting bool, since, now time.Time) bool {
+	if !fighting {
+		return false
+	}
+	if since.IsZero() {
+		return true
+	}
+	return now.Sub(since) < travelFightHoldMaxSec*time.Second
+}
+
+// projectionHoldsTravel reports whether this pilot's projection is busy with a fight the trip
+// should wait for. A pilot with no projection (abstract tier) never holds.
+func (m *Mod) projectionHoldsTravel(charID int64) bool {
+	eb := liveProjection(charID)
+	if eb == nil {
+		return false
+	}
+	eb.mu.Lock()
+	fighting, since, dead := eb.fighting, eb.fightSince, eb.dead
+	eb.mu.Unlock()
+	if dead {
+		return false
+	}
+	return travelHoldsForFight(fighting, since, time.Now())
+}
+
 // isEmbodied reports whether this bot currently has a projection on grid.
 // The abstract tier uses it to leave the ship's coordinates alone: a live
 // projection owns its own position and persists it when it lands.

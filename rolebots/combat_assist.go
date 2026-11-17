@@ -83,6 +83,45 @@ func (m *Mod) loadAssistBlueChance(ctx context.Context) {
 	assistBlueV.Store(int64(f * 100))
 }
 
+// settingTransitWar is the base odds a pilot in transit takes on a war target it meets
+// (warTargetsOnGrid), before its nerve scales it (transitWarOdds).
+const settingTransitWar = "rolebots.combat.transitWarChance"
+
+const transitWarChanceDefault = 0.5
+
+// transitWarV caches it in hundredths, the assistBlueV convention: 0 is unset, an explicit 0 stores -1.
+var transitWarV atomic.Int64
+
+func transitWarChance() float64 {
+	switch v := transitWarV.Load(); {
+	case v < 0:
+		return 0
+	case v > 0:
+		return float64(v) / 100
+	}
+	return transitWarChanceDefault
+}
+
+func (m *Mod) loadTransitWarChance(ctx context.Context) {
+	v, ok, err := evedb.GetServerSetting(ctx, m.db, settingTransitWar)
+	if err != nil {
+		rlogf("rolebots: read %s: %v (using the default)", settingTransitWar, err)
+		return
+	}
+	if !ok {
+		return
+	}
+	f, perr := strconv.ParseFloat(strings.TrimSpace(v), 64)
+	if perr != nil || f < 0 {
+		return
+	}
+	if f = clampRange(f, 0, 1); f == 0 {
+		transitWarV.Store(-1)
+		return
+	}
+	transitWarV.Store(int64(f * 100))
+}
+
 // ── who is being shot ───────────────────────────────────────────────────────
 
 // gridVictimTTL is how long one scan of a system's hit ledgers is shared.
@@ -289,6 +328,22 @@ func (m *Mod) assistMayShoot(eb *embodiedBot, a *destiny.Entity, rel assistRel) 
 		key = -int64(a.ID)
 	}
 	return assistNerveRoll(decider, key, assistBlueChance())
+}
+
+// electiveOnly reports whether every aggro hostile in hs is one this pilot chose to take on (a
+// friend's attacker or a war target met in transit): nothing is fighting this projection itself.
+func electiveOnly(hs []gridHostile) bool {
+	found := false
+	for _, h := range hs {
+		if !h.Aggro {
+			continue
+		}
+		if !h.Elective {
+			return false
+		}
+		found = true
+	}
+	return found
 }
 
 // assistOnly reports whether every aggro hostile in hs came only from a friend's fight:

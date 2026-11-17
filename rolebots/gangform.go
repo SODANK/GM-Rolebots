@@ -185,6 +185,7 @@ func (m *Mod) loadGangSettings(ctx context.Context) {
 	m.loadDefendVsCriminal(ctx)
 	m.loadAssist(ctx)
 	m.loadAssistBlueChance(ctx)
+	m.loadTransitWarChance(ctx)
 	m.loadCombatDoctrine(ctx)
 	if v, ok, err := evedb.GetServerSetting(ctx, m.db, settingBotPvP); err == nil && ok {
 		setBotPvP(v == "1")

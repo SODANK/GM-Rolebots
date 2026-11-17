@@ -784,6 +784,7 @@ func (m *Mod) stopEmbodyCombat(eb *embodiedBot) {
 	cancel := eb.combatCancel
 	eb.combatCancel = nil
 	eb.fighting = false
+	eb.fightSince = time.Time{}
 	eb.combatTarget = 0
 	eb.mu.Unlock()
 	if cancel != nil {
@@ -812,13 +813,22 @@ func (eb *embodiedBot) underAttack() []uint32 {
 	return out
 }
 
-// attackerEntityID resolves one kill-report hit back to the ball that made it. The ledger is
-// keyed by attacker entity ID but KillHitsSnapshot flattens the map, so the ship is matched
-// back against the grid.
+// attackerEntityID resolves one kill-report hit back to the ball on this grid that made it.
 func (eb *embodiedBot) attackerEntityID(h destiny.KillHit) (uint32, bool) {
 	if eb.ss == nil {
 		return 0, false
 	}
+	// A hit from a ball names it (destiny.KillHit.EntityID): exact, even with three rats of one type on
+	// the grid. Gone or off this grid, it resolves to nothing; a lookalike must not stand in for it.
+	if h.EntityID != 0 {
+		for _, e := range eb.ss.GetBubbleEntitiesExcept(eb.ent.ID) {
+			if e.ID == h.EntityID && !e.IsDestroyed() {
+				return e.ID, true
+			}
+		}
+		return 0, false
+	}
+	// Drone and mine hits name only an owner: match the ship back by type and pilot.
 	for _, e := range eb.ss.GetBubbleEntitiesExcept(eb.ent.ID) {
 		if e.Slim.TypeID == h.ShipTypeID && (h.IsNPC != e.IsPlayer) {
 			if h.CharID != 0 && e.Slim.CharID != h.CharID {
@@ -837,8 +847,25 @@ type gridHostile struct {
 	ID    uint32
 	Aggro bool
 	// Assist marks an aggro ball that is here only because it is shooting a friend
-	// (combat_assist.go). An unarmed pilot sits those out instead of fleeing.
+	// (combat_assist.go).
 	Assist bool
+	// Elective marks an aggro ball the pilot chose to take on rather than one fighting it: a friend's
+	// attacker (Assist) or a war target met in transit (warTargetsOnGrid). An unarmed pilot sits
+	// those out instead of fleeing (electiveOnly).
+	Elective bool
+	// Police marks law enforcement that has hit or locked this pilot. Only a careless, violent pilot
+	// (Tuning.FightsPolice) shoots back; anyone else leaves (shouldBreakOff).
+	Police bool
+}
+
+// policeEngaged reports whether law enforcement is among the balls fighting the bot.
+func policeEngaged(hs []gridHostile) bool {
+	for _, h := range hs {
+		if h.Aggro && h.Police {
+			return true
+		}
+	}
+	return false
 }
 
 // aggroIDs is the subset that is actually fighting the bot: what the engage machinery may act on.
@@ -882,6 +909,7 @@ func (m *Mod) hostilesOnGrid(eb *embodiedBot) []gridHostile {
 					if out[i].ID == id {
 						out[i].Aggro = true
 						out[i].Assist = false
+						out[i].Elective = false
 						break
 					}
 				}
@@ -891,8 +919,24 @@ func (m *Mod) hostilesOnGrid(eb *embodiedBot) []gridHostile {
 		seen[id] = true
 		out = append(out, gridHostile{ID: id, Aggro: aggro})
 	}
+	// markPolice flags a ball already listed as law enforcement (lawEnforcementGroup).
+	markPolice := func(id uint32) {
+		e := eb.ss.GetEntity(id)
+		if e == nil || e.IsPlayer || !lawEnforcementGroup(e.Slim.GroupID) {
+			return
+		}
+		for i := range out {
+			if out[i].ID == id {
+				out[i].Police = true
+				return
+			}
+		}
+	}
 	for _, id := range eb.underAttack() {
 		add(id, true)
+		if eb.ss != nil {
+			markPolice(id)
+		}
 	}
 	// A pirate does not wait to be shot at: the pilots on its grid are the job (piracy_prey.go).
 	// They go in after the genuine aggressors, so a losing pirate still prioritises whoever hurts it.
@@ -917,9 +961,19 @@ func (m *Mod) hostilesOnGrid(eb *embodiedBot) []gridHostile {
 			add(id, true)
 		}
 	}
+	// A pilot in transit whose corporation is at war may choose to take on the enemy it meets
+	// (warTargetsOnGrid): a choice, so an unarmed ship sits it out rather than flees (electiveOnly).
+	for _, id := range m.warTargetsOnGrid(eb) {
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		out = append(out, gridHostile{ID: id, Aggro: true, Elective: true})
+	}
 	if m.npc != nil && eb.ent != nil && eb.ss != nil {
 		for _, id := range m.npc.GetTargetersOf(eb.ent.ID) {
 			add(id, true)
+			markPolice(id)
 		}
 		// A patrol does not wait to be shot at: every managed NPC on its grid is a target; for everyone else they are
 		// sighted, not engaged. The loops above already marked anything that hit or locked this bot as aggro.
@@ -933,7 +987,7 @@ func (m *Mod) hostilesOnGrid(eb *embodiedBot) []gridHostile {
 				continue
 			}
 			// The law: Customs officers and CONCORD shoot only a smuggler or a criminal, and one that has
-			// locked this pilot is already aggro from the loops above. See lawEnforcementGroup.
+			// locked this pilot is already listed, marked Police, by the loops above. See lawEnforcementGroup.
 			if lawEnforcementGroup(e.Slim.GroupID) {
 				continue
 			}
@@ -963,7 +1017,7 @@ func (m *Mod) hostilesOnGrid(eb *embodiedBot) []gridHostile {
 			continue
 		}
 		seen[id] = true
-		out = append(out, gridHostile{ID: id, Aggro: true, Assist: true})
+		out = append(out, gridHostile{ID: id, Aggro: true, Assist: true, Elective: true})
 	}
 	// For a working bot only, the hostile pilots it can merely see (corprel.go). They are non-aggro, so
 	// assessSightedGrid (combat_threat.go) leaves on a sighting, and add() cannot demote a shooting pilot.
@@ -1042,6 +1096,8 @@ func (m *Mod) embodyCombatLoop(ctx context.Context, eb *embodiedBot) {
 	// drones') is still recognised once the ball is gone.
 	var lockedEnt *destiny.Entity
 	engaged := false
+	// policeNoted keeps the "leaving the police" line to one per engagement.
+	policeNoted := false
 	// notes tells each locked pilot's client it is locked, so the bot shows as
 	// attacking and not only its drones (locknotes.go).
 	notes := lockNotes{}
@@ -1051,11 +1107,13 @@ func (m *Mod) embodyCombatLoop(ctx context.Context, eb *embodiedBot) {
 			return
 		}
 		engaged, locked, lockedEnt = false, 0, nil
+		policeNoted = false
 		m.disengageAll(eb, loadout)
 		notes.clear(eb)
 		m.dronesReturn(eb, grpCombatDrone)
 		eb.mu.Lock()
 		eb.fighting, eb.combatTarget = false, 0
+		eb.fightSince = time.Time{}
 		eb.mu.Unlock()
 		eb.clearNav()
 		eb.sling = slingState{}
@@ -1175,7 +1233,7 @@ func (m *Mod) embodyCombatLoop(ctx context.Context, eb *embodiedBot) {
 			}
 			// A friend's fight and no guns to bring: stay out rather than run, or the unarmed flight
 			// below would empty a belt whenever a rat shot the miner next door. A repairer still works.
-			if !loadout.armed() && assistOnly(sighted) {
+			if !loadout.armed() && electiveOnly(sighted) {
 				m.runRepCycles(eb, loadout)
 				m.assistHealApproach(eb, loadout)
 				if !embodySleep(ctx, combatGuardTick) {
@@ -1210,6 +1268,7 @@ func (m *Mod) embodyCombatLoop(ctx context.Context, eb *embodiedBot) {
 			}
 			eb.mu.Lock()
 			eb.fighting = true
+			eb.fightSince = time.Now()
 			// Published for the piracy paths, which have to be able to drop
 			// a point on a paying victim from outside this loop.
 			eb.load = loadout
@@ -1235,6 +1294,16 @@ func (m *Mod) embodyCombatLoop(ctx context.Context, eb *embodiedBot) {
 							"came to the aid of %s against %s", pairs[0].victim, name)
 					}
 				}
+				for _, h := range sighted {
+					if h.Aggro && h.Elective && !h.Assist {
+						name := "a war target"
+						if a := eb.ss.GetEntity(h.ID); a != nil && a.CharName != "" {
+							name = a.CharName
+						}
+						m.logBot(eb.charID, logInfo, "combat", "engaged a war target in transit: %s", name)
+						break
+					}
+				}
 			} else {
 				m.logBot(eb.charID, logWarn, "combat",
 					"taking fire with nothing to shoot back with — looking for a way out")
@@ -1247,7 +1316,13 @@ func (m *Mod) embodyCombatLoop(ctx context.Context, eb *embodiedBot) {
 		// A gank striker never breaks off mid-volley: warping out half-way throws the hull away. Once
 		// the mark is down or CONCORD has it, it runs or brawls (gankStrikerRuns).
 		gankRun := eb.gankStrike && m.gankStrikerRuns(ctx, eb)
-		if gankRun || (!eb.gankStrike && m.shouldBreakOff(eb, loadout, margin, marginKnown)) {
+		// The law on this ship: only a careless, violent pilot stands and shoots it out (Tuning.FightsPolice).
+		policeRun := !eb.gankStrike && !eb.tune.FightsPolice && policeEngaged(sighted)
+		if policeRun && !policeNoted {
+			policeNoted = true
+			m.logBot(eb.charID, logWarn, "combat", "the police are on me — leaving")
+		}
+		if gankRun || policeRun || (!eb.gankStrike && m.shouldBreakOff(eb, loadout, margin, marginKnown)) {
 			// warpMandatory: this ship is being shot at, and one refused
 			// break-off warp is a bot that stands there and dies.
 			m.fleeGrid(ctx, eb, loadout, warpMandatory)
@@ -1478,10 +1553,17 @@ func (m *Mod) pickCombatTarget(eb *embodiedBot, l *combatLoadout, hostiles []uin
 	bestScore := math.MaxFloat64
 	var fallback uint32
 	fallbackDist := math.MaxFloat64
+	// What each pilot is doing to this ship, built on the first pilot candidate (pilotDPSOn).
+	var pilotDPS map[int64]float64
 
 	for _, id := range hostiles {
 		e := eb.ss.GetEntity(id)
 		if e == nil || e.IsDestroyed() || e.IsInWarp() || e.IsCloaked() {
+			continue
+		}
+		// The law is something to leave, not to shoot, unless this pilot is careless and violent
+		// enough to try (Tuning.FightsPolice); shouldBreakOff's police check is already flying it out.
+		if !e.IsPlayer && lawEnforcementGroup(e.Slim.GroupID) && !eb.tune.FightsPolice {
 			continue
 		}
 		dist := e.Pos().Sub(selfPos).Len()
@@ -1501,6 +1583,15 @@ func (m *Mod) pickCombatTarget(eb *embodiedBot, l *combatLoadout, hostiles []uin
 		targetDPS := 0.0
 		if rt, ok := ratThreatCached(e.Slim.TypeID); ok {
 			remainingEHP, targetDPS = rt.EHP*frac, rt.DPS
+		} else if e.IsPlayer && e.Slim.CharID != 0 {
+			// A pilot has no threat-cache row: its health is what is left on the bars, and its
+			// output is what it has actually done to this ship lately. One that is not shooting
+			// scores 0 and keeps the health-then-distance order.
+			if pilotDPS == nil {
+				pilotDPS = pilotDPSOn(eb.ent.KillHitsSnapshot(), time.Now().Unix())
+			}
+			remainingEHP = hp.CurShield + hp.CurArmor + hp.CurStructure
+			targetDPS = pilotDPS[e.Slim.CharID]
 		}
 		score := combatTargetScore(l.dps(), frac, dist, remainingEHP, targetDPS)
 		if score < bestScore {
@@ -1511,6 +1602,22 @@ func (m *Mod) pickCombatTarget(eb *embodiedBot, l *combatLoadout, hostiles []uin
 		return best
 	}
 	return fallback
+}
+
+// pilotDPSOn is each pilot's recent damage to this ship per second, from its hit ledger: damage
+// over the attacker-memory window, for pilots whose last hit is inside it. NPC hits are skipped,
+// as the threat cache prices those. The ledger's damage is the attacker's running total, so a long
+// fight overstates the rate; it is a preference between targets, not a measurement.
+func pilotDPSOn(hits []destiny.KillHit, now int64) map[int64]float64 {
+	out := map[int64]float64{}
+	cutoff := now - combatAggroMemorySec
+	for _, h := range hits {
+		if h.IsNPC || h.CharID == 0 || h.Time < cutoff {
+			continue
+		}
+		out[h.CharID] += h.Damage / combatAggroMemorySec
+	}
+	return out
 }
 
 // holdCombatRange puts the ship where its guns work, and how it holds that place is the

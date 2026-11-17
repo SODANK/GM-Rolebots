@@ -303,6 +303,9 @@ type embodiedBot struct {
 	fighting     bool
 	fleeing      bool
 	combatTarget uint32
+	// fightSince is when the current engagement began (zero when not fighting); travel holds for
+	// the fight up to a ceiling measured from it (travelHoldsForFight, sim.go).
+	fightSince time.Time
 	// departing is set by departCommit (crimewatch.go) once the sim has decided this ship docks or
 	// jumps; no act against a pilot lands after it. aggrMu orders each act against that decision.
 	departing bool

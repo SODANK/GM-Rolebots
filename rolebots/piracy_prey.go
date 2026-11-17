@@ -280,6 +280,42 @@ func (m *Mod) flaggedPilotsOnGrid(eb *embodiedBot) []uint32 {
 	return out
 }
 
+// warTargetsOnGrid is what a pilot in transit takes on of its own accord: the pilots on its grid
+// whose corporation or alliance is at war with its own, that the rules of engagement let it shoot
+// (wouldEngagePilot: a combat wing, a hostile stance, none of its own), and that it has the nerve to
+// stay for (transitWarRoll, one sticky choice per fleet and enemy). The pilot that passes flies on.
+func (m *Mod) warTargetsOnGrid(eb *embodiedBot) []uint32 {
+	if eb == nil || eb.ent == nil || eb.ss == nil || eb.posture != PostureTransit {
+		return nil
+	}
+	if eb.doctrine == DoctrineNone || !warEverywhere() || !relCorpAtWar(eb.corpID) {
+		return nil
+	}
+	ally := eb.ent.Slim.AllianceID
+	decider := eb.charID
+	if eb.gangID != 0 {
+		decider = -eb.gangID
+	}
+	odds := transitWarOdds(transitWarChance(), eb.wingNerve)
+	var out []uint32
+	for _, e := range eb.ss.GetBubbleEntitiesExcept(eb.ent.ID) {
+		if e == nil || !e.IsPlayer || e.Slim.CharID == 0 {
+			continue
+		}
+		if !relAtWar(eb.corpID, ally, e.Slim.CorpID, e.Slim.AllianceID) {
+			continue
+		}
+		if !m.wouldEngagePilot(eb, e) {
+			continue
+		}
+		if !transitWarRoll(decider, e.Slim.CharID, odds) {
+			continue
+		}
+		out = append(out, e.ID)
+	}
+	return out
+}
+
 // engageablePilots is the grid sweep behind wouldEngagePilot, mirroring
 // preyOnGrid above.
 func (m *Mod) engageablePilots(eb *embodiedBot) []uint32 {

@@ -884,6 +884,12 @@ func (m *Mod) travelStep(ctx context.Context, b *botRun) (bool, error) {
 		st.Data.Path = nil
 		return false, saveState(ctx, m.db, st)
 	}
+	// A ship in a fight, or running from one, does not set off for the next gate: the combat loop owns
+	// the helm until the grid clears or the pilot breaks off, up to a ceiling (travelHoldsForFight).
+	if m.projectionHoldsTravel(b.CharID) {
+		st.Data.LegEndsAt = clock.Unix() + navLegHoldSec
+		return true, saveState(ctx, m.db, st)
+	}
 	next := st.Data.Path[0]
 	// Fly the gate for real when someone is watching, then let the abstract tier jump
 	// the bot. The gate wave is asked at the jump, after the flight. See docs/comment-notes-b17.md#gate-wave-order.
