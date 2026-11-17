@@ -85,10 +85,12 @@ type corpKit struct {
 	Status          string
 	Value           float64
 	PlannedAt       int64
+	// ForCharID is the pilot a siege kit was bought for (siegekits.go), 0 for a shelf kit.
+	ForCharID int64
 }
 
 const kitCols = `kitID, corporationID, kind, seatRole, job, hullTypeID, hullClass, tank, fitJSON,
-	shipItemID, stationID, status, value, plannedAt`
+	shipItemID, stationID, status, value, plannedAt, forCharID`
 
 func scanKit(sc interface{ Scan(...any) error }) (corpKit, error) {
 	var k corpKit
@@ -96,7 +98,7 @@ func scanKit(sc interface{ Scan(...any) error }) (corpKit, error) {
 	var class int
 	var tank string
 	err := sc.Scan(&k.KitID, &k.CorpID, &k.Kind, &k.SeatRole, &k.Job, &k.HullTypeID, &class, &tank,
-		&fitJSON, &k.ShipItemID, &k.StationID, &k.Status, &k.Value, &k.PlannedAt)
+		&fitJSON, &k.ShipItemID, &k.StationID, &k.Status, &k.Value, &k.PlannedAt, &k.ForCharID)
 	if err != nil {
 		return k, err
 	}
@@ -260,6 +262,10 @@ type kitTarget struct {
 	Spec seatSpec
 	Job  string
 	Want int
+	// A siege kit (siegekits.go): the pilot it is bought for, and the deadline its requisitions
+	// carry, short enough that they go out as funded buy trips, not patient buy orders.
+	ForCharID int64
+	Deadline  int64
 }
 
 // kitTargetsFor is the shelf's targets: one kit (armorySpares) per seat of the standing
@@ -486,7 +492,8 @@ func (m *Mod) quartermasterChore(ctx context.Context, c *corpCEO, ch Charter, fa
 	for _, t := range targets {
 		have := 0
 		for _, k := range kits {
-			if kitMatches(k, t.Kind, t.Spec) {
+			// A kit bought for one pilot's siege seat is not the shelf's (siegekits.go).
+			if k.ForCharID == 0 && kitMatches(k, t.Kind, t.Spec) {
 				have++
 			}
 		}
@@ -574,10 +581,10 @@ func (m *Mod) planKit(ctx context.Context, c *corpCEO, t kitTarget, fit *Fit, hu
 	}
 	res, err := m.db.ExecContext(ctx, `
 		INSERT INTO rolebot_corp_kit
-			(corporationID, kind, seatRole, job, hullTypeID, hullClass, tank, fitJSON, stationID, status, value, plannedAt)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			(corporationID, kind, seatRole, job, hullTypeID, hullClass, tank, fitJSON, stationID, status, value, plannedAt, forCharID)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		c.CorpID, t.Kind, t.Spec.Role, t.Job, hull.TypeID, int(hull.Class), string(t.Spec.Tank), string(raw),
-		stationID, kitPlanned, value, clock.Unix())
+		stationID, kitPlanned, value, clock.Unix(), t.ForCharID)
 	if err != nil {
 		return fmt.Errorf("plan kit: %w", err)
 	}
@@ -596,7 +603,7 @@ func (m *Mod) planKit(ctx context.Context, c *corpCEO, t kitTarget, fit *Fit, hu
 		}
 		if _, err := m.postRequisition(ctx, c, requisition{TypeID: typeID, Qty: short,
 			DestStationID: stationID, DestFlag: flag, Requester: "security", RefKind: "kit", RefID: kitID,
-			Note: "kit: " + hull.Name}); err != nil {
+			Deadline: t.Deadline, Note: "kit: " + hull.Name}); err != nil {
 			return err
 		}
 		posted++

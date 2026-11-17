@@ -84,6 +84,12 @@ func (m *Mod) loadFleetSeat(ctx context.Context, eb *embodiedBot) {
 		if eb.fleetCmd != nil {
 			m.fillFleetHold(ctx, g, eb.systemID, eb.fleetCmd)
 		}
+		return
+	}
+	// A member keeps its own copy of the siege hold: a commander who is off on other business
+	// (a CEO at its desk) or still on the road must not leave the line idle on the grid.
+	if at, ball, rangeM, bash := m.siegeHoldFor(ctx, g.CorpID, eb.systemID); at != 0 {
+		eb.siegeHold = fleetHold{At: at, Ball: uint32(ball), RangeM: rangeM, Bash: bash}
 	}
 }
 

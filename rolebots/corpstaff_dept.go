@@ -411,6 +411,12 @@ func (m *Mod) securityDesk(ctx context.Context, c *corpCEO, ch Charter, d *staff
 	// A siege (possiege.go) outranks every order, then the alliance's defend call
 	// (gangcalls.go): calls to arms point every fleet of the wing there (formCallsToArms).
 	armsSys, armsWhy := m.siegeOrderFor(ctx, c.CorpID)
+	if armsSys != 0 && m.siegeLedByMate(ctx, c.CorpID, armsSys) {
+		// A mate leads the attack: its one alliance fleet takes this wing (siegefleet.go). No order
+		// and no call of this corporation's own, and no patrol either, so the wing is free to join.
+		noteDeptDemand(c.CorpID, portSecurity, 1)
+		return nil
+	}
 	if armsSys == 0 {
 		armsSys, armsWhy = m.allianceDefendOrderFor(ctx, c.CorpID)
 	}

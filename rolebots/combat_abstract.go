@@ -235,6 +235,10 @@ func (m *Mod) exposedInSpace(b *botRun) bool {
 	if m.systemProjected(b.SystemID) {
 		return false
 	}
+	// A siege fleet parked on its target holds a tower or a station, not a belt (gangSiegeStep).
+	if siegeParkedIn(b.CharID, b.SystemID, clock.Unix()) {
+		return false
+	}
 	// Rats live on belts, so only tasks that park a ship on one are exposed (TaskDef.Exposed in
 	// task.go). A hauler loading cans is not: the patrol is what makes that safe.
 	return exposedPhase(b.State.Phase)

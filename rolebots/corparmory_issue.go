@@ -87,6 +87,9 @@ func (m *Mod) openIssueFor(ctx context.Context, charID int64) *corpIssue {
 
 type kitPool struct {
 	corpID int64
+	// corps is every corporation whose pilots may borrow from this pool: the forming corporation,
+	// or a siege fleet's whole side (withKitPools). Nil means corpID alone.
+	corps  map[int64]bool
 	mu     sync.Mutex
 	kits   []corpKit       // ready kits
 	taken  map[int64]int64 // kitID → charID
@@ -112,6 +115,37 @@ func (m *Mod) withKitPool(ctx context.Context, corpID int64) context.Context {
 		&kitPool{corpID: corpID, kits: kits, taken: map[int64]int64{}, roles: map[int64]string{}})
 }
 
+// withKitPools puts the ready kits of every given corporation on one pool: a siege fleet lends
+// any member's shelf to any member's pilot (siegefleet.go). Bot-run corporations only, as
+// withKitPool. The pool's corpID is the first corporation's.
+func (m *Mod) withKitPools(ctx context.Context, corps []int64) context.Context {
+	if len(corps) == 0 || !divisionProfilesOn.Load() {
+		return ctx
+	}
+	pool := &kitPool{corpID: corps[0], corps: map[int64]bool{}, taken: map[int64]int64{}, roles: map[int64]string{}}
+	for _, c := range corps {
+		pool.corps[c] = true
+		if _, managed := managedCEO(c); !managed {
+			continue
+		}
+		if kits, err := m.corpKits(ctx, c, "status = ? AND shipItemID <> 0", kitReady); err == nil {
+			pool.kits = append(pool.kits, kits...)
+		}
+	}
+	if len(pool.kits) == 0 {
+		return ctx
+	}
+	return context.WithValue(ctx, kitPoolKey{}, pool)
+}
+
+// lends reports whether the pool lends to a pilot of corpID.
+func (p *kitPool) lends(corpID int64) bool {
+	if p.corps != nil {
+		return p.corps[corpID]
+	}
+	return corpID == p.corpID
+}
+
 func kitPoolOf(ctx context.Context) *kitPool {
 	p, _ := ctx.Value(kitPoolKey{}).(*kitPool)
 	return p
@@ -131,7 +165,7 @@ func kitKindFor(s seatSpec) string {
 // (corparmory_human.go).
 func (m *Mod) kitPoolFind(ctx context.Context, charID int64, role string, spec seatSpec, reserve bool) bool {
 	pool := kitPoolOf(ctx)
-	if pool == nil || !m.isSynthetic(charID) || m.charCorpID(ctx, charID) != pool.corpID {
+	if pool == nil || !m.isSynthetic(charID) || !pool.lends(m.charCorpID(ctx, charID)) {
 		return false
 	}
 	pool.mu.Lock()
@@ -145,18 +179,24 @@ func (m *Mod) kitPoolFind(ctx context.Context, charID int64, role string, spec s
 		return false // still holds one from an earlier op
 	}
 	kind := kitKindFor(spec)
-	for _, k := range pool.kits {
-		if _, used := pool.taken[k.KitID]; used || !kitMatches(k, kind, spec) {
-			continue
+	// A kit bought for this pilot (siegekits.go) first; one bought for another pilot is theirs.
+	for _, mine := range []bool{true, false} {
+		for _, k := range pool.kits {
+			if (k.ForCharID == charID) != mine || (k.ForCharID != 0 && k.ForCharID != charID) {
+				continue
+			}
+			if _, used := pool.taken[k.KitID]; used || !kitMatches(k, kind, spec) {
+				continue
+			}
+			if !m.canFlyKit(ctx, charID, k) {
+				continue
+			}
+			if reserve {
+				pool.taken[k.KitID] = charID
+				pool.roles[k.KitID] = role
+			}
+			return true
 		}
-		if !m.canFlyKit(ctx, charID, k) {
-			continue
-		}
-		if reserve {
-			pool.taken[k.KitID] = charID
-			pool.roles[k.KitID] = role
-		}
-		return true
 	}
 	return false
 }

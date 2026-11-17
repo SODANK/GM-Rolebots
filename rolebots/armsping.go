@@ -44,6 +44,9 @@ type armsAlert struct {
 	Why      string
 	// OppCorpID is the other side, 0 when unknown.
 	OppCorpID int64
+	// Attack marks the attacking side of a siege: the whole wing is paged, not a match for the
+	// enemy, since the siege is won on DPS against the structure (siegequota.go).
+	Attack bool
 }
 
 // armsStat is one alert as the panel shows it.
@@ -169,10 +172,12 @@ func (m *Mod) armsAlerts(ctx context.Context) []armsAlert {
 			view      *siegeRow
 		}
 		seats := []seat{{s.AttackerCorpID, s.DefenderCorpID, s}, {s.DefenderCorpID, s.AttackerCorpID, s}}
+		attackers := map[int64]bool{s.AttackerCorpID: true}
 		if s.isStation() {
 			// A station siege is the whole alliance's: every member corporation of either side is
 			// paged, each seen from its own seat.
 			for _, mate := range m.allianceMemberCorps(ctx, s.AttackerCorpID) {
+				attackers[mate] = true
 				v := *s
 				v.AttackerCorpID = mate
 				seats = append(seats, seat{mate, s.DefenderCorpID, &v})
@@ -181,6 +186,17 @@ func (m *Mod) armsAlerts(ctx context.Context) []armsAlert {
 				v := *s
 				v.DefenderCorpID = mate
 				seats = append(seats, seat{mate, s.AttackerCorpID, &v})
+			}
+		} else {
+			// A tower siege also pages the mates that may join its fleet (towerSiegeCorps).
+			for _, mate := range m.siegeRecruitCorps(ctx, s) {
+				if mate == s.AttackerCorpID {
+					continue
+				}
+				attackers[mate] = true
+				v := *s
+				v.AttackerCorpID = mate
+				seats = append(seats, seat{mate, s.DefenderCorpID, &v})
 			}
 		}
 		for _, st := range seats {
@@ -194,7 +210,8 @@ func (m *Mod) armsAlerts(ctx context.Context) []armsAlert {
 			if ok, why := siegeArmsWindow(st.view, corp, now, systemNameOf(ctx, m, s.SystemID)); ok {
 				seen[corp] = true
 				out = append(out, armsAlert{Key: fmt.Sprintf("s%d:%d", s.SiegeID, corp),
-					CorpID: corp, SystemID: s.SystemID, Why: why, OppCorpID: opp})
+					CorpID: corp, SystemID: s.SystemID, Why: why, OppCorpID: opp,
+					Attack: attackers[corp] && st.view.AttackerCorpID == corp})
 			}
 		}
 	}
@@ -337,6 +354,11 @@ func (m *Mod) armsPingPass(ctx context.Context) {
 		if err != nil {
 			rlogf("rolebots: call-to-arms ping %s: %v", a.Key, err)
 			continue
+		}
+		if a.Attack {
+			// A siege is won on DPS against the structure, not by matching the enemy's numbers:
+			// every member in reach is paged.
+			st.Need = max(st.Need, len(members))
 		}
 		type cand struct {
 			armsMember

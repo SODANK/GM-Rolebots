@@ -6,7 +6,6 @@ import (
 	"math"
 	"slices"
 	"sort"
-	"strings"
 	"time"
 
 	evedb "gurimoon/db"
@@ -20,10 +19,11 @@ import (
 // holder, is a neutral nobody answers to, and a rival owner is fair game in 0.0.
 //
 // The executor opens one station siege at a time (allianceStationSiege) on the best conquerable
-// within stationSiegeReachJumps of held sov, when the alliance's Security arms can break the shield
-// (stationBashNeed). The row is a rolebot_corp_siege row of kind 'station' (towerID = stationID),
-// led by the member corporation nearest the station; every member's Security wing is called to it
-// (armsping.go). Stages: muster, bash, closed taken / held / abandoned / gone. Attackers on a
+// within stationSiegeReachJumps of held sov whose quota (siegeQuota: its shield over the bash
+// window plus the regeneration it must out-shoot) the alliance can field (siegeCapacityFor). The
+// row is a rolebot_corp_siege row of kind 'station' (towerID = stationID), led by the member
+// corporation nearest the station; every member's Security wing is called to it (armsping.go).
+// Stages: muster, bash (siegeStageNext), closed taken / held / abandoned / gone. Attackers on a
 // watched grid land real hits through modapi.PvP().StationHit; off-grid the desk grinds the shield
 // net of its regeneration (stationBashStep) and captures through ConquerStation.
 
@@ -33,46 +33,7 @@ const (
 	// stationSiegeRetrySec is how long the alliance leaves a station alone after a siege on it was
 	// abandoned or held, and waits after a siege whose fleet never formed before opening another.
 	stationSiegeRetrySec = 3 * 86400
-	// stationBashHours is how long the fleet the desk sizes (stationBashNeed) takes to break a shield.
-	stationBashHours = 6
-	// stationPilotDPS is the firepower one Security pilot is counted for when the desk sizes a fleet.
-	stationPilotDPS = 150.0
-	// stationRegenPeak is the shield regeneration at its peak, as a multiple of capacity/tau.
-	stationRegenPeak = 2.5
-	// stationNoHeadwaySec is how long a bash may run with no damage standing before it is abandoned:
-	// the fleet cannot out-shoot the shield's regeneration.
-	stationNoHeadwaySec = 6 * 3600
 )
-
-// stationShieldEHP is the damage that empties a station's shield: capacity over the mean shield
-// resonance. Pure.
-func stationShieldEHP(shield, resonance float64) float64 {
-	if resonance <= 0 {
-		resonance = 1
-	}
-	return shield / resonance
-}
-
-// stationRegenEHP is a station shield's peak regeneration in damage per second. Pure.
-func stationRegenEHP(shield, tau, resonance float64) float64 {
-	if tau <= 0 || shield <= 0 {
-		return 0
-	}
-	if resonance <= 0 {
-		resonance = 1
-	}
-	return stationRegenPeak * shield / tau / resonance
-}
-
-// stationBashNeed is how many pilots of pilotDPS break a station's shield in stationBashHours over
-// its regeneration, never fewer than siegeMinAttackers. Pure.
-func stationBashNeed(shield, tau, resonance, pilotDPS float64) int {
-	if pilotDPS <= 0 {
-		pilotDPS = stationPilotDPS
-	}
-	perSec := stationShieldEHP(shield, resonance)/(stationBashHours*3600) + stationRegenEHP(shield, tau, resonance)
-	return max(siegeMinAttackers, int(math.Ceil(perSec/pilotDPS)))
-}
 
 // stationBashStep grinds elapsed seconds of the attackers' dps into a station shield net of its
 // regeneration and reports whether the shield broke. Standing damage never falls below 0. Pure.
@@ -118,40 +79,10 @@ func (m *Mod) stationBall(ctx context.Context, stationID int64) (x, y, z, radius
 	return x, y, z, radius, true
 }
 
-// stationShield is a station type's shield capacity, recharge time (seconds) and mean resonance.
-func (m *Mod) stationShield(ctx context.Context, typeID int64) (shield, tau, resonance float64) {
-	hp, err := evedb.GetEntityHPByType(ctx, m.db, typeID)
-	if err != nil || hp == nil {
-		return 1_000_000, 0, 1
-	}
-	sum := 0.0
-	for _, r := range hp.ShieldRes {
-		sum += r
-	}
-	resonance = sum / 4
-	if resonance <= 0 {
-		resonance = 1
-	}
-	shield = hp.ShieldHP
-	if shield <= 0 {
-		shield = 1_000_000
-	}
-	return shield, hp.ShieldTau, resonance
-}
-
 // allianceCorps is every corporation of an alliance.
 func (m *Mod) allianceCorps(ctx context.Context, allianceID int64) []int64 {
 	ids, _ := int64Column(ctx, m, `SELECT corporationID FROM corporation WHERE allianceID = ?`, allianceID)
 	return ids
-}
-
-// allianceSecurityArm is how many pilots the alliance's corporations place in their Security arms.
-func allianceSecurityArm(corps []int64) int {
-	n := 0
-	for _, c := range corps {
-		n += armCount(c, armSecurity)
-	}
-	return n
 }
 
 // allianceStationSiege is the executor's station desk: it advances the alliance's open station
@@ -175,6 +106,10 @@ func (m *Mod) allianceStationSiege(ctx context.Context, c *corpCEO, ch Charter, 
 	if len(open) > 0 || m.allianceStage(ctx, seat.AllianceID) < stageSov {
 		return nil
 	}
+	// One attacking siege per alliance: a member's tower siege keeps the wing on that.
+	if m.siegeSidesBusy(ctx, corps) {
+		return nil
+	}
 	now := clock.Unix()
 	var lastFailed int64
 	_ = m.db.QueryRowContext(ctx, `
@@ -184,32 +119,56 @@ func (m *Mod) allianceStationSiege(ctx context.Context, c *corpCEO, ch Charter, 
 	if lastFailed > 0 && now-lastFailed < stationSiegeRetrySec {
 		return nil
 	}
-	pick, ok := m.pickStationTarget(ctx, c, ch, seat, corps)
-	if !ok {
+	if m.siegeShortHold(ctx, corps, now) {
 		return nil
 	}
-	shield, tau, res := m.stationShield(ctx, pick.typeID)
-	need := stationBashNeed(shield, tau, res, stationPilotDPS)
-	if have := allianceSecurityArm(corps); have < need {
+	picks := m.pickStationTargets(ctx, c, ch, seat, corps)
+	if len(picks) == 0 {
+		return nil
+	}
+	// The best station whose quota the alliance can field: a better one it cannot break is passed
+	// over for one it can.
+	capa, ps := m.siegeCapacityFor(ctx, corps)
+	var (
+		pick  stationTarget
+		q     siegeQuotaOut
+		found bool
+	)
+	for i, t := range picks {
+		if i >= siegeOpenScan {
+			break
+		}
+		tq := siegeQuota(m.structureHPOf(ctx, t.typeID, false), siegeWindowSec, siegeQuotaMargin)
+		if capa.WithKits >= tq.OpenDPS() {
+			pick, q, found = t, tq, true
+			break
+		}
+	}
+	if !found {
+		tq := siegeQuota(m.structureHPOf(ctx, picks[0].typeID, false), siegeWindowSec, siegeQuotaMargin)
+		what := stationNameOf(ctx, m, picks[0].stationID)
+		// Hulls bought for the pilots without one may close the gap (siegekits.go); the siege opens
+		// on a later pass once they are on the shelf.
+		m.provisionSiegeKits(ctx, c, ps, tq.OpenDPS()-capa.WithKits, what)
 		if now-m.lastCEOActionAt(ctx, c.CorpID, "stationsiege.short") >= 86400 {
-			m.ceoLog(ctx, c, powerAlliance, "stationsiege.short", pick.stationID, float64(need),
-				"wants %s, but its Security arms hold %d pilot(s) of the %d it takes to break the shield",
-				stationNameOf(ctx, m, pick.stationID), have, need)
+			m.ceoLog(ctx, c, powerAlliance, "stationsiege.short", picks[0].stationID, tq.OpenDPS(), "%s",
+				siegeShortLine(what, capa.WithKits, tq.OpenDPS()))
 		}
 		return nil
 	}
 	leader := m.stationSiegeLeader(ctx, corps, pick.sysID, c.CorpID)
 	if _, err := m.db.ExecContext(ctx, `
-		INSERT INTO rolebot_corp_siege (towerID, systemID, attackerCorpID, defenderCorpID, phase, openedAt, lastAt, stageAt, targetKind)
-		VALUES (?, ?, ?, ?, 'muster', ?, ?, ?, 'station')`,
-		pick.stationID, pick.sysID, leader, pick.owner, now, now, now); err != nil {
+		INSERT INTO rolebot_corp_siege (towerID, systemID, attackerCorpID, defenderCorpID, phase, openedAt, lastAt, stageAt, targetKind,
+		                                quotaDPS, regenEHP)
+		VALUES (?, ?, ?, ?, 'muster', ?, ?, ?, 'station', ?, ?)`,
+		pick.stationID, pick.sysID, leader, pick.owner, now, now, now, q.OpenDPS(), q.Regen); err != nil {
 		return fmt.Errorf("open station siege: %w", err)
 	}
 	name := stationNameOf(ctx, m, pick.stationID)
-	line := fmt.Sprintf("moves on %s, held by %s: %d Security pilot(s) needed to break the shield",
-		name, corpNameOf(ctx, m.db, pick.owner), need)
-	m.ceoLog(ctx, c, powerAlliance, "stationsiege", pick.stationID, float64(need), "%s", line)
-	m.allianceBook(ctx, seat.AllianceID, leader, "stationsiege", pick.stationID, float64(need), "%s", line)
+	line := fmt.Sprintf("moves on %s, held by %s: %s to break the shield, the alliance can field ~%.0f",
+		name, corpNameOf(ctx, m.db, pick.owner), siegeQuotaNote(q), capa.WithKits)
+	m.ceoLog(ctx, c, powerAlliance, "stationsiege", pick.stationID, q.OpenDPS(), "%s", line)
+	m.allianceBook(ctx, seat.AllianceID, leader, "stationsiege", pick.stationID, q.OpenDPS(), "%s", line)
 	m.allianceBulletin(ctx, seat.AllianceID, c.CharID, fmt.Sprintf("%s: take %s", seat.Name, name),
 		fmt.Sprintf("The alliance moves on %s in %s. %s leads; every member corporation's Security wing forms up there. "+
 			"Its shield at zero makes the station ours.", name, systemNameOf(ctx, m, pick.sysID), corpNameOf(ctx, m.db, leader)))
@@ -223,12 +182,13 @@ type stationTarget struct {
 	score                           float64
 }
 
-// pickStationTarget is the best conquerable within stationSiegeReachJumps of held sov that no member
-// or blue holds and the alliance has not lately failed on, by stationSiegeScore.
-func (m *Mod) pickStationTarget(ctx context.Context, c *corpCEO, ch Charter, seat *allianceSeat, corps []int64) (stationTarget, bool) {
+// pickStationTargets is the conquerables within stationSiegeReachJumps of held sov that no member
+// or blue holds, nobody is besieging, and the alliance has not lately failed on, best first by
+// stationSiegeScore.
+func (m *Mod) pickStationTargets(ctx context.Context, c *corpCEO, ch Charter, seat *allianceSeat, corps []int64) []stationTarget {
 	u, err := m.universe(ctx)
 	if err != nil || u == nil {
-		return stationTarget{}, false
+		return nil
 	}
 	held := m.allianceHeldSystems(ctx, seat.AllianceID)
 	border := map[int64]int{}
@@ -240,7 +200,7 @@ func (m *Mod) pickStationTarget(ctx context.Context, c *corpCEO, ch Charter, sea
 		}
 	}
 	if len(border) == 0 {
-		return stationTarget{}, false
+		return nil
 	}
 	now := clock.Unix()
 	resting := map[int64]bool{}
@@ -258,7 +218,7 @@ func (m *Mod) pickStationTarget(ctx context.Context, c *corpCEO, ch Charter, sea
 		  JOIN staStationTypes t ON t.stationTypeID = st.stationTypeID AND t.conquerable = 1
 		 WHERE st.solarSystemID IN (`+int64CSV(mapKeys(border))+`)`)
 	if err != nil {
-		return stationTarget{}, false
+		return nil
 	}
 	var cands []stationTarget
 	for rows.Next() {
@@ -272,6 +232,9 @@ func (m *Mod) pickStationTarget(ctx context.Context, c *corpCEO, ch Charter, sea
 	var out []stationTarget
 	for _, t := range cands {
 		if slices.Contains(corps, t.owner) || u.meta[t.sysID].Security >= 0 {
+			continue
+		}
+		if len(m.openSieges(ctx, `towerID = ? AND targetKind = 'station'`, t.stationID)) > 0 {
 			continue
 		}
 		if relDeclaredBlue(c.CorpID, seat.AllianceID, t.owner, m.corpAllianceID(ctx, t.owner)) || relAllied(c.CorpID, t.owner) {
@@ -288,19 +251,13 @@ func (m *Mod) pickStationTarget(ctx context.Context, c *corpCEO, ch Charter, sea
 			Defended: managed, Danger: m.towerDanger(ctx, c.CorpID, t.sysID, u.meta[t.sysID].Security, ch.PosDangerWeight)})
 		out = append(out, t)
 	}
-	if len(out) == 0 {
-		return stationTarget{}, false
-	}
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].score != out[j].score {
 			return out[i].score > out[j].score
 		}
 		return out[i].stationID < out[j].stationID
 	})
-	if len(m.openSieges(ctx, `towerID = ? AND targetKind = 'station'`, out[0].stationID)) > 0 {
-		return stationTarget{}, false
-	}
-	return out[0], true
+	return out
 }
 
 // mapKeys is a set's keys.
@@ -351,7 +308,8 @@ func (m *Mod) advanceStationSiege(ctx context.Context, c *corpCEO, s *siegeRow) 
 	bashing, holding := false, false
 	side := append([]int64{c.CorpID}, m.allianceMemberCorps(ctx, c.CorpID)...)
 	defer func() {
-		noteSiegeBash(s.TowerID, bashing && s.Stage == "bash", now)
+		// On a watched grid the guns stay live while the fleet holds the system (possiege.go).
+		noteSiegeBash(s.TowerID, (bashing || holding) && s.Stage == "bash", now)
 		var mark []int64
 		if bashing || (holding && s.Stage != "done") {
 			mark = side
@@ -390,23 +348,33 @@ func (m *Mod) advanceStationSiege(ctx context.Context, c *corpCEO, s *siegeRow) 
 	fleet := m.siegeAttackers(ctx, c.CorpID, s.SystemID)
 	att := siegePresent(fleet, s.SystemID, gridFight, station)
 	holding = gridFight && len(fleet) > 0
+	hp := m.structureHPOf(ctx, typeID, false)
+	q := siegeQuota(hp, siegeWindowSec, siegeQuotaMargin)
+	res := resOr(hp.SRes, 1)
+	ehp, regen := q.BashEHP, q.Regen
+	s.FleetDPS = siegeFleetDPS(att)
 	was := s.Stage
-	stage, abandon := siegeMusterNext(s, len(att), now)
-	if abandon != "" {
-		m.closeSiege(ctx, s, "abandoned", strings.ReplaceAll(abandon, "the tower broke", "the shield broke"))
+	next := siegeStageNext(siegeStageIn{Stage: s.Stage, StageAt: s.StageAt, OpenedAt: s.OpenedAt, Now: now,
+		LowSince: s.LowSince, FleetLive: m.siegeFleetLive(ctx, s), FleetDPS: s.FleetDPS, Regen: regen,
+		Window: siegeWindowSec})
+	s.LowSince = next.LowSince
+	if next.Abandon != "" {
+		m.closeSiege(ctx, s, siegeAbandonResult(was), next.Abandon)
 		return nil
 	}
-	setStage(s, stage, now)
+	setStage(s, next.Stage, now)
 	name := stationNameOf(ctx, m, s.TowerID)
-	if was == "muster" && stage == "bash" && s.Damage == 0 {
-		m.ceoLog(ctx, c, powerWar, "stationsiege", s.TowerID, 0, "opened fire on %s, held by %s",
-			name, corpNameOf(ctx, m.db, owner))
+	if was == "muster" && s.Stage == "bash" && s.Damage == 0 {
+		m.ceoLog(ctx, c, powerWar, "stationsiege", s.TowerID, s.FleetDPS,
+			"opened fire on %s, held by %s — %.0f DPS on it against %.0f/s of shield regeneration",
+			name, corpNameOf(ctx, m.db, owner), s.FleetDPS, regen)
 		if aid := m.corpAllianceID(ctx, c.CorpID); aid != 0 {
 			m.allianceBook(ctx, aid, c.CorpID, "stationsiege", s.TowerID, float64(len(att)),
-				"%d pilot(s) opened fire on %s", len(att), name)
+				"%d pilot(s) opened fire on %s with %.0f DPS", len(att), name, s.FleetDPS)
 		}
 	}
-	if len(att) < siegeMinAttackers {
+	if s.Stage != "bash" || len(att) == 0 {
+		// Mustering, or a bash with nobody present: the low-DPS clock (siegeStageNext) runs it down.
 		m.saveSiege(ctx, s)
 		return nil
 	}
@@ -436,9 +404,6 @@ func (m *Mod) advanceStationSiege(ctx context.Context, c *corpCEO, s *siegeRow) 
 		}
 	}
 	bashing = true
-	shield, tau, res := m.stationShield(ctx, typeID)
-	ehp := stationShieldEHP(shield, res)
-	regen := stationRegenEHP(shield, tau, res)
 	if station != nil {
 		// The ball holds the true shield. A freshly loaded ball is full (station HP is memory only), so
 		// the desk's standing damage is carried onto it once.
@@ -481,10 +446,6 @@ func (m *Mod) advanceStationSiege(ctx context.Context, c *corpCEO, s *siegeRow) 
 			return fmt.Errorf("conquer %d: %w", s.TowerID, err)
 		}
 		m.closeSiege(ctx, s, "taken", "the shield broke")
-		return nil
-	}
-	if s.Damage <= 0 && dps > 0 && dps <= regen && s.StageAt > 0 && now-s.StageAt > stationNoHeadwaySec {
-		m.closeSiege(ctx, s, "abandoned", "the fleet could not out-shoot the shield's regeneration")
 		return nil
 	}
 	m.saveSiege(ctx, s)

@@ -2,9 +2,11 @@ package rolebots
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
+	evedb "gurimoon/db"
 	"gurimoon/destiny"
 	"gurimoon/rates"
 )
@@ -47,17 +49,30 @@ func fleetHoldPoint(eb *embodiedBot) (fleetHold, bool) {
 		lead = fleetLeaderLive(eb)
 	}
 	if lead == nil || lead.fleetCmd == nil {
-		return fleetHold{}, false
+		// No commander on this grid: the member's own copy of the siege hold (loadFleetSeat).
+		return ownSiegeHold(eb)
 	}
 	lead.mu.Lock()
 	cmd := lead.fleetCmd
 	h := fleetHold{At: cmd.HoldAt, Ball: uint32(cmd.HoldBall), RangeM: cmd.HoldRangeM, Bash: cmd.HoldBash}
 	busy := lead.call.engaged || lead.fighting || lead.call.retreat
 	lead.mu.Unlock()
-	if h.At == 0 || busy {
+	if busy {
 		return fleetHold{}, false
 	}
+	if h.At == 0 {
+		// A commander embodied before the siege reached this system holds nothing; its line still does.
+		return ownSiegeHold(eb)
+	}
 	return h, true
+}
+
+// ownSiegeHold is a member's own siege hold, when it has one.
+func ownSiegeHold(eb *embodiedBot) (fleetHold, bool) {
+	if eb.siegeHold.At == 0 {
+		return fleetHold{}, false
+	}
+	return eb.siegeHold, true
 }
 
 // fleetHoldTick flies a member to its fleet's hold point and keeps it there. It reports whether it
@@ -105,7 +120,8 @@ func (m *Mod) fleetHoldTick(eb *embodiedBot, now time.Time) bool {
 	}
 	m.embodyOrbit(eb, ballID, h.RangeM, radius)
 	if ball != nil && h.Bash && siegeBashLive(int64(h.Ball), clock.Unix()) {
-		m.siegeFire(eb, ball)
+		// A tower's batteries go first, then the tower (siegeShotTarget).
+		m.siegeFire(eb, m.siegeShotTarget(eb, ball))
 	} else {
 		m.siegeFXStop(eb)
 	}
@@ -164,9 +180,35 @@ func siegeOnGrid(charID, sysID int64, tower *destiny.Entity) bool {
 // siegeFX is one projection's own copy of its guns for the bash, apart from the combat loop's
 // (eb.load), so the two never share a weapon's firing state.
 type siegeFX struct {
-	eb      *embodiedBot // the projection the copy was loaded for; a new one reloads
-	load    *combatLoadout
-	loading bool
+	eb       *embodiedBot // the projection the copy was loaded for; a new one reloads
+	load     *combatLoadout
+	loading  bool
+	loadedAt time.Time // when load was read; an empty or old copy is read again (siegeFXStale)
+	// The pilot's hits since its last log line (siegeHitLogEvery).
+	hitDmg   float64
+	hitShots int
+	hitLogAt time.Time
+}
+
+const (
+	// siegeFXEmptyRetry is how soon a copy with no guns in it is read again: the reload from the
+	// hold (gunreload.go) runs on the read, so a pilot that came onto the grid dry picks its guns up.
+	siegeFXEmptyRetry = time.Minute
+	// siegeFXRefresh is how long any copy stands before it is read again, so a refit or a round
+	// swapped in by a reload reaches the bash.
+	siegeFXRefresh = 10 * time.Minute
+	// siegeHitLogEvery spaces one pilot's "hitting the structure" log lines.
+	siegeHitLogEvery = 2 * time.Minute
+	// siegeGridLogEvery spaces the server log's per-structure summary of the grid's fire.
+	siegeGridLogEvery = time.Minute
+)
+
+// siegeFXStale reports whether a copy of the guns should be read again. Pure.
+func siegeFXStale(weapons int, loadedAt, now time.Time) bool {
+	if weapons == 0 {
+		return now.Sub(loadedAt) >= siegeFXEmptyRetry
+	}
+	return now.Sub(loadedAt) >= siegeFXRefresh
 }
 
 var (
@@ -182,6 +224,9 @@ func init() {
 		siegeGridShotMu.Lock()
 		delete(siegeGridShots, id)
 		siegeGridShotMu.Unlock()
+		siegeBashMu.Lock()
+		delete(siegeParked, id)
+		siegeBashMu.Unlock()
 	})
 }
 
@@ -189,11 +234,22 @@ func init() {
 // capacitor skips a cycle; a gun out of ammunition stops for an hour, as in the combat loop. The
 // first call loads the guns off the grid tick and fires on a later one.
 func (m *Mod) siegeFire(eb *embodiedBot, tower *destiny.Entity) {
+	now := time.Now()
 	siegeFXMu.Lock()
 	fx := siegeFXOf[eb.charID]
 	if fx == nil || fx.eb != eb {
 		fx = &siegeFX{eb: eb}
 		siegeFXOf[eb.charID] = fx
+	}
+	if fx.load != nil && !fx.loading && siegeFXStale(len(fx.load.weapons), fx.loadedAt, now) {
+		// Read the guns again: the read reloads empty ones from the hold first.
+		old := fx.load
+		fx.load = nil
+		siegeFXMu.Unlock()
+		for _, w := range old.weapons {
+			m.stopWeaponFire(eb, w)
+		}
+		siegeFXMu.Lock()
 	}
 	l, loading := fx.load, fx.loading
 	if l == nil && !loading {
@@ -210,7 +266,6 @@ func (m *Mod) siegeFire(eb *embodiedBot, tower *destiny.Entity) {
 		m.siegeFXStop(eb)
 		return
 	}
-	now := time.Now()
 	for _, w := range l.weapons {
 		if now.Before(w.nextFireAt) {
 			continue
@@ -223,7 +278,13 @@ func (m *Mod) siegeFire(eb *embodiedBot, tower *destiny.Entity) {
 		}
 		if !m.consumeCharge(eb, w) {
 			m.stopWeaponFire(eb, w)
+			// The load ran out: reload from the hold and rest the gun a reload's length.
+			if m.reloadGunFromHold(eb, w) {
+				w.nextFireAt = now.Add(gunReloadDelay)
+				continue
+			}
 			w.nextFireAt = now.Add(time.Hour)
+			m.logBot(eb.charID, logWarn, "siege", "%s is out of ammunition, hold included", w.Name)
 			continue
 		}
 		w.nextFireAt = now.Add(cycle)
@@ -232,10 +293,75 @@ func (m *Mod) siegeFire(eb *embodiedBot, tower *destiny.Entity) {
 		r := rates.PlayerDamage
 		applied, destroyed := tower.ApplyDamage(em*r, exp*r, kin*r, therm*r)
 		noteSiegeGridShot(eb.charID, clock.Unix())
+		m.noteSiegeGridHit(eb, fx, tower, applied, now)
 		if m.landDamage(eb, tower, applied, destroyed, w.TypeID) {
 			m.siegeFXStop(eb)
 			return
 		}
+	}
+}
+
+// siegeGridFire is the grid's fire on one structure since its last server log line.
+type siegeGridFire struct {
+	dmg      float64
+	shooters map[int64]bool
+	since    time.Time
+}
+
+var (
+	siegeGridFireMu sync.Mutex
+	siegeGridFireOf = map[uint32]*siegeGridFire{}
+)
+
+// noteSiegeGridHit books one hit on a sieged structure: the pilot's own log line every
+// siegeHitLogEvery, and the server log's summary of the whole grid's fire every
+// siegeGridLogEvery. A bash on a watched grid otherwise leaves no trace but the shield bar.
+func (m *Mod) noteSiegeGridHit(eb *embodiedBot, fx *siegeFX, target *destiny.Entity, applied float64, now time.Time) {
+	if target == nil || applied <= 0 {
+		return
+	}
+	name := target.CharName
+	if name == "" {
+		name = fmt.Sprintf("structure %d", target.ID)
+	}
+	shield := 100.0
+	if target.HP.MaxShield > 0 {
+		shield = 100 * target.HP.CurShield / target.HP.MaxShield
+	}
+
+	siegeFXMu.Lock()
+	fx.hitDmg += applied
+	fx.hitShots++
+	var pilotLine string
+	if fx.hitLogAt.IsZero() {
+		fx.hitLogAt = now
+	} else if now.Sub(fx.hitLogAt) >= siegeHitLogEvery {
+		pilotLine = fmt.Sprintf("hitting %s: %d shot(s), %.0f damage in the last %s — shield at %.1f%%",
+			name, fx.hitShots, fx.hitDmg, now.Sub(fx.hitLogAt).Round(time.Second), shield)
+		fx.hitDmg, fx.hitShots, fx.hitLogAt = 0, 0, now
+	}
+	siegeFXMu.Unlock()
+	if pilotLine != "" {
+		m.logBot(eb.charID, logInfo, "siege", "%s", pilotLine)
+	}
+
+	siegeGridFireMu.Lock()
+	g := siegeGridFireOf[target.ID]
+	if g == nil {
+		g = &siegeGridFire{shooters: map[int64]bool{}, since: now}
+		siegeGridFireOf[target.ID] = g
+	}
+	g.dmg += applied
+	g.shooters[eb.charID] = true
+	var gridLine string
+	if now.Sub(g.since) >= siegeGridLogEvery {
+		gridLine = fmt.Sprintf("rolebots: siege grid %s (%d) in %d: %d shooter(s), %.0f damage in %s, shield %.1f%%",
+			name, target.ID, eb.systemID, len(g.shooters), g.dmg, now.Sub(g.since).Round(time.Second), shield)
+		delete(siegeGridFireOf, target.ID)
+	}
+	siegeGridFireMu.Unlock()
+	if gridLine != "" {
+		rlogf("%s", gridLine)
 	}
 }
 
@@ -251,6 +377,7 @@ func (m *Mod) loadSiegeFX(eb *embodiedBot, fx *siegeFX) {
 	siegeFXMu.Lock()
 	defer siegeFXMu.Unlock()
 	fx.loading = false
+	fx.loadedAt = time.Now()
 	if err == nil {
 		fx.load = l
 	}
@@ -273,4 +400,109 @@ func (m *Mod) siegeFXStop(eb *embodiedBot) {
 	for _, w := range l.weapons {
 		m.stopWeaponFire(eb, w)
 	}
+}
+
+// ── the batteries first ─────────────────────────────────────────────────────
+
+// siegeBatteryReachM is how far from a sieged tower an anchored battery counts as its defence.
+const siegeBatteryReachM = 75_000.0
+
+// siegeBatteryEvery is how long one pick of a tower's next battery stands, so the line keeps one
+// primary instead of re-reading the structures on every gun cycle.
+const siegeBatteryEvery = 5 * time.Second
+
+// siegeBatteryRank is the order a siege line clears a tower's batteries in: what breaks its locks
+// and holds it first (ECM, scram, web, damp), then the guns. -1 for anything that is not a
+// battery (a silo, a lab, an array). Pure.
+func siegeBatteryRank(groupID int64) int {
+	switch groupID {
+	case 439: // ECM battery
+		return 0
+	case 443: // warp scrambling battery
+		return 1
+	case 441: // stasis webification battery
+		return 2
+	case 440: // sensor dampening battery
+		return 3
+	}
+	if evedb.IsSentryGroup(groupID) {
+		return 4
+	}
+	return -1
+}
+
+// batteryCand is one anchored battery a siege line could shoot.
+type batteryCand struct {
+	ID    uint32
+	Group int64
+	DistM float64 // from the tower
+}
+
+// pickSiegeBattery is the battery the whole line shoots next: the highest rank (siegeBatteryRank)
+// within reachM of the tower, the lower ID on a tie, so every member picks the same one. Pure.
+func pickSiegeBattery(cands []batteryCand, reachM float64) (uint32, bool) {
+	best := -1
+	for i, c := range cands {
+		r := siegeBatteryRank(c.Group)
+		if r < 0 || c.DistM > reachM {
+			continue
+		}
+		if best < 0 {
+			best = i
+			continue
+		}
+		br := siegeBatteryRank(cands[best].Group)
+		if r < br || (r == br && c.ID < cands[best].ID) {
+			best = i
+		}
+	}
+	if best < 0 {
+		return 0, false
+	}
+	return cands[best].ID, true
+}
+
+var (
+	siegeBatteryMu  sync.Mutex
+	siegeBatteryFor = map[uint32]struct {
+		id uint32
+		at time.Time
+	}{}
+)
+
+// siegeShotTarget is what a siege line shoots on a watched tower grid: the tower owner's anchored
+// batteries first (pickSiegeBattery), then the tower. A station, and a tower with no battery
+// left in reach, is its own target.
+func (m *Mod) siegeShotTarget(eb *embodiedBot, tower *destiny.Entity) *destiny.Entity {
+	if eb == nil || eb.ss == nil || tower == nil || !eb.ss.IsStructureEntity(tower.ID) {
+		return tower
+	}
+	now := time.Now()
+	siegeBatteryMu.Lock()
+	pick, ok := siegeBatteryFor[tower.ID]
+	siegeBatteryMu.Unlock()
+	if !ok || now.Sub(pick.at) >= siegeBatteryEvery {
+		var cands []batteryCand
+		for _, e := range eb.ss.SnapshotStructureEntities() {
+			if e == nil || e.ID == tower.ID || e.IsDestroyed() || e.IsInvulnerable() ||
+				e.Slim.OwnerID != tower.Slim.OwnerID {
+				continue
+			}
+			cands = append(cands, batteryCand{ID: e.ID, Group: e.Slim.GroupID, DistM: e.Pos().Sub(tower.Pos()).Len()})
+		}
+		id, _ := pickSiegeBattery(cands, siegeBatteryReachM)
+		pick = struct {
+			id uint32
+			at time.Time
+		}{id, now}
+		siegeBatteryMu.Lock()
+		siegeBatteryFor[tower.ID] = pick
+		siegeBatteryMu.Unlock()
+	}
+	if pick.id != 0 {
+		if e := eb.ss.GetEntity(pick.id); e != nil && !e.IsDestroyed() {
+			return e
+		}
+	}
+	return tower
 }

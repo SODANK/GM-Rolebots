@@ -224,6 +224,9 @@ type GangState struct {
 	// HelpCallID is the help call (rolebot_fleet_help, gangcalls.go) this fleet is
 	// answering or was raised for; 0 otherwise.
 	HelpCallID int64 `json:"helpCallID,omitempty"`
+	// SiegeID is the siege this fleet was raised for (siegefleet.go): the siege keeps it alive
+	// (leaseSiegeGangs) and its muster is judged on the siege's DPS quota. 0 otherwise.
+	SiegeID int64 `json:"siegeID,omitempty"`
 	// LastRunAt is when the wind-down's last collection run was called
 	// (gangPlanWindDown): haulers go back for what is left in the cans. Set once,
 	// and the deadline is extended once with it.

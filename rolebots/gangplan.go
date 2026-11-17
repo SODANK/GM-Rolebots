@@ -93,6 +93,10 @@ func (m *Mod) gangSeatReady(ctx context.Context, b *botRun, activity string) (bo
 	if _, err := m.reloadFromCargo(ctx, b, a.ShipItemID, t.Fit); err != nil {
 		return false, err
 	}
+	// A siege fleet's member buys the bash window's rounds at its muster, once (siegeammo.go).
+	if started, err := m.siegeDeepLoad(ctx, b, a, t, activity); err != nil || started {
+		return false, err
+	}
 
 	if b.ShipID == a.ShipItemID {
 		return true, nil
@@ -165,6 +169,16 @@ func (m *Mod) seatVerdict(ctx context.Context, b *botRun, activity string) (seat
 					v.why = "its ship is not an industrial"
 					return v, nil
 				}
+			}
+		}
+	}
+	// A combat seat is never flown in a cargo, mining or rookie hull: an industrial with a gun on
+	// it passes "has teeth" below, but it is no line ship, and a siege counts its DPS as a gun's.
+	if activity == ActCombat || activity == ActSecurity || activity == ActPiracy {
+		if byID, _, herr := m.loadHullProfiles(ctx); herr == nil {
+			if h := byID[t.Fit.HullTypeID]; h != nil && !siegeHullClass(h.Class) && h.Class != ClassCapital {
+				v.why = "its ship is not a combat hull"
+				return v, nil
 			}
 		}
 	}
@@ -2747,6 +2761,11 @@ func (m *Mod) musterResolve(ctx context.Context, g *Gang) error {
 		}
 	}
 	rows.Close()
+
+	// A siege's fleet is released on DPS against the siege's quota, not a head count.
+	if g.State.SiegeID != 0 {
+		return m.siegeMusterResolve(ctx, g, present, enRoute, stuck)
+	}
 
 	now := clock.Unix()
 	deadline := now >= g.State.MusterDeadline

@@ -239,6 +239,13 @@ type fleetOrderSpec struct {
 	// brawl) instead of the siege doctrine. formCallsToArms sets it when no commander can seat
 	// the siege doctrine.
 	LineDoctrine bool
+	// SiegeID marks the one alliance fleet raised for a siege (siegefleet.go): it musters at
+	// StagingStationID (forward of the target, not the commander's home), recruits from
+	// SiegeCorps, flies the siege muster doctrine, and is judged at its muster on QuotaDPS.
+	SiegeID          int64
+	StagingStationID int64
+	SiegeCorps       []int64
+	QuotaDPS         float64
 }
 
 func (m *Mod) takeFleetCommand(ctx context.Context, c corpCommand) {

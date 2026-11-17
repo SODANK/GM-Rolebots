@@ -308,6 +308,13 @@ func ensureStarbaseTables(ctx context.Context, db *sql.DB) error {
 		// What a siege is on: a tower (towerID is the tower) or a conquerable station (towerID is the
 		// stationID, stationsiege.go).
 		`ALTER TABLE rolebot_corp_siege ADD COLUMN IF NOT EXISTS targetKind VARCHAR(8) NOT NULL DEFAULT 'tower'`,
+		// The quota a siege opened on and how its fleet is doing against it (siegequota.go), and the
+		// siege's own fleet (siegefleet.go).
+		`ALTER TABLE rolebot_corp_siege ADD COLUMN IF NOT EXISTS quotaDPS DOUBLE NOT NULL DEFAULT 0`,
+		`ALTER TABLE rolebot_corp_siege ADD COLUMN IF NOT EXISTS regenEHP DOUBLE NOT NULL DEFAULT 0`,
+		`ALTER TABLE rolebot_corp_siege ADD COLUMN IF NOT EXISTS fleetDPS DOUBLE NOT NULL DEFAULT 0`,
+		`ALTER TABLE rolebot_corp_siege ADD COLUMN IF NOT EXISTS lowSince BIGINT NOT NULL DEFAULT 0`,
+		`ALTER TABLE rolebot_corp_siege ADD COLUMN IF NOT EXISTS gangID BIGINT NOT NULL DEFAULT 0`,
 	} {
 		if _, err := db.ExecContext(ctx, s); err != nil {
 			return fmt.Errorf("ensureStarbaseTables: %w", err)

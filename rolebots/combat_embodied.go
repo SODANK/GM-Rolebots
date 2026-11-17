@@ -339,6 +339,9 @@ func (m *Mod) loadCombatLoadout(ctx context.Context, charID, shipID, shipTypeID 
 	if err != nil {
 		return nil, fmt.Errorf("fitted modules: %w", err)
 	}
+	// A gun that ran dry on the last fight is reloaded from the hold before it is read: buildWeapon
+	// drops an empty gun, and a ship with its hold full of rounds would read as unarmed (gunreload.go).
+	m.reloadEmptyGuns(ctx, charID, shipID, fitted)
 
 	l := &combatLoadout{
 		targetRnge: combatDefaultTargetRange,
@@ -1700,9 +1703,14 @@ func (m *Mod) runWeaponCycles(eb *embodiedBot, l *combatLoadout, target *destiny
 			continue
 		}
 		if !m.consumeCharge(eb, w) {
-			// Out of ammo. The gun goes quiet for the rest of the fight; the
-			// procurement pass restocks it when the bot next docks.
 			m.stopWeaponFire(eb, w)
+			// The load ran out: reload from the hold and rest the gun a reload's length.
+			if m.reloadGunFromHold(eb, w) {
+				w.nextFireAt = now.Add(gunReloadDelay)
+				continue
+			}
+			// Out of ammo, hold included. The gun goes quiet for the rest of the fight; the
+			// procurement pass restocks it when the bot next docks.
 			w.nextFireAt = now.Add(time.Hour)
 			m.logBot(eb.charID, logWarn, "combat", "%s is out of ammunition", w.Name)
 			continue

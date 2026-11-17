@@ -551,25 +551,52 @@ const callToArmsTries = 6
 // department's commanders under the siege doctrine, then again under the war line
 // (LineDoctrine), and stops at the first fleet that forms or after callToArmsTries attempts.
 func (m *Mod) formCallToArms(ctx context.Context, tally *formTally, callID, corpID, sysID, exp int64, note string) {
+	// A siege's call raises the siege's one alliance fleet (siegefleet.go), once: a fleet already
+	// linked to it, under any member's flag, answers it.
+	siege := m.siegeForCall(ctx, corpID, sysID)
+	if siege != nil && m.siegeGangAlive(ctx, siege) {
+		return
+	}
+	var siegeCorps []int64
+	var staging int64
+	commandCorps := []int64{corpID}
+	if siege != nil {
+		siegeCorps = m.siegeRecruitCorps(ctx, siege)
+		staging = m.forwardStaging(ctx, siege, siegeCorps)
+		// The lead's commanders first, then any member's: the siege must not wait on one corporation.
+		for _, c := range siegeCorps {
+			if c != corpID {
+				commandCorps = append(commandCorps, c)
+			}
+		}
+	}
 	var seats []fcSeat
 	why := ""
-	for _, act := range []string{ActSecurity, ActCombat} {
-		// formFleetAround skips the formation back-off for an order, so it is read here: a
-		// call-to-arms fleet that stood down at muster (siegeAttackFloor) is not raised again
-		// on the next pass.
-		if formBackedOff(corpID, act) > 0 {
-			why = "backing off after a fleet that fell apart"
-			continue
+	for _, cc := range commandCorps {
+		for _, act := range []string{ActSecurity, ActCombat} {
+			// formFleetAround skips the formation back-off for an order, so it is read here: a
+			// call-to-arms fleet that stood down at muster (siegeAttackFloor) is not raised again
+			// on the next pass.
+			if formBackedOff(cc, act) > 0 {
+				why = "backing off after a fleet that fell apart"
+				continue
+			}
+			got, w := m.pickOrderCommanders(ctx, cc, act, callToArmsTries/2)
+			if len(got) == 0 {
+				why = w
+			}
+			seats = append(seats, got...)
 		}
-		got, w := m.pickOrderCommanders(ctx, corpID, act, callToArmsTries/2)
-		if len(got) == 0 {
-			why = w
+		if siege == nil || len(seats) >= callToArmsTries {
+			break
 		}
-		seats = append(seats, got...)
 	}
 	if len(seats) == 0 {
 		tally.refuse(fcSeat{activity: helpCallToArms}, "call to arms: "+why)
 		return
+	}
+	if siege != nil {
+		seats = m.orderSiegeCommanders(ctx, seats, m.stationSystemOf(ctx, staging))
 	}
 	sysName := m.nameOfSystem(ctx, sysID)
 	tries := 0
@@ -586,6 +613,12 @@ func (m *Mod) formCallToArms(ctx context.Context, tally *formTally, callID, corp
 				LifeSec: max(exp-clock.Unix(), 0) + 2*3600, CallToArms: true, HelpCallID: callID,
 				LineDoctrine: line,
 			}
+			if siege != nil {
+				// The siege muster doctrine seats any combat hull; the war line is never needed.
+				spec.LineDoctrine = false
+				spec.SiegeID, spec.StagingStationID, spec.SiegeCorps = siege.SiegeID, staging, siegeCorps
+				spec.QuotaDPS = siege.QuotaDPS
+			}
 			formed, r, err := m.formFleetAround(ctx, seat, spec)
 			if err != nil {
 				rlogf("rolebots: call to arms corp %d: %v", corpID, err)
@@ -596,6 +629,12 @@ func (m *Mod) formCallToArms(ctx context.Context, tally *formTally, callID, corp
 				doctrine := "the siege doctrine"
 				if line {
 					doctrine = "the war line"
+				}
+				if siege != nil {
+					doctrine = "the siege muster doctrine"
+					if staging != 0 {
+						doctrine += ", staging at " + stationNameOf(ctx, m, staging)
+					}
 				}
 				m.logBot(seat.charID, logInfo, "gang", "raised a call-to-arms fleet for %s on %s — %s",
 					sysName, doctrine, strings.TrimSpace(note))

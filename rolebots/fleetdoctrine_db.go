@@ -481,6 +481,15 @@ func (m *Mod) fleetDoctrineForFleet(ctx context.Context, seat fcSeat, activity s
 			have = m.fleetDoctrinesFor(ctx, exec)
 		}
 	}
+	// A siege's one fleet flies the siege muster doctrine (siegefleet.go): any combat hull the
+	// pilot can bring, on the corporation's layer. It needs no derived doctrine of its own.
+	if order != nil && order.SiegeID != 0 {
+		tank, ceiling := TankNone, 0.0
+		if len(have) > 0 {
+			tank, ceiling = have[0].Tank, have[0].CostCeiling
+		}
+		return siegeMusterDoctrine(seat.corpID, tank, ceiling)
+	}
 	if len(have) == 0 {
 		return nil
 	}

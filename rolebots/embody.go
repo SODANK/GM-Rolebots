@@ -225,6 +225,10 @@ type embodiedBot struct {
 	// Where the commander was when this projection last looked, and when. The escort tick uses it
 	// to choose between an approach and a warp.
 	escortSeenAt time.Time
+	// siegeHold is a fleet member's own copy of its side's siege hold in this system, read at
+	// embodiment (loadFleetSeat). fleetHoldPoint falls back on it when the commander is not on
+	// this grid, so the line holds and shoots without one.
+	siegeHold fleetHold
 
 	// Earliest this projection may ask the warp budget again after a refusal (see deferWarp). It
 	// stops refused bots re-asking in lockstep.

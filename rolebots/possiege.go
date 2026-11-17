@@ -28,7 +28,6 @@ const (
 	siegeFormUpSec      = 2 * 3600
 	siegeInSystemSec    = 30 * 60
 	siegeAfterExitSec   = 3600
-	siegeIdleAbandonSec = 24 * 3600 // how long a siege may sit in muster before it is abandoned
 	siegeMaxAgeSec      = 4 * 86400 // how long any siege may stay open, however its stages move
 	siegeMinAttackers   = 3
 	siegeMaxElapsedSec  = 1800
@@ -54,6 +53,15 @@ type siegeRow struct {
 	// Kind is siegeKindTower (TowerID is the tower) or siegeKindStation (TowerID is a conquerable
 	// station, stationsiege.go).
 	Kind string
+	// The quota the siege opened on (siegequota.go): the DPS it takes, and the shield's peak
+	// regeneration in EHP/s. 0 on rows older than the columns; read through siegeQuotaFor.
+	QuotaDPS, RegenEHP float64
+	// FleetDPS is the attackers' DPS at the last pass; LowSince when it last fell to or under the
+	// regeneration in a bash (siegeStageNext), 0 while it is ahead.
+	FleetDPS float64
+	LowSince int64
+	// GangID is the siege's own fleet, 0 when it has none (siegefleet.go).
+	GangID int64
 }
 
 const (
@@ -61,12 +69,13 @@ const (
 	siegeKindStation = "station"
 )
 
-const siegeCols = `siegeID, towerID, systemID, attackerCorpID, defenderCorpID, exitAt, phase, result, damage, lastAt, openedAt, stageAt, targetKind`
+const siegeCols = `siegeID, towerID, systemID, attackerCorpID, defenderCorpID, exitAt, phase, result, damage, lastAt, openedAt, stageAt, targetKind, quotaDPS, regenEHP, fleetDPS, lowSince, gangID`
 
 func scanSiege(sc interface{ Scan(...any) error }) (*siegeRow, error) {
 	var s siegeRow
 	err := sc.Scan(&s.SiegeID, &s.TowerID, &s.SystemID, &s.AttackerCorpID, &s.DefenderCorpID, &s.ExitAt,
-		&s.Stage, &s.Result, &s.Damage, &s.LastAt, &s.OpenedAt, &s.StageAt, &s.Kind)
+		&s.Stage, &s.Result, &s.Damage, &s.LastAt, &s.OpenedAt, &s.StageAt, &s.Kind,
+		&s.QuotaDPS, &s.RegenEHP, &s.FleetDPS, &s.LowSince, &s.GangID)
 	return &s, err
 }
 
@@ -99,32 +108,6 @@ func siegeStalled(s *siegeRow, now int64) bool {
 	return start > 0 && now-start > siegeStageMaxSec
 }
 
-// siegeMusterNext decides a muster, bash or kill stage's next stage from the attackers in the
-// system. Too few attackers turn a bash back into a muster, enough turn a muster into a bash, and a
-// muster older than siegeIdleAbandonSec is abandoned with the note returned. A kill stage holds:
-// the tower is already out of reinforcement. Pure.
-func siegeMusterNext(s *siegeRow, attackers int, now int64) (stage, abandon string) {
-	enough := attackers >= siegeMinAttackers
-	switch {
-	case s.Stage == "muster" && enough:
-		return "bash", ""
-	case s.Stage == "bash" && !enough:
-		return "muster", ""
-	case s.Stage == "muster":
-		start := s.StageAt
-		if start == 0 {
-			start = s.OpenedAt
-		}
-		if start > 0 && now-start > siegeIdleAbandonSec {
-			if s.Damage > 0 {
-				return s.Stage, "the fleet left before the tower broke"
-			}
-			return s.Stage, "the fleet never formed"
-		}
-	}
-	return s.Stage, ""
-}
-
 func (m *Mod) openSieges(ctx context.Context, where string, args ...any) []*siegeRow {
 	rows, err := m.db.QueryContext(ctx, `SELECT `+siegeCols+` FROM rolebot_corp_siege WHERE closedAt = 0 AND `+where, args...)
 	if err != nil {
@@ -142,8 +125,9 @@ func (m *Mod) openSieges(ctx context.Context, where string, args ...any) []*sieg
 
 func (m *Mod) saveSiege(ctx context.Context, s *siegeRow) {
 	_, _ = m.db.ExecContext(ctx, `
-		UPDATE rolebot_corp_siege SET exitAt = ?, phase = ?, result = ?, damage = ?, lastAt = ?, stageAt = ? WHERE siegeID = ?`,
-		s.ExitAt, s.Stage, s.Result, s.Damage, s.LastAt, s.StageAt, s.SiegeID)
+		UPDATE rolebot_corp_siege SET exitAt = ?, phase = ?, result = ?, damage = ?, lastAt = ?, stageAt = ?,
+		       fleetDPS = ?, lowSince = ? WHERE siegeID = ?`,
+		s.ExitAt, s.Stage, s.Result, s.Damage, s.LastAt, s.StageAt, s.FleetDPS, s.LowSince, s.SiegeID)
 }
 
 func (m *Mod) closeSiege(ctx context.Context, s *siegeRow, result, note string) {
@@ -152,6 +136,11 @@ func (m *Mod) closeSiege(ctx context.Context, s *siegeRow, result, note string) 
 	_, _ = m.db.ExecContext(ctx, `
 		UPDATE rolebot_corp_siege SET phase = 'done', result = ?, closedAt = ?, note = ? WHERE siegeID = ?`,
 		result, now, truncate(note, 255), s.SiegeID)
+	// The siege's own fleet goes with it: the sweep disbands it this pass (leaseSiegeGangs).
+	if s.GangID != 0 {
+		_, _ = m.db.ExecContext(ctx, `UPDATE rolebot_gangs SET expiresAt = ? WHERE gangID = ? AND expiresAt > ?`,
+			now, s.GangID, now)
+	}
 	// The calls to arms for the tower close with it, so their fleets wind down now instead of
 	// waiting out the call's TTL (gangcalls.go).
 	_, _ = m.db.ExecContext(ctx, `
@@ -211,6 +200,10 @@ func (m *Mod) sidesSieges(ctx context.Context, corpID int64) []*siegeRow {
 // the field cannot lock the tower, and an attacker's line does not sit on the field's edge.
 const siegeHoldMarginM = 5_000.0
 
+// siegeStationHoldM is how far off a besieged station's hull its siege line orbits: inside a
+// frigate's guns, outside the undock's traffic. A station has no force field to stand outside.
+const siegeStationHoldM = 7_500.0
+
 // siegeHoldFor is where a fleet of corpID holds in sysID because of a siege its side has open
 // there: the tower's moon to warp to, the tower to orbit, the orbit outside the force field, and
 // bash true for the attacking side. at is 0 when there is no such siege. It reads the database and
@@ -223,12 +216,13 @@ func (m *Mod) siegeHoldFor(ctx context.Context, corpID, sysID int64) (at, ball i
 	corps := int64CSV(side)
 	for _, s := range m.openSieges(ctx, `systemID = ? AND (attackerCorpID IN (`+corps+`) OR defenderCorpID IN (`+corps+`))`, sysID) {
 		if s.isStation() {
-			// A station: warp to it, orbit it outside its hull (stationsiege.go).
-			_, _, _, radius, ok := m.stationBall(ctx, s.TowerID)
-			if !ok {
+			// A station: warp to it, orbit it siegeStationHoldM off its hull (stationsiege.go). The
+			// range is a surface distance; embodyOrbit adds the hull, so the radius is not added here
+			// (it was, and the line circled 39 km out, beyond its own guns).
+			if _, _, _, _, ok := m.stationBall(ctx, s.TowerID); !ok {
 				continue
 			}
-			return s.TowerID, s.TowerID, radius + siegeHoldMarginM, slices.Contains(side, s.AttackerCorpID)
+			return s.TowerID, s.TowerID, siegeStationHoldM, slices.Contains(side, s.AttackerCorpID)
 		}
 		rec, ok, err := evedb.GetStarbase(ctx, m.db, s.TowerID)
 		if err != nil || !ok || rec.MoonID == 0 {
@@ -270,6 +264,32 @@ func siegeBashLive(towerID, now int64) bool {
 	defer siegeBashMu.Unlock()
 	at, ok := siegeBashing[towerID]
 	return ok && now-at <= siegeBashStaleSec
+}
+
+// siegeParked is the pilots a siege fleet has parked on its target (gangSiegeStep), by system and
+// the unix second the park lapses. A parked pilot sits off a tower or a station, not on a belt, so
+// the abstract belt encounter leaves it alone (exposedInSpace). Guarded by siegeBashMu.
+var siegeParked = map[int64]siegeParkMark{}
+
+type siegeParkMark struct{ sysID, until int64 }
+
+// noteSiegeParked marks a pilot parked on a siege target in sysID until the given unix second.
+func noteSiegeParked(charID, sysID, until int64) {
+	siegeBashMu.Lock()
+	siegeParked[charID] = siegeParkMark{sysID: sysID, until: until}
+	siegeBashMu.Unlock()
+}
+
+// siegeParkedIn reports whether a pilot is parked on a siege target in sysID now.
+func siegeParkedIn(charID, sysID, now int64) bool {
+	siegeBashMu.Lock()
+	defer siegeBashMu.Unlock()
+	p, ok := siegeParked[charID]
+	if ok && now > p.until {
+		delete(siegeParked, charID)
+		return false
+	}
+	return ok && p.sysID == sysID
 }
 
 // siegeHolding is the systems where a siege is bashing, with the attacking side's corporations
@@ -370,14 +390,26 @@ func (m *Mod) siegeDesk(ctx context.Context, c *corpCEO, ch Charter, _ []*towerP
 			m.logBot(c.CharID, logError, "ceo", "siege %d: %v", s.SiegeID, err)
 		}
 	}
+	// A station siege this corporation leads advances on its desk too, not only on the alliance
+	// executor's pass (allianceStationSiege), so a watched bash does not wait out that cadence.
+	for _, s := range m.openSieges(ctx, `attackerCorpID = ? AND targetKind = 'station'`, c.CorpID) {
+		if err := m.advanceStationSiege(ctx, c, s); err != nil {
+			m.logBot(c.CharID, logError, "ceo", "station siege %d: %v", s.SiegeID, err)
+		}
+	}
 }
 
 // siegeReachJumps is how far from its HQ a corporation looks for a tower to besiege: the reach
 // its call-to-arms fleet recruits from (gangRecruitMaxJumps).
 const siegeReachJumps = gangRecruitMaxJumps
 
-// maybeOpenSiege picks an enemy tower to besiege, at war, with a fleet it can field, one siege at
-// a time. It waits siegeRetrySec after a siege whose fleet never formed, on any tower.
+// siegeOpenScan caps the towers one opening pass sizes a fleet for, nearest first.
+const siegeOpenScan = 8
+
+// maybeOpenSiege picks an enemy tower to besiege: the nearest one whose quota (siegeQuota) the
+// corporation and the mates that may join it (towerSiegeCorps) can field (siegeCapacityFor). One
+// attacking siege per alliance at a time. It waits siegeRetrySec after a siege whose fleet never
+// formed, on any tower.
 func (m *Mod) maybeOpenSiege(ctx context.Context, c *corpCEO, ch Charter) {
 	if !relCorpAtWar(c.CorpID) || len(m.openSieges(ctx, `attackerCorpID = ? AND targetKind = 'tower'`, c.CorpID)) >= siegeMaxOpen {
 		return
@@ -386,7 +418,10 @@ func (m *Mod) maybeOpenSiege(ctx context.Context, c *corpCEO, ch Charter) {
 	if len(enemies) == 0 {
 		return
 	}
-	if !m.siegeFieldable(ctx, c.CorpID) {
+	if formBackedOff(c.CorpID, ActSecurity) > 0 && formBackedOff(c.CorpID, ActCombat) > 0 {
+		return
+	}
+	if m.siegeSidesBusy(ctx, append([]int64{c.CorpID}, m.allianceMemberCorps(ctx, c.CorpID)...)) {
 		return
 	}
 	now := clock.Unix()
@@ -395,6 +430,9 @@ func (m *Mod) maybeOpenSiege(ctx context.Context, c *corpCEO, ch Charter) {
 		SELECT COALESCE(MAX(closedAt), 0) FROM rolebot_corp_siege
 		 WHERE attackerCorpID = ? AND result = 'abandoned' AND damage = 0 AND targetKind = 'tower'`, c.CorpID).Scan(&lastFailed)
 	if lastFailed > 0 && now-lastFailed < siegeRetrySec {
+		return
+	}
+	if m.siegeShortHold(ctx, []int64{c.CorpID}, now) {
 		return
 	}
 	hq := m.stationSystemID(ctx, m.corpHQStation(ctx, c.CorpID))
@@ -414,16 +452,20 @@ func (m *Mod) maybeOpenSiege(ctx context.Context, c *corpCEO, ch Charter) {
 		}
 	}
 	rows, err := m.db.QueryContext(ctx, `
-		SELECT entityID, solarSystemID, ownerCorpID FROM starbase
-		 WHERE state = 'online' AND ownerCorpID IN (`+int64CSV(enemies)+`)`)
+		SELECT s.entityID, s.solarSystemID, s.ownerCorpID, COALESCE(e.typeID, 0) FROM starbase s
+		  LEFT JOIN entity e ON e.itemID = s.entityID
+		 WHERE s.state = 'online' AND s.ownerCorpID IN (`+int64CSV(enemies)+`)`)
 	if err != nil {
 		return
 	}
-	type target struct{ tower, sys, owner int64; j int }
+	type target struct {
+		tower, sys, owner, typeID int64
+		j                         int
+	}
 	var ts []target
 	for rows.Next() {
 		var t target
-		if rows.Scan(&t.tower, &t.sys, &t.owner) == nil && !resting[t.tower] {
+		if rows.Scan(&t.tower, &t.sys, &t.owner, &t.typeID) == nil && !resting[t.tower] && t.typeID != 0 {
 			if j, ok := reach[t.sys]; ok {
 				t.j = j
 				ts = append(ts, t)
@@ -435,46 +477,54 @@ func (m *Mod) maybeOpenSiege(ctx context.Context, c *corpCEO, ch Charter) {
 		return
 	}
 	sort.Slice(ts, func(i, j int) bool { return ts[i].j < ts[j].j || (ts[i].j == ts[j].j && ts[i].tower < ts[j].tower) })
-	t := ts[0]
-	if len(m.openSieges(ctx, `towerID = ?`, t.tower)) > 0 {
-		return
+	// The nearest tower whose quota the side can field. A larger tower nearer by is passed over for
+	// a smaller one it can break, which is how the bar comes down to what the wing has.
+	var short struct {
+		t           target
+		have, quota float64
+		ps          []siegePilot
+		ok          bool
 	}
-	if _, err := m.db.ExecContext(ctx, `
-		INSERT INTO rolebot_corp_siege (towerID, systemID, attackerCorpID, defenderCorpID, phase, openedAt, lastAt, stageAt)
-		VALUES (?, ?, ?, ?, 'muster', ?, ?, ?)`, t.tower, t.sys, c.CorpID, t.owner, now, now, now); err != nil {
-		return
-	}
-	// A muster is the corporation's own plan: logged for the CEO, never announced. The siege is
-	// announced when the fleet arrives (advanceSiege).
-	m.logBot(c.CharID, logInfo, "ceo", "mustering the combat wing for a siege on %s's tower in %s (%d jumps out)",
-		corpNameOf(ctx, m.db, t.owner), systemNameOf(ctx, m, t.sys), t.j)
-}
-
-// siegeFieldable reports whether a corporation can raise a siege fleet now: neither combat
-// department is backing off after a fleet that fell apart, and at least twice siegeMinAttackers of
-// its bots are ready: its Security arm, or online and not on short hours.
-func (m *Mod) siegeFieldable(ctx context.Context, corpID int64) bool {
-	if formBackedOff(corpID, ActSecurity) > 0 && formBackedOff(corpID, ActCombat) > 0 {
-		return false
-	}
-	ids, err := int64Column(ctx, m, `
-		SELECT ch.characterID FROM character_ ch
-		  JOIN rolebot_characters b ON b.characterID = ch.characterID AND b.enabled = 1
-		 WHERE ch.corporationID = ?`, corpID)
-	if err != nil {
-		return false
-	}
-	// The combat wing answers a call to arms whatever its hours (armsAlwaysAnswers), so the whole
-	// Security arm counts; other pilots count when they are on and not on short hours.
-	ready := 0
-	for _, id := range ids {
-		if seat, ok := armOf(id, corpID); ok && seat.Arm == armSecurity {
-			ready++
-		} else if !popIsOffline(id) && !tzShortHours(id) {
-			ready++
+	for i, t := range ts {
+		if i >= siegeOpenScan {
+			break
 		}
+		if len(m.openSieges(ctx, `towerID = ?`, t.tower)) > 0 {
+			continue
+		}
+		q := siegeQuota(m.structureHPOf(ctx, t.typeID, true), siegeWindowSec, siegeQuotaMargin)
+		capa, ps := m.siegeCapacityFor(ctx, m.towerSiegeCorps(ctx, c.CorpID, t.owner, u.meta[t.sys].Security))
+		if capa.WithKits < q.OpenDPS() {
+			if !short.ok {
+				short.t, short.have, short.quota, short.ps, short.ok = t, capa.WithKits, q.OpenDPS(), ps, true
+			}
+			continue
+		}
+		if _, err := m.db.ExecContext(ctx, `
+			INSERT INTO rolebot_corp_siege (towerID, systemID, attackerCorpID, defenderCorpID, phase, openedAt, lastAt, stageAt,
+			                                quotaDPS, regenEHP)
+			VALUES (?, ?, ?, ?, 'muster', ?, ?, ?, ?, ?)`, t.tower, t.sys, c.CorpID, t.owner, now, now, now,
+			q.OpenDPS(), q.Regen); err != nil {
+			return
+		}
+		// A muster is the corporation's own plan: logged for the CEO, never announced. The siege is
+		// announced when the fleet arrives (advanceSiege).
+		m.logBot(c.CharID, logInfo, "ceo",
+			"mustering the combat wing for a siege on %s's tower in %s (%d jumps out) — %s, the wing can field ~%.0f",
+			corpNameOf(ctx, m.db, t.owner), systemNameOf(ctx, m, t.sys), t.j, siegeQuotaNote(q), capa.WithKits)
+		return
 	}
-	return ready >= siegeMinAttackers*2
+	if !short.ok {
+		return
+	}
+	what := fmt.Sprintf("%s's tower in %s", corpNameOf(ctx, m.db, short.t.owner), systemNameOf(ctx, m, short.t.sys))
+	// Short of the nearest tower's quota: hulls bought for the pilots without one may close it
+	// (siegekits.go); the siege opens on a later pass once they are on the shelf.
+	m.provisionSiegeKits(ctx, c, short.ps, short.quota-short.have, what)
+	if now-m.lastCEOActionAt(ctx, c.CorpID, "siege.short") >= 86400 {
+		m.ceoLog(ctx, c, powerWar, "siege.short", short.t.tower, short.quota, "%s",
+			siegeShortLine(what, short.have, short.quota))
+	}
 }
 
 // siegeAttackFloor is the fewest pilots a call-to-arms fleet may set out with: siegeMinAttackers
@@ -676,6 +726,9 @@ func (m *Mod) gangSiegeStep(ctx context.Context, b *botRun, post siegePost, phas
 	m.parkAtSiege(ctx, b, post.TowerID)
 	st.Data.LegEndsAt = clock.Unix() +
 		int64(gangPatrolDwellMinSec+rand.Intn(gangPatrolDwellMaxSec-gangPatrolDwellMinSec+1))
+	// Off the belts until the next step re-parks it: the patrol task is exposed to belt rats, a
+	// pilot holding a tower or a station is not (exposedInSpace).
+	noteSiegeParked(b.CharID, post.SysID, st.Data.LegEndsAt+600)
 	return saveState(ctx, m.db, st)
 }
 
@@ -704,33 +757,33 @@ func (m *Mod) parkAtSiege(ctx context.Context, b *botRun, towerID int64) {
 	m.persistPosition(ctx, b.ShipID, towerID, x, y, z, radius)
 }
 
-// siegeHP is a tower's hit points for the bash: shield, armor and hull capacity, and the shield
-// fraction where it reinforces.
-type siegeHP struct{ Shield, Armor, Hull, Floor float64 }
-
-// towerSiegeHP reads a tower type's hit points and the reinforcement floor setting.
-func (m *Mod) towerSiegeHP(ctx context.Context, towerTypeID int64) siegeHP {
-	attr := func(name string) float64 {
-		v, _, _ := evedb.GetTypeAttributeFloat(ctx, m.db, towerTypeID, name)
-		return v
-	}
-	return siegeHP{Shield: attr("shieldCapacity"), Armor: attr("armorHP"), Hull: attr("hp"),
-		Floor: evedb.StarbaseReinforceShieldPct(ctx, m.db) / 100}
+// layerRes is the tower's resonance per layer for the bash: the type's own, or the old flat
+// siegeTowerResonance when a layer was never read. Pure.
+func (hp siegeHP) layerRes() (s, a, h float64) {
+	return resOr(hp.SRes, siegeTowerResonance), resOr(hp.ARes, siegeTowerResonance), resOr(hp.HRes, siegeTowerResonance)
 }
 
 // ehp is what the bash must deal: to the reinforcement floor (the shield above it), and to kill
-// (the rest of the shield, armor and hull). Pure.
+// (the rest of the shield, armor and hull), each layer through its own resonance. Pure.
 func (hp siegeHP) ehp() (toFloor, toKill float64) {
-	toFloor = hp.Shield * (1 - hp.Floor) / siegeTowerResonance
-	toKill = (hp.Shield*hp.Floor + hp.Armor + hp.Hull) / siegeTowerResonance
+	sr, ar, hr := hp.layerRes()
+	toFloor = hp.Shield * (1 - hp.Floor) / sr
+	toKill = hp.Shield*hp.Floor/sr + hp.Armor/ar + hp.Hull/hr
 	return toFloor, toKill
 }
 
+// killShieldEHP is the part of the kill stage that is still shield, where regeneration works. Pure.
+func (hp siegeHP) killShieldEHP() float64 {
+	sr, _, _ := hp.layerRes()
+	return hp.Shield * hp.Floor / sr
+}
+
 // siegeFractions is the tower's remaining shield, armor and hull, as fractions of max, after a
-// stage's bash damage. A bash stops at the floor; a kill takes the rest of the shield, then the
-// armor, then the hull. Pure.
+// stage's bash damage (EHP). A bash stops at the floor; a kill takes the rest of the shield, then
+// the armor, then the hull, each through its own resonance. Pure.
 func siegeFractions(stage string, damage float64, hp siegeHP) (shield, armor, hull float64) {
-	raw := max(damage, 0) * siegeTowerResonance
+	sr, ar, hr := hp.layerRes()
+	damage = max(damage, 0)
 	frac := func(left, total float64) float64 {
 		if total <= 0 {
 			return 1
@@ -738,33 +791,33 @@ func siegeFractions(stage string, damage float64, hp siegeHP) (shield, armor, hu
 		return min(max(left/total, 0), 1)
 	}
 	if stage != "kill" {
-		return frac(max(hp.Shield-raw, hp.Shield*hp.Floor), hp.Shield), 1, 1
+		return frac(max(hp.Shield-damage*sr, hp.Shield*hp.Floor), hp.Shield), 1, 1
 	}
-	s := hp.Shield*hp.Floor - raw
-	a, h := hp.Armor, hp.Hull
-	if s < 0 {
-		a += s
+	s, a, h := hp.Shield*hp.Floor, hp.Armor, hp.Hull
+	if left := damage - s/sr; left <= 0 {
+		s -= damage * sr
+	} else {
 		s = 0
-	}
-	if a < 0 {
-		h += a
-		a = 0
+		if left2 := left - a/ar; left2 <= 0 {
+			a -= left * ar
+		} else {
+			a = 0
+			h -= left2 * hr
+		}
 	}
 	return frac(s, hp.Shield), frac(a, hp.Armor), frac(h, hp.Hull)
 }
 
-// siegeDamageOf is the stage's bash damage that leaves a tower at the given fractions, the
+// siegeDamageOf is the stage's bash damage (EHP) that leaves a tower at the given fractions, the
 // reverse of siegeFractions. Pure.
 func siegeDamageOf(stage string, shield, armor, hull float64, hp siegeHP) float64 {
+	sr, ar, hr := hp.layerRes()
 	clamp := func(v float64) float64 { return min(max(v, 0), 1) }
 	shield, armor, hull = clamp(shield), clamp(armor), clamp(hull)
-	var raw float64
 	if stage != "kill" {
-		raw = (1 - shield) * hp.Shield
-	} else {
-		raw = hp.Shield*hp.Floor - shield*hp.Shield + (1-armor)*hp.Armor + (1-hull)*hp.Hull
+		return max((1-shield)*hp.Shield/sr, 0)
 	}
-	return max(raw, 0) / siegeTowerResonance
+	return max((hp.Floor-shield)*hp.Shield/sr, 0) + (1-armor)*hp.Armor/ar + (1-hull)*hp.Hull/hr
 }
 
 // siegeTowerEntity is the sieged tower's entity when its system is loaded, else nil.
@@ -807,7 +860,7 @@ func (m *Mod) syncSiegeTower(ctx context.Context, s *siegeRow, ss *destiny.Solar
 		}
 		return destroyed
 	}
-	if s.Damage <= 0 {
+	if s.Damage <= 0 && added >= 0 {
 		return false
 	}
 	sh, ar, hu := siegeFractions(s.Stage, s.Damage, hp)
@@ -828,11 +881,17 @@ const (
 	siegeBashKill                       // the tower's last hitpoints are gone
 )
 
-// siegeBashStep adds elapsed seconds of the attackers' dps to a bash or kill stage and reports
-// whether the tower reached its floor or died. It has no watched input: the abstract bash runs
-// the same whether or not a player has the system loaded. Pure.
-func siegeBashStep(stage string, damage, dps, elapsed, toFloor, toKill float64) (float64, siegeBashNext) {
-	damage += dps * elapsed
+// siegeBashStep adds elapsed seconds of the attackers' dps to a bash or kill stage, net of the
+// shield's regeneration while there is shield to regenerate (the whole bash; the kill stage's
+// shield part, killShield), and reports whether the tower reached its floor or died. Standing
+// damage never falls below 0. regen is 0 for a loaded tower, whose entity regenerates itself.
+// Pure.
+func siegeBashStep(stage string, damage, dps, regen, elapsed, toFloor, toKill, killShield float64) (float64, siegeBashNext) {
+	if stage == "bash" || (stage == "kill" && damage < killShield) {
+		damage = max(0, damage+(dps-regen)*elapsed)
+	} else {
+		damage += dps * elapsed
+	}
 	switch {
 	case stage == "bash" && damage >= toFloor:
 		return damage, siegeBashFloor
@@ -857,7 +916,9 @@ func (m *Mod) advanceSiege(ctx context.Context, c *corpCEO, s *siegeRow) error {
 	// online (siegeHoldsPilot) while it gathers on the tower, not only once the bash is live.
 	bashing, holding := false, false
 	defer func() {
-		live := bashing && (s.Stage == "bash" || s.Stage == "kill")
+		// On a watched grid the guns stay live while the fleet holds the system: the desk's count of
+		// pilots on grid must not switch off the very fire that makes them count (siegeBashLive).
+		live := (bashing || holding) && (s.Stage == "bash" || s.Stage == "kill")
 		noteSiegeBash(s.TowerID, live, now)
 		var side []int64
 		if live || (holding && s.Stage != "done") {
@@ -908,23 +969,37 @@ func (m *Mod) advanceSiege(ctx context.Context, c *corpCEO, s *siegeRow) error {
 		att := siegePresent(fleet, s.SystemID, gridFight, tower)
 		// Seat priority for the fleet still flying in: anyone of it in the system, on grid or not.
 		holding = gridFight && len(fleet) > 0
+		hp := m.structureHPOf(ctx, rec.TypeID, true)
+		q := siegeQuota(hp, siegeWindowSec, siegeQuotaMargin)
+		s.FleetDPS = siegeFleetDPS(att)
+		// The stage reads the fleet's DPS against the regeneration it must out-shoot: the whole bash,
+		// and the kill stage while there is shield left in it.
+		stageRegen := q.Regen
+		if s.Stage == "kill" && s.Damage >= hp.killShieldEHP() {
+			stageRegen = 0
+		}
 		was := s.Stage
-		stage, abandon := siegeMusterNext(s, len(att), now)
-		if abandon != "" {
-			m.closeSiege(ctx, s, "abandoned", abandon)
+		next := siegeStageNext(siegeStageIn{Stage: s.Stage, StageAt: s.StageAt, OpenedAt: s.OpenedAt, Now: now,
+			LowSince: s.LowSince, FleetLive: m.siegeFleetLive(ctx, s), FleetDPS: s.FleetDPS, Regen: stageRegen,
+			Window: siegeWindowSec})
+		s.LowSince = next.LowSince
+		if next.Abandon != "" {
+			// A muster that never formed is short, not a failed bash: the side retries on the
+			// short backoff (siegeShortHold) and the tower is not rested.
+			m.closeSiege(ctx, s, siegeAbandonResult(was), next.Abandon)
 			return nil
 		}
-		setStage(s, stage, now)
-		if was == "muster" && stage == "bash" && s.Damage == 0 {
-			m.ceoLog(ctx, c, powerWar, "siege", s.TowerID, 0,
-				"laid siege to %s's tower in %s", corpNameOf(ctx, m.db, s.DefenderCorpID), systemNameOf(ctx, m, s.SystemID))
+		setStage(s, next.Stage, now)
+		if was == "muster" && s.Stage == "bash" && s.Damage == 0 {
+			m.ceoLog(ctx, c, powerWar, "siege", s.TowerID, s.FleetDPS,
+				"laid siege to %s's tower in %s — %.0f DPS on it against %.0f/s of shield regeneration",
+				corpNameOf(ctx, m.db, s.DefenderCorpID), systemNameOf(ctx, m, s.SystemID), s.FleetDPS, q.Regen)
 		}
-		if len(att) < siegeMinAttackers {
+		if s.Stage == "muster" {
 			m.saveSiege(ctx, s)
 			return nil
 		}
 		bashing = true
-		hp := m.towerSiegeHP(ctx, rec.TypeID)
 		if tower != nil {
 			// The tower is loaded: its entity holds the true hit points, grid hits included.
 			d := tower.DamageStateFrac()
@@ -939,13 +1014,19 @@ func (m *Mod) advanceSiege(ctx context.Context, c *corpCEO, s *siegeRow) error {
 			}
 		}
 		toFloor, toKill := hp.ehp()
+		// A loaded tower regenerates on its own entity; the desk nets the regeneration out of an
+		// unloaded one's bash.
+		bashRegen := q.Regen
+		if tower != nil {
+			bashRegen = 0
+		}
 		before := s.Damage
-		var next siegeBashNext
-		s.Damage, next = siegeBashStep(s.Stage, s.Damage, dps, elapsed, toFloor, toKill)
+		var step siegeBashNext
+		s.Damage, step = siegeBashStep(s.Stage, s.Damage, dps, bashRegen, elapsed, toFloor, toKill, hp.killShieldEHP())
 		if destroyed := m.syncSiegeTower(ctx, s, ss, tower, hp, s.Damage-before, now); destroyed {
 			return nil // the tower's death closes the siege (onTowerDestroyed)
 		}
-		switch next {
+		switch step {
 		case siegeBashFloor:
 			hours, until, err := evedb.HeadlessReinforce(ctx, m.db, s.TowerID, nil)
 			if err != nil && !errors.Is(err, evedb.ErrTowerNotOnline) {

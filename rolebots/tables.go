@@ -2102,6 +2102,9 @@ func ensureTables(ctx context.Context, db *sql.DB) error {
 		// A library purchase order that may be filled with a blueprint copy (corpjobs.go corpPOArm): a shipyard's hull orders,
 		// so a corporation that cannot afford a hull original can build from a copy.
 		`ALTER TABLE rolebot_corp_po ADD COLUMN IF NOT EXISTS allowCopy TINYINT NOT NULL DEFAULT 0`,
+		// A kit bought for one pilot to bring to a siege (siegekits.go): it is lent to that pilot first,
+		// and the shelf's own targets do not count it.
+		`ALTER TABLE rolebot_corp_kit ADD COLUMN IF NOT EXISTS forCharID BIGINT NOT NULL DEFAULT 0`,
 		// Drop the retired per-belt m3 budget table (bots mine the seeded field, beltfield.go).
 		`DROP TABLE IF EXISTS rolebot_belt_state`,
 	}

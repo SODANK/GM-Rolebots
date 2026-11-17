@@ -364,6 +364,11 @@ func (m *Mod) gangFormPass(ctx context.Context) {
 	// answers spawns no solo hull can face. The extra formations are reserved to that seat.
 	base, extra := formBudget(m.anyBeltDistress(ctx), MaxGangs(), total)
 	packRoom := packBudget(int(dialPackBudget.Get()), MaxGangs(), total, base+extra)
+
+	tally := formTally{}
+	// Pass zero: the calls to arms (gangcalls.go), outside the budget. It runs ahead of the budget
+	// test: a full gang cap must hold back neither the page nor a siege's or a defence's fleet.
+	m.formCallsToArms(ctx, &tally)
 	if base+extra <= 0 && packRoom <= 0 {
 		return
 	}
@@ -373,10 +378,6 @@ func (m *Mod) gangFormPass(ctx context.Context) {
 		rlogf("rolebots: gang formation: %v", err)
 		return
 	}
-
-	tally := formTally{}
-	// Pass zero: the calls to arms (gangcalls.go), outside the budget.
-	m.formCallsToArms(ctx, &tally)
 	used := make(map[int64]bool, base+extra)
 	// Pass one: the base budget, in the order the draw returned it.
 	m.formFleets(ctx, seats, base, used, &tally, nil)
@@ -556,6 +557,9 @@ func (m *Mod) formFleets(ctx context.Context, seats []fcSeat, room int,
 // and the leader runs the settlement round (gangplan.go). A gang that cannot make it is
 // deleted on the spot: no leader, no staging station, or wind-down past its grace.
 func (m *Mod) sweepAutoGangs(ctx context.Context) {
+	// A siege's fleet lives as long as its siege (siegefleet.go): its expiry is pushed on, or
+	// brought to now, before the sweep reads it.
+	m.leaseSiegeGangs(ctx)
 	rows, err := m.db.QueryContext(ctx, `
 		SELECT g.gangID, g.name, g.activity, g.leaderCharID, g.corpID, g.createdDate,
 		       COALESCE(g.state, ''),
@@ -864,6 +868,10 @@ func (m *Mod) formFleetAround(ctx context.Context, seat fcSeat, order *fleetOrde
 	// The corporation's shelf (corparmory_issue.go): a recruit with no hull in its seat's
 	// band may be lent a kit, reserved here and issued once the gang row exists.
 	ctx = m.withKitPool(ctx, seat.corpID)
+	if order != nil && order.SiegeID != 0 && len(order.SiegeCorps) > 0 {
+		// A siege fleet lends any member's shelf to any member's pilot (siegekits.go).
+		ctx = m.withKitPools(ctx, order.SiegeCorps)
+	}
 	// The commander takes the line's gun seat (specFor("")) and must own a hull in its band
 	// like every recruit (ship() in gangRecruitFrom), or it is excused at its own muster. The
 	// seat waits.
@@ -904,6 +912,19 @@ func (m *Mod) formFleetAround(ctx context.Context, seat fcSeat, order *fleetOrde
 			forgetSeatSpec(lb.CharID)
 		}
 	}()
+	// A siege's one fleet (siegefleet.go): the alliance's patrols come off their beats into it,
+	// its reach is measured from its forward staging, and only the siege's corporations join.
+	siege := order != nil && order.SiegeID != 0
+	if siege {
+		if order.StagingStationID != 0 {
+			ctx = withRecruitOrigin(ctx, m.stationSystemOf(ctx, order.StagingStationID))
+		}
+		ctx = withRecruitCorps(ctx, order.SiegeCorps)
+		if n := m.pullPatrolsForSiege(ctx, order.SiegeCorps, order.SystemName); n > 0 {
+			m.logBot(seat.charID, logInfo, "gang", "pulled %d patrol(s) off their beats into the siege muster for %s",
+				n, order.SystemName)
+		}
+	}
 	recruits, err := m.gangRecruit(ctx, lb, activity, capacity-1, seat.pack, doc)
 	if err != nil {
 		return false, "", err
@@ -934,6 +955,17 @@ func (m *Mod) formFleetAround(ctx context.Context, seat fcSeat, order *fleetOrde
 	if len(recruits)+1 < floor {
 		return false, "short of crew", nil
 	}
+	// A siege fleet whose recruits cannot bring the quota on paper is not flown to a muster that
+	// will not fill: the siege runs out its muster window and closes short (siegeStageNext).
+	if siege && order.QuotaDPS > 0 {
+		paper := m.pilotSiegeDPS(ctx, lb.CharID)
+		for _, r := range recruits {
+			paper += m.pilotSiegeDPS(ctx, r.charID)
+		}
+		if paper < siegeFormFirepowerFrac*order.QuotaDPS {
+			return false, fmt.Sprintf("short of firepower (%.0f of %.0f DPS)", paper, order.QuotaDPS), nil
+		}
+	}
 	// A mining op with nobody in an industrial to haul it does not form: musterCoversTheOp
 	// would stand it down at the deadline after every member had travelled.
 	if fleetAttributesOre(activity) && !recruitsHaveHauler(recruits) {
@@ -949,6 +981,9 @@ func (m *Mod) formFleetAround(ctx context.Context, seat fcSeat, order *fleetOrde
 	if seat.gank {
 		name = m.corpNameOf(ctx, seat.corpID) + " Gank Squad"
 	}
+	if siege {
+		name = siegeFleetName(m.corpNameOf(ctx, seat.corpID))
+	}
 	life := int64(gangLifeMinSec + rand.Intn(gangLifeMaxSec-gangLifeMinSec+1))
 	if order != nil && order.LifeSec > 0 {
 		life = order.LifeSec
@@ -961,7 +996,12 @@ func (m *Mod) formFleetAround(ctx context.Context, seat fcSeat, order *fleetOrde
 	var stateJSON string
 	var reliefName string
 	var stagingSys int64 // the chatter line names it (chatter.go)
-	if staging := m.homeStationFor(ctx, seat.charID); staging != 0 {
+	staging := m.homeStationFor(ctx, seat.charID)
+	if siege && order.StagingStationID != 0 {
+		// A siege fleet musters forward of its target, not at the commander's home.
+		staging = order.StagingStationID
+	}
+	if staging != 0 {
 		stagingSys = m.stationSystemOf(ctx, staging)
 		if stagingSys != 0 {
 			gs := GangState{
@@ -976,6 +1016,12 @@ func (m *Mod) formFleetAround(ctx context.Context, seat fcSeat, order *fleetOrde
 			// whoever is in.
 			if tier.Name == tierCallToArms && gs.MusterDeadline > now+callToArmsMuster {
 				gs.MusterDeadline = now + callToArmsMuster
+			}
+			if siege {
+				// The whole alliance flies to a forward staging; the muster is judged on DPS, not a
+				// quorum, so it gets the time the spread of recruits needs, within bounds.
+				gs.MusterDeadline = now + siegeMusterDeadline(musterWindowFor(recruits))
+				gs.SiegeID = order.SiegeID
 			}
 			if order != nil {
 				gs.HelpCallID = order.HelpCallID
@@ -1055,6 +1101,12 @@ func (m *Mod) formFleetAround(ctx context.Context, seat fcSeat, order *fleetOrde
 		return false, "", fmt.Errorf("form fleet: %w", err)
 	}
 	gangID, _ := res.LastInsertId()
+	if siege {
+		if _, err := m.db.ExecContext(ctx, `UPDATE rolebot_corp_siege SET gangID = ? WHERE siegeID = ?`,
+			gangID, order.SiegeID); err != nil {
+			rlogf("rolebots: link siege %d to fleet %d: %v", order.SiegeID, gangID, err)
+		}
+	}
 	if doc != nil {
 		m.logBot(seat.charID, logInfo, "gang", "flying the %s doctrine — %s", doc.Kind.Label(), doctrineSummary(*doc))
 	}
@@ -1248,7 +1300,13 @@ func (m *Mod) gangRecruitFrom(ctx context.Context, lb *botRun, activity string, 
 	if err != nil {
 		return nil, err
 	}
-	reach := gangReachMap(u, lb.SystemID, gangRecruitMaxJumps)
+	// A siege fleet measures reach (and with it the muster window) from its forward staging, not
+	// from wherever its commander stands (siegefleet.go).
+	origin := lb.SystemID
+	if o := recruitOriginOf(ctx); o != 0 {
+		origin = o
+	}
+	reach := gangReachMap(u, origin, gangRecruitMaxJumps)
 	leaderHome := m.homeStationFor(ctx, lb.CharID)
 
 	// A final-stage xenophobe shares a fleet with its own bloodline only (tolerance.go), on
@@ -1392,8 +1450,10 @@ func (m *Mod) gangRecruitFrom(ctx context.Context, lb *botRun, activity string, 
 	// Capable candidates only; the best temperament fit (seatAffinity) wins each open seat,
 	// specialists first. Free beats busy before temperament; a tie keeps the earlier pilot.
 	slotOf := map[int64]int{}
+	// A siege line fills its guns first (seatFillOrderFor): it is won on DPS.
+	siegeLine := doc != nil && doc.Kind == kindSiege
 	fillPass := func() {
-		for _, i := range seatFillOrder(slots) {
+		for _, i := range seatFillOrderFor(slots, siegeLine) {
 			if filled[i] || len(prefilled)+len(picks) == len(slots) {
 				continue
 			}
@@ -1487,7 +1547,63 @@ func (m *Mod) gangRecruitFrom(ctx context.Context, lb *botRun, activity string, 
 		}
 		fillPass()
 	}
+	// A siege line with more logistics than its guns call for (an oversized slot list filled from
+	// a thin pool) moves the surplus onto the guns where the pilot can fly one; one that cannot
+	// keeps its seat, since a repairer on the line is still a body on it.
+	if siegeLine {
+		gunRole, gunJob := RoleHunter, JobCombat
+		idx := make(map[int64]int, len(kept))
+		for ci, c := range kept {
+			idx[c.charID] = ci
+		}
+		roles := make([]string, len(picks))
+		for i, p := range picks {
+			roles[i] = p.role
+		}
+		for _, i := range excessSpecialists(roles, RoleLogi, siegeLogiPer) {
+			ci, ok := idx[picks[i].charID]
+			if !ok || !can(ci, gunJob) || !ship(ci, gunRole) {
+				continue
+			}
+			if !m.recruitSeatOK(ctx, picks[i].charID, seatActivityFor(activity, gunRole), specOf(gunRole)) {
+				continue
+			}
+			picks[i].role, picks[i].spec = gunRole, specOf(gunRole)
+		}
+	}
 	return picks, nil
+}
+
+type recruitOriginKey struct{}
+type recruitCorpsKey struct{}
+
+// withRecruitOrigin makes the recruiter measure reach from sysID, a siege fleet's forward staging.
+func withRecruitOrigin(ctx context.Context, sysID int64) context.Context {
+	if sysID == 0 {
+		return ctx
+	}
+	return context.WithValue(ctx, recruitOriginKey{}, sysID)
+}
+
+// recruitOriginOf is the system the recruiter measures reach from, 0 for the commander's own.
+func recruitOriginOf(ctx context.Context) int64 {
+	v, _ := ctx.Value(recruitOriginKey{}).(int64)
+	return v
+}
+
+// withRecruitCorps limits the alliance pass to these corporations: a tower siege's fleet takes
+// only the mates mateJoinsTowerSiege lets in.
+func withRecruitCorps(ctx context.Context, corps []int64) context.Context {
+	if corps == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, recruitCorpsKey{}, corps)
+}
+
+// recruitCorpsOf is the corporations the alliance pass may draw on, nil for every mate.
+func recruitCorpsOf(ctx context.Context) []int64 {
+	v, _ := ctx.Value(recruitCorpsKey{}).([]int64)
+	return v
 }
 
 // recruitSeatOK runs the muster's strict seat test (seatVerdict) on one candidate, acting

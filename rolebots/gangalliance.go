@@ -14,6 +14,7 @@ package rolebots
 import (
 	"context"
 	"fmt"
+	"slices"
 )
 
 const (
@@ -41,6 +42,10 @@ func (m *Mod) gangRecruitAlliance(ctx context.Context, lb *botRun, activity stri
 		return nil, nil
 	}
 	mates := m.allianceMemberCorps(ctx, lb.CorpID)
+	if allowed := recruitCorpsOf(ctx); allowed != nil {
+		// A siege fleet's own list of who may join it (siegeRecruitCorps).
+		mates = slices.DeleteFunc(mates, func(c int64) bool { return !slices.Contains(allowed, c) })
+	}
 	if len(mates) == 0 {
 		return nil, nil
 	}
