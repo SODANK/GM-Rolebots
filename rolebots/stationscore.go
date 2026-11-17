@@ -1,12 +1,15 @@
 package rolebots
 
 // Station scores: the contest inside a system. Once a pilot has picked a system to trade in
-// (distance and liquidity, liquidity.go), a per-station score picks the dock to land at. Four terms:
+// (distance and liquidity, liquidity.go), a per-station score picks the dock to land at. Five terms:
 //   - amenities: exclusive services only (medical bay, factory floor); universal ones score nothing.
 //   - liquidity: decayed ISK changing hands at this dock, seeder trades excluded (liquidity.go).
 //     Homes and factories are counted for the ESP map only.
 //   - guests: decayed dock arrivals, measured like gate arrivals in the traffic term.
-//   - book: player and bot orders listed here and their worth, a small term.
+//   - book: player and bot orders listed here and their worth, a small term. A real player's order
+//     counts humanOrderWeight bot orders (fortune.go).
+//   - fortune: this world's luck for the station (fortune.go), so the same amenities do not pick the
+//     same dock on every server.
 // The hub sweep stores the score; stocking goods and fencing loot read it. Distance never appears,
 // since both ends are in one system.
 
@@ -18,8 +21,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	evedb "gurimoon/db"
 )
 
 // The exclusive amenities and what each is worth. Bits are staServices.serviceID (via
@@ -66,11 +67,17 @@ type StationScore struct {
 	Guests       float64 // decayed dock arrivals
 	PlayerOrders int64
 	PlayerISK    float64
+	// The real players' share of PlayerOrders/PlayerISK, not bots.
+	HumanOrders int64
+	HumanISK    float64
+	// Luck is this world's draw for the station in [-1, 1) (stationFortune), set before stationRaw.
+	Luck float64
 
 	AmenityTerm   float64
 	LiquidityTerm float64
 	GuestTerm     float64
 	BookTerm      float64
+	FortuneTerm   float64
 
 	Raw   float64 // the sum, used by every comparison
 	Score float64 // 0..100 against the best dock in the universe, for display
@@ -87,9 +94,10 @@ func stationRaw(s *StationScore) {
 	}
 	s.LiquidityTerm = stationWeightLiquidity * liquidityValue(s.Liquidity)
 	s.GuestTerm = stationWeightGuests * math.Log1p(s.Guests)
-	s.BookTerm = stationWeightOrders*math.Log1p(float64(s.PlayerOrders)) +
-		stationWeightBook*math.Log1p(s.PlayerISK/1e6)
-	s.Raw = s.AmenityTerm + s.LiquidityTerm + s.GuestTerm + s.BookTerm
+	s.BookTerm = stationWeightOrders*math.Log1p(humanWeighted(float64(s.PlayerOrders), float64(s.HumanOrders))) +
+		stationWeightBook*math.Log1p(humanWeighted(s.PlayerISK, s.HumanISK)/1e6)
+	s.FortuneTerm = fortuneDockPts * s.Luck
+	s.Raw = s.AmenityTerm + s.LiquidityTerm + s.GuestTerm + s.BookTerm + s.FortuneTerm
 }
 
 // recordStationDock books one arrival at a dock, the same way recordJump
@@ -191,19 +199,31 @@ func (m *Mod) computeStationScores(ctx context.Context) ([]*StationScore, error)
 		return nil, err
 	}
 	// Player/bot orders only, exactly as the hub market term counts them:
-	// the seeder's furniture is on every station and separates none.
-	if err := scan(fmt.Sprintf(`
+	// the seeders' furniture (all three, liquidityExcluded) is on every station and separates none.
+	if err := scan(`
 		SELECT stationID, COUNT(*), COALESCE(SUM(price * volRemaining), 0)
 		  FROM market_orders
-		 WHERE orderState = 1 AND volRemaining > 0 AND charID NOT IN (%d, %d)
-		 GROUP BY stationID`, evedb.SeederCharID, evedb.AdminSeederCharID),
+		 WHERE orderState = 1 AND volRemaining > 0 AND charID NOT IN (`+liquidityExcluded+`)
+		 GROUP BY stationID`,
 		func(s *StationScore, n, isk float64) { s.PlayerOrders, s.PlayerISK = int64(n), isk }); err != nil {
 		return nil, err
 	}
+	// The real players' share of that book (fortune.go).
+	if err := scan(`
+		SELECT o.stationID, COUNT(*), COALESCE(SUM(o.price * o.volRemaining), 0)
+		  FROM market_orders o
+		  LEFT JOIN rolebot_characters b ON b.characterID = o.charID
+		 WHERE `+humanOrdersFilter+`
+		 GROUP BY o.stationID`,
+		func(s *StationScore, n, isk float64) { s.HumanOrders, s.HumanISK = int64(n), isk }); err != nil {
+		return nil, err
+	}
 
+	luck := m.stationFortune(ctx)
 	out := make([]*StationScore, 0, len(byID))
 	best := 0.0
 	for _, s := range byID {
+		s.Luck = luck(s.StationID)
 		stationRaw(s)
 		if s.Raw > best {
 			best = s.Raw
@@ -225,7 +245,7 @@ const stationStoreBatch = 250
 // storeStationScores replaces the stored table, batched.
 func (m *Mod) storeStationScores(ctx context.Context, scores []*StationScore) error {
 	now := clock.Unix()
-	const cols = 17
+	const cols = 19
 	row := "(" + strings.TrimSuffix(strings.Repeat("?,", cols), ",") + ")"
 	for start := 0; start < len(scores); start += stationStoreBatch {
 		end := start + stationStoreBatch
@@ -242,14 +262,16 @@ func (m *Mod) storeStationScores(ctx context.Context, scores []*StationScore) er
 				s.StationID, s.SystemID, s.Services,
 				s.AmenityTerm, 0.0, s.LiquidityTerm, s.Liquidity, s.GuestTerm, s.BookTerm,
 				s.Homes, s.Factories, s.Guests,
-				s.PlayerOrders, s.PlayerISK, s.Raw, s.Score, now)
+				s.PlayerOrders, s.PlayerISK, s.Raw, s.Score, now,
+				s.FortuneTerm, s.HumanOrders)
 		}
 		if _, err := m.db.ExecContext(ctx, `
 			INSERT INTO rolebot_station_scores
 				(stationID, systemID, services, amenityTerm, anchorTerm,
 				 liquidityTerm, liquidity, guestTerm,
 				 bookTerm, homes, factories, guests,
-				 playerOrders, playerISK, raw, score, updatedAt)
+				 playerOrders, playerISK, raw, score, updatedAt,
+				 fortuneTerm, humanOrders)
 			VALUES `+strings.Join(vals, ",")+`
 			ON DUPLICATE KEY UPDATE
 				systemID = VALUES(systemID), services = VALUES(services),
@@ -259,7 +281,8 @@ func (m *Mod) storeStationScores(ctx context.Context, scores []*StationScore) er
 				homes = VALUES(homes),
 				factories = VALUES(factories), guests = VALUES(guests),
 				playerOrders = VALUES(playerOrders), playerISK = VALUES(playerISK),
-				raw = VALUES(raw), score = VALUES(score), updatedAt = VALUES(updatedAt)`,
+				raw = VALUES(raw), score = VALUES(score), updatedAt = VALUES(updatedAt),
+				fortuneTerm = VALUES(fortuneTerm), humanOrders = VALUES(humanOrders)`,
 			args...); err != nil {
 			return fmt.Errorf("storeStationScores: %w", err)
 		}

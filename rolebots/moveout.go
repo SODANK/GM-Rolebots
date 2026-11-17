@@ -11,10 +11,11 @@ import (
 // A generated pilot wakes in its school's station with its medical clone
 // installed there (schools.go). This step moves it out once, early: it prices
 // each reachable medical bay against the commute (wanderlust), the distance to
-// a school and the crowd already in that system, draws one, flies there and
-// installs its clone. This is the pilot's first address; once it has an
-// employer, the employer decides (corphome.go). No trade or traffic measure is
-// read, because a hub score that counts homes feeds on its own moves.
+// a school and the crowd already in that system, plus this world's luck for the
+// system (fortune.go), draws one, flies there and installs its clone. This is the
+// pilot's first address; once it has an employer, the employer decides
+// (corphome.go). No trade or traffic measure is read, because a hub score that
+// counts homes feeds on its own moves.
 
 const (
 	// The first look is spread across this window by character ID, so pilots
@@ -465,6 +466,7 @@ func (m *Mod) rankHomes(ctx context.Context, b *botRun, sch *schoolMap,
 	perJump := moveOutJumpCost(traits)
 	crowd, crowdBase := m.homeCrowd(ctx)
 	fromSchool := m.schoolJumps(ctx)
+	luck := m.systemFortune(ctx)
 
 	var ranked []homeCandidate
 	for sysID, jumps := range reach {
@@ -475,6 +477,9 @@ func (m *Mod) rankHomes(ctx context.Context, b *botRun, sch *schoolMap,
 		// here rather than per bay.
 		nursery := moveOutNurseryPenalty(jumpsFromSchool(fromSchool, sysID))
 		crowded := homeCrowdPenalty(crowd[sysID], crowdBase)
+		// This world's luck for the system (fortune.go): per-pilot draws average out over a
+		// roster, so without a per-world one every server settles the same places.
+		fortune := fortuneHomePts * luck(sysID)
 		for _, s := range bays[sysID] {
 			if sch.Stations[s.StationID] {
 				continue
@@ -482,7 +487,7 @@ func (m *Mod) rankHomes(ctx context.Context, b *botRun, sch *schoolMap,
 			// No region head start: a bonus for the home region would argue for never
 			// leaving. Every term is a cost, so the softmax spreads the roster.
 			c := homeCandidate{medStation: s, Jumps: jumps}
-			c.Score = -perJump*float64(jumps) - nursery - crowded +
+			c.Score = -perJump*float64(jumps) - nursery - crowded + fortune +
 				perJump*m.xenoHomeScore(ctx, b, s.CorpID)
 			ranked = append(ranked, c)
 			if s.StationID == b.StationID {

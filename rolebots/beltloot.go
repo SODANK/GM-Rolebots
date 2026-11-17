@@ -560,7 +560,7 @@ func (m *Mod) lootMarketFor(ctx context.Context, b *botRun) (int64, int64, *mark
 	if err != nil {
 		return 0, 0, nil
 	}
-	ranked := rankLootMarkets(markets, liq.System, jumps)
+	ranked := rankLootMarkets(markets, liq.System, jumps, m.marketBonus(ctx))
 	if len(ranked) == 0 {
 		return 0, 0, nil
 	}
@@ -604,9 +604,10 @@ func (m *Mod) lootMarketFor(ctx context.Context, b *botRun) (int64, int64, *mark
 
 // rankLootMarkets orders reachable market systems by what they are worth to a hunter fencing a haul,
 // best first: measured liquidity discounted by the flying (rankMarkets). Jumps cost more than for a
-// trader (lootHubJumpCost) and there is a hard ceiling. Pure.
-func rankLootMarkets(markets map[int64]string, liq map[int64]float64, jumps map[int64]int) []int64 {
-	return rankMarkets(markets, liq, jumps, lootHubJumpCost, lootMarketMaxJumps, lootMarketCandidates)
+// trader (lootHubJumpCost) and there is a hard ceiling. bonus is marketBonus (fortune.go). Pure.
+func rankLootMarkets(markets map[int64]string, liq map[int64]float64, jumps map[int64]int,
+	bonus func(int64) float64) []int64 {
+	return rankMarkets(markets, liq, jumps, bonus, lootHubJumpCost, lootMarketMaxJumps, lootMarketCandidates)
 }
 
 // combatResumeSale picks a haul back up: a hunter that was re-planned (or

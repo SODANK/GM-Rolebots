@@ -2069,6 +2069,9 @@ func ensureTables(ctx context.Context, db *sql.DB) error {
 		// measured liquidity stands in for anchors (stationscore.go, traffic.go).
 		`ALTER TABLE rolebot_station_scores ADD COLUMN IF NOT EXISTS liquidityTerm DOUBLE NOT NULL DEFAULT 0`,
 		`ALTER TABLE rolebot_station_scores ADD COLUMN IF NOT EXISTS liquidity DOUBLE NOT NULL DEFAULT 0`,
+		// This world's luck for the dock and the real players' share of its book (fortune.go).
+		`ALTER TABLE rolebot_station_scores ADD COLUMN IF NOT EXISTS fortuneTerm DOUBLE NOT NULL DEFAULT 0`,
+		`ALTER TABLE rolebot_station_scores ADD COLUMN IF NOT EXISTS humanOrders BIGINT NOT NULL DEFAULT 0`,
 		// seeded says the row is still exactly what defaultCorpPolicy made it; saveCorpPolicy clears it, so a change of defaults reaches only rows nobody edited.
 		// DEFAULT 1 is right for an existing table (the seeder wrote every row); applyCorpDefaultGeneration corrects hand-opened ones once.
 		`ALTER TABLE rolebot_corps ADD COLUMN IF NOT EXISTS seeded TINYINT NOT NULL DEFAULT 1`,

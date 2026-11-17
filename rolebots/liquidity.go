@@ -259,11 +259,13 @@ func (m *Mod) marketSystems(ctx context.Context) (map[int64]string, error) {
 }
 
 // rankMarkets orders the reachable market systems best first: liquidityValue
-// discounted by flying. Pure. With no liquidity measured every candidate is
-// worth 1 and the nearest wins, so hubs form where sellers are. maxJumps <= 0
-// means no ceiling beyond the reach map.
+// plus bonus, discounted by flying. Pure. bonus is this world's luck and the
+// human book (marketBonus, fortune.go); nil means none. With no liquidity
+// measured the bonus decides among nearby candidates, so hubs nucleate in
+// different places on different servers. maxJumps <= 0 means no ceiling beyond
+// the reach map.
 func rankMarkets(markets map[int64]string, liq map[int64]float64, jumps map[int64]int,
-	jumpCost float64, maxJumps, limit int) []int64 {
+	bonus func(sysID int64) float64, jumpCost float64, maxJumps, limit int) []int64 {
 
 	type cand struct {
 		sys   int64
@@ -276,7 +278,11 @@ func rankMarkets(markets map[int64]string, liq map[int64]float64, jumps map[int6
 		if !ok || (maxJumps > 0 && hops > maxJumps) {
 			continue
 		}
-		v := (1 + liquidityValue(liq[sysID])) / (1 + jumpCost*float64(hops))
+		worth := 1 + liquidityValue(liq[sysID])
+		if bonus != nil {
+			worth += bonus(sysID)
+		}
+		v := worth / (1 + jumpCost*float64(hops))
 		ranked = append(ranked, cand{sysID, hops, v})
 	}
 	sort.Slice(ranked, func(i, j int) bool {

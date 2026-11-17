@@ -135,6 +135,7 @@ func (m *Mod) PurgeEconomy(ctx context.Context, scope EconPurgeScope) (EconPurge
 
 		// The in-memory caches read from what was just emptied, so they are cleared too.
 		clearLiquidityCache()
+		clearHumanBookCache()
 		clearStationDemandCache()
 		sweepMarketSnaps()
 		// The Stats board memo (espstats.go) holds an assembled copy for a minute.

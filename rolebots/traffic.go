@@ -7,8 +7,6 @@ import (
 	"sort"
 	"strings"
 	"time"
-
-	evedb "gurimoon/db"
 )
 
 // Traffic, lanes and the trade map. Every gate a bot goes through is one arrival in the destination system and one
@@ -17,8 +15,9 @@ import (
 //
 // The map describes and never steers. The hub score is still computed and drawn on the ESP trade map, but nothing in
 // the module reads it to decide anything: it is built from the roster's own behaviour, so reading it back as a reason
-// to go somewhere is a closed loop. Decisions read measured liquidity (liquidity.go), and the employer picks where a
-// pilot lives (corphome.go, moveout.go). A system with no station has no score at all, since nothing can be traded there.
+// to go somewhere is a closed loop. Decisions read measured liquidity (liquidity.go), this world's luck and the human
+// book (fortune.go), and the employer picks where a pilot lives (corphome.go, moveout.go). A system with no station has
+// no score at all, since nothing can be traded there.
 
 const (
 	// trafficHalfLifeSec is how fast the roster's movement is forgotten: two days, so a lane worked over an evening
@@ -200,6 +199,13 @@ type HubScore struct {
 	NPCISK       float64
 	Orders       int64
 	BookISK      float64
+	// The real players' share of PlayerOrders/PlayerISK (fortune.go); weighs humanOrderWeight.
+	HumanOrders int64
+	HumanISK    float64
+
+	// Luck is this world's draw for the system (systemFortune), stored in the noise column.
+	// It is what the decisions read, and is not part of the score: the map stays descriptive.
+	Luck float64
 
 	TrafficTerm float64
 	LaneTerm    float64
@@ -241,8 +247,9 @@ func hubRaw(h *HubScore) {
 	if npc > hubNPCTermCap {
 		npc = hubNPCTermCap
 	}
-	h.MarketTerm = hubWeightPlayerOrders*math.Log1p(float64(h.PlayerOrders)) +
-		hubWeightPlayerBook*math.Log1p(h.PlayerISK/1e6) + npc
+	// A real player's order counts humanOrderWeight bot orders (fortune.go).
+	h.MarketTerm = hubWeightPlayerOrders*math.Log1p(humanWeighted(float64(h.PlayerOrders), float64(h.HumanOrders))) +
+		hubWeightPlayerBook*math.Log1p(humanWeighted(h.PlayerISK, h.HumanISK)/1e6) + npc
 	h.FlowTerm = hubWeightFlow * math.Log1p(h.Flow/1e6)
 	docks := math.Min(float64(h.Stations), hubStationSweet)
 	h.StationTerm = hubWeightStations * math.Log1p(docks)
@@ -366,22 +373,33 @@ func (m *Mod) computeHubScores(ctx context.Context) ([]*HubScore, error) {
 		func(h *HubScore, w, _ float64) { h.LaneW = w }); err != nil {
 		return nil, err
 	}
-	// The book, split by author: a player or rolebot order is a person with money out, while the two NPC seeder
-	// characters own the furniture every station carries, which says nothing about anywhere.
-	if err := scan(fmt.Sprintf(`
+	// The book, split by author: a player or rolebot order is a person with money out, while the NPC seeder
+	// characters (all three, liquidityExcluded: the resale shelf too) own the furniture every station
+	// carries, which says nothing about anywhere.
+	if err := scan(`
 		SELECT solarSystemID, COUNT(*), COALESCE(SUM(price * volRemaining), 0)
 		  FROM market_orders
-		 WHERE orderState = 1 AND volRemaining > 0 AND charID NOT IN (%d, %d)
-		 GROUP BY solarSystemID`, evedb.SeederCharID, evedb.AdminSeederCharID),
+		 WHERE orderState = 1 AND volRemaining > 0 AND charID NOT IN (`+liquidityExcluded+`)
+		 GROUP BY solarSystemID`,
 		func(h *HubScore, n, isk float64) { h.PlayerOrders, h.PlayerISK = int64(n), isk }); err != nil {
 		return nil, err
 	}
-	if err := scan(fmt.Sprintf(`
+	if err := scan(`
 		SELECT solarSystemID, COUNT(*), COALESCE(SUM(price * volRemaining), 0)
 		  FROM market_orders
-		 WHERE orderState = 1 AND volRemaining > 0 AND charID IN (%d, %d)
-		 GROUP BY solarSystemID`, evedb.SeederCharID, evedb.AdminSeederCharID),
+		 WHERE orderState = 1 AND volRemaining > 0 AND charID IN (`+liquidityExcluded+`)
+		 GROUP BY solarSystemID`,
 		func(h *HubScore, n, isk float64) { h.NPCOrders, h.NPCISK = int64(n), isk }); err != nil {
+		return nil, err
+	}
+	// The real players' share of the player book (fortune.go).
+	if err := scan(`
+		SELECT o.solarSystemID, COUNT(*), COALESCE(SUM(o.price * o.volRemaining), 0)
+		  FROM market_orders o
+		  LEFT JOIN rolebot_characters b ON b.characterID = o.charID
+		 WHERE `+humanOrdersFilter+`
+		 GROUP BY o.solarSystemID`,
+		func(h *HubScore, n, isk float64) { h.HumanOrders, h.HumanISK = int64(n), isk }); err != nil {
 		return nil, err
 	}
 	// Where the roster lives and builds, for the map to show and not in the score. A pilot has two addresses: its
@@ -425,9 +443,11 @@ func (m *Mod) computeHubScores(ctx context.Context) ([]*HubScore, error) {
 		h.Gates = len(adj[id])
 	}
 
+	luck := m.systemFortune(ctx)
 	out := make([]*HubScore, 0, len(byID))
 	best := 0.0
 	for _, h := range byID {
+		h.Luck = luck(h.SystemID)
 		hubRaw(h)
 		if h.Base > best {
 			best = h.Base
@@ -463,14 +483,16 @@ func (m *Mod) storeHubScores(ctx context.Context, scores []*HubScore) error {
 		args := make([]any, 0, len(chunk)*cols)
 		for _, h := range chunk {
 			vals = append(vals, row)
-			// anchorTerm, secUnit, shadow, shadowBy, schoolCut and noise are inert since the score stopped steering anything.
+			// anchorTerm, secUnit, shadow, shadowBy and schoolCut are inert since the score stopped steering anything.
 			// The columns stay and are written zero so an old row cannot read as a live one; raw carries base.
+			// noise carries this world's luck for the system in home points (fortune.go): what the decisions
+			// read, shown for the operator, and not added to base or score.
 			args = append(args,
 				h.SystemID, h.TrafficTerm, h.LaneTerm, h.MarketTerm, 0.0, h.FlowTerm,
 				h.StationTerm, h.TopoTerm, h.SecTerm, 0.0, h.Base, 0.0, int64(0),
 				h.Base, h.Score, h.Stations, h.Gates, h.Orders, h.BookISK,
 				h.PlayerOrders, h.PlayerISK,
-				h.Homes, h.Factories, h.School, 0.0, 0.0, now)
+				h.Homes, h.Factories, h.School, 0.0, fortuneHomePts*h.Luck, now)
 		}
 		if _, err := m.db.ExecContext(ctx, `
 			INSERT INTO rolebot_hub_scores

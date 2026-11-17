@@ -1,8 +1,8 @@
 package rolebots
 
 // The economy epoch. One seed, one row (rolebot_epoch, id = 1), redrawn in one place: the economy
-// wipe's Learned branch (econpurge.go). The per-epoch stateless draws (fittaste.go) derive from it, so
-// the seed is the epoch.
+// wipe's Learned branch (econpurge.go). The per-epoch stateless draws (fittaste.go, and the per-world
+// luck of every system and station, fortune.go) derive from it, so the seed is the epoch.
 //
 // The bot wipe (botpurge.go) never touches it: the epoch is shared learned state that survives the roster.
 
@@ -35,7 +35,7 @@ func drawEpochSeed() int64 {
 // epochSeed answers the current epoch's seed, creating the row on first boot. It is process-cached:
 // fit taste (fittaste.go) is the only reader, and the wipe invalidates the cache. A query error
 // answers 0 without caching it, so the next sweep retries; that sweep's map uses seed 0 and heals
-// on the next pass.
+// on the next pass. fortune.go reads it too; seed 0 there means no luck anywhere.
 func (m *Mod) epochSeed(ctx context.Context) int64 {
 	epochMu.Lock()
 	defer epochMu.Unlock()

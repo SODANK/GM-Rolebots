@@ -1129,7 +1129,8 @@ func (m *Mod) specDestinations(ctx context.Context, b *botRun, cfg tradeConfig,
 	if err != nil || len(markets) == 0 {
 		return m.factorySpecDests(ctx, b, cfg, jumps, nil)
 	}
-	ids := rankMarkets(markets, m.liquidity(ctx).System, jumps, specDestJumpCost, 0, specMaxHubs)
+	ids := rankMarkets(markets, m.liquidity(ctx).System, jumps, m.marketBonus(ctx),
+		specDestJumpCost, 0, specMaxHubs)
 	if len(ids) == 0 {
 		return m.factorySpecDests(ctx, b, cfg, jumps, nil)
 	}

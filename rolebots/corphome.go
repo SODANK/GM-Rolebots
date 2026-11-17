@@ -960,8 +960,11 @@ func (m *Mod) planCorpAddresses(ctx context.Context, b *botRun, facts *CorpFacts
 
 	// No region head start and no trade-hub term: the commute and the crowd (homeCrowdPenalty,
 	// moveout.go) separate stations, so a corporation's members spread over all of its stations.
+	// This world's luck for the system (fortune.go) is the same draw rankHomes reads, and is in
+	// hereScore too, so the move margin compares like with like.
+	luck := m.systemFortune(ctx)
 	place := func(sysID int64, jumps int) float64 {
-		return corpPlaceScore(jumpCost, jumps, crowd[sysID], crowdBase)
+		return corpPlaceScore(jumpCost, jumps, crowd[sysID], crowdBase) + fortuneHomePts*luck(sysID)
 	}
 
 	// What staying put is worth. A home outside the search radius is priced at the edge of it.
@@ -1081,12 +1084,14 @@ func (m *Mod) bestCorpAddress(ctx context.Context, b *botRun, list []corpHomeCan
 	sort.Slice(hq, func(x, y int) bool { return list[hq[x]].Score > list[hq[y]].Score })
 	order := make([]int, 0, len(list))
 	order = append(order, hq...)
-	// Seeded per (pilot, employer) over a station-ordered list, so every look gives one answer until
-	// scores move. An unseeded draw re-rolled each look and the pilot never settled.
+	// Seeded per (pilot, employer, epoch) over a station-ordered list, so every look gives one answer
+	// until scores move. An unseeded draw re-rolled each look and the pilot never settled. The epoch
+	// is mixed in because character IDs run in the same sequence on every fresh server.
 	sort.Slice(rest, func(x, y int) bool { return list[rest[x]].StationID < list[rest[y]].StationID })
+	pickSeed := int64(splitmix64(uint64(b.CharID*1_000_003^b.CorpID) ^ uint64(m.epochSeed(ctx))))
 	for _, k := range softmaxOrderSeeded(len(rest), func(k int) float64 {
 		return list[rest[k]].Score
-	}, b.Tune.PickTemperature*addressPickTempPts, b.CharID*1_000_003^b.CorpID) {
+	}, b.Tune.PickTemperature*addressPickTempPts, pickSeed) {
 		order = append(order, rest[k])
 	}
 
