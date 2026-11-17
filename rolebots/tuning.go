@@ -325,8 +325,8 @@ type Tuning struct {
 	// aggression axis: it may join a combat fleet in the logistics seat and
 	// in no other (gangform.go pacifistMaySit, gangplan.go's muster gate).
 	Pacifist bool
-	// FightsPolice marks a reckless pilot (Caution at or past fightsPoliceFloor toward careless): it
-	// shoots back at CONCORD, customs or a sentry gun that engages it. A cautious one breaks off and leaves.
+	// FightsPolice marks a pilot that shoots back at CONCORD, customs or a sentry gun that engages it:
+	// reckless, violent and outlaw all at once (fightsPolice). Anyone else breaks off and leaves.
 	FightsPolice bool
 
 	// Piracy (piracy.go). PiracyAppetite is the product of the aggression and outlaw factors, and either at
@@ -525,13 +525,27 @@ func traitScale(v int) float64 {
 	return f
 }
 
-// fightsPoliceFloor is how far toward reckless a pilot's Caution must sit before it shoots back at
-// the law instead of leaving. Cautious and middling pilots leave.
+// fightsPoliceFloor is how far out, on average, a pilot must sit toward reckless, violent and outlaw
+// before it shoots back at the law instead of leaving.
 const fightsPoliceFloor = 0.5
 
-// fightsPolice is Tuning.FightsPolice from the Caution scale (-1 cautious .. +1 reckless).
-func fightsPolice(caution float64) bool {
-	return caution >= fightsPoliceFloor
+// fightsPolice is Tuning.FightsPolice from three trait scales, each -1..+1: Caution (cautious ..
+// reckless), Aggression (pacifist .. violent) and Lawfulness (lawful .. outlaw). Recklessness alone is
+// not defiance of the law: a lawful pilot respects it, a pacifist has no fight to bring, and a careful
+// one leaves. So all three must lean the defiant way, and their geometric mean must reach the floor,
+// which keeps two poles from buying off a third the pilot barely leans toward.
+func fightsPolice(caution, violence, lawless float64) bool {
+	if caution <= 0 || violence <= 0 || lawless <= 0 {
+		return false
+	}
+	return math.Cbrt(caution*violence*lawless) >= fightsPoliceFloor-1e-9
+}
+
+// takesElectiveFights reports whether a pilot will start or join a fight it could stay out of: a war
+// target met in transit, a criminal on the grid, a friend's attacker. A pacifist will not; it does
+// not put itself where the guns, or the police, come out. Self-defence and healing are not elective.
+func takesElectiveFights(tn Tuning) bool {
+	return !tn.Pacifist
 }
 
 // bend interpolates a tuning value from a trait: atZero at t = 0 (a no-op by construction), atLow at
@@ -907,7 +921,7 @@ func resolveTuning(traits map[string]int) Tuning {
 	tn.TackleDrive = careless
 	tn.ScoutDrive = posPole(traitScale(traits[TraitGreed]))
 	tn.Pacifist = violence <= pacifistAggressionFloor
-	tn.FightsPolice = fightsPolice(traitScale(traits[TraitCaution]))
+	tn.FightsPolice = fightsPolice(nerve, violence, lawless)
 
 	// The research career comes last: it reads the finished manufacturing disposition (SupplyDrive x
 	// IndustryAppetite, bent by every trait above) so the lab, the tag and the arm agree with the factory draw.

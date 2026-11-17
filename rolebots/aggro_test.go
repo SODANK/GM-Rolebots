@@ -166,22 +166,43 @@ func TestFightsPolice(t *testing.T) {
 		t.Error("a pilot with default traits must leave the police alone")
 	}
 	cases := []struct {
-		caution, aggression int
-		want                bool
+		name                       string
+		caution, aggression, lawls int
+		want                       bool
 	}{
-		{100, 0, true},     // reckless
-		{50, 0, true},      // on the line
-		{100, -100, true},  // reckless pacifist: aggression does not enter into it
-		{49, 100, false},   // just short of reckless, however violent
-		{0, 100, false},    // middling
-		{-100, 100, false}, // cautious
+		{"reckless violent outlaw", 100, 100, 100, true},
+		{"halfway on all three", 50, 50, 50, true},
+		{"reckless and violent but lawful", 100, 100, -50, false},
+		{"reckless outlaw but pacifist", 100, -60, 100, false},
+		{"violent outlaw but cautious", -50, 100, 100, false},
+		{"barely an outlaw", 100, 100, 10, false}, // cbrt(0.1) ~ 0.46
+		{"neutral on the law", 100, 100, 0, false},
+		{"reckless alone", 100, 0, 0, false},
 	}
 	for _, c := range cases {
-		tn := resolveTuning(map[string]int{TraitCaution: c.caution, TraitAggression: c.aggression})
+		tn := resolveTuning(map[string]int{
+			TraitCaution: c.caution, TraitAggression: c.aggression, TraitLawfulness: c.lawls,
+		})
 		if tn.FightsPolice != c.want {
-			t.Errorf("caution %d, aggression %d: FightsPolice = %v, want %v",
-				c.caution, c.aggression, tn.FightsPolice, c.want)
+			t.Errorf("%s (caution %d, aggression %d, lawfulness %d): FightsPolice = %v, want %v",
+				c.name, c.caution, c.aggression, c.lawls, tn.FightsPolice, c.want)
 		}
+	}
+}
+
+// A pacifist starts and joins no fight it could stay out of: war targets in transit, criminals on
+// the grid, a friend's attacker. Everyone else may.
+func TestTakesElectiveFights(t *testing.T) {
+	if !takesElectiveFights(defaultTuning()) {
+		t.Error("a pilot with default traits may take an elective fight")
+	}
+	pacifist := resolveTuning(map[string]int{TraitAggression: -100})
+	if !pacifist.Pacifist || takesElectiveFights(pacifist) {
+		t.Error("a pacifist must stay out of elective fights")
+	}
+	mild := resolveTuning(map[string]int{TraitAggression: -30}) // short of the pacifist floor
+	if !takesElectiveFights(mild) {
+		t.Error("a mild pilot short of pacifist may still take an elective fight")
 	}
 }
 

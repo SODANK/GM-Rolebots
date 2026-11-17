@@ -226,6 +226,10 @@ func (m *Mod) assistPairs(eb *embodiedBot) []assistPair {
 	if !assistEnabled() || eb == nil || eb.ent == nil || eb.ss == nil || eb.doctrine == DoctrineNone {
 		return nil
 	}
+	// A pacifist does not join the fight; its repairers still answer it (assistHealTargets).
+	if !takesElectiveFights(eb.tune) {
+		return nil
+	}
 	victims := gridVictimHits(eb.ss)
 	if len(victims) == 0 {
 		return nil
