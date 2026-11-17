@@ -146,7 +146,9 @@ func (m *Mod) considerNewTower(ctx context.Context, c *corpCEO, ch Charter, fact
 	if err != nil {
 		return "", err
 	}
-	intel = intelWithin(intel, reach)
+	// A moon where no harvester anchors is no mining or reactions site, and counting it as known
+	// would stop the surveys short (usableMoonCount).
+	intel = intelHarvestable(intelWithin(intel, reach), u.meta, m.harvesterMaxSec(ctx))
 	floor := m.miningValueFloor(ctx, c, ch, hq)
 	occupied := m.occupiedMoons(ctx)
 	// Keep surveying until there are moons a tower could go on, not merely moons known: most
@@ -301,6 +303,61 @@ func (m *Mod) considerNewTower(ctx context.Context, c *corpCEO, ch Charter, fact
 		out = m.sovPledgeWaitLine(ctx, pledge) + "; " + out
 	}
 	return out, err
+}
+
+// purposeWorkTypes is the structures a purpose's tower is built around. Where one of them cannot
+// anchor (its anchoringSecurityLevelMax), the tower has no work to do. Pure.
+func purposeWorkTypes(purpose string, hub bool) []int64 {
+	switch purpose {
+	case purposeMining:
+		return []int64{typeHarvester}
+	case purposeReactions:
+		if hub {
+			return []int64{typeReactor}
+		}
+		return []int64{typeHarvester, typeMediumReactor}
+	case purposeRefinery:
+		return []int64{typeMedRefinery, typeBigRefinery}
+	}
+	return nil
+}
+
+// structureMaxSec is the highest raw system security a structure anchors in, as the core judges
+// it (evedb.AnchoringSecurityLevelMax: the type's attribute, or the operator's override), +Inf
+// for a structure with no ceiling of its own.
+func (m *Mod) structureMaxSec(ctx context.Context, typeID int64) float64 {
+	if v, ok := evedb.AnchoringSecurityLevelMax(ctx, m.db, typeID); ok {
+		return v
+	}
+	return math.Inf(1)
+}
+
+// harvesterMaxSec is the highest raw security a Moon Harvesting Array anchors in (0.4 shipped).
+// A moon above it cannot be mined, however its security rounds for display.
+func (m *Mod) harvesterMaxSec(ctx context.Context) float64 {
+	return m.structureMaxSec(ctx, typeHarvester)
+}
+
+// purposeMaxSec is the highest raw security a purpose's tower can do its work in: the lowest
+// ceiling among its work structures (purposeWorkTypes), +Inf when none has one.
+func (m *Mod) purposeMaxSec(ctx context.Context, purpose string, hub bool) float64 {
+	out := math.Inf(1)
+	for _, t := range purposeWorkTypes(purpose, hub) {
+		out = math.Min(out, m.structureMaxSec(ctx, t))
+	}
+	return out
+}
+
+// intelHarvestable keeps the moons a harvester could anchor over: in a system whose raw security
+// is at most maxSec. A moon in an unknown system is dropped. Pure.
+func intelHarvestable(intel []moonIntel, meta map[int64]sysMeta, maxSec float64) []moonIntel {
+	out := intel[:0:0]
+	for _, mi := range intel {
+		if mt, ok := meta[mi.SystemID]; ok && mt.Security <= maxSec {
+			out = append(out, mi)
+		}
+	}
+	return out
 }
 
 // towerCapitalReady is the money test for starting to look for a tower: free capital (the
@@ -629,13 +686,16 @@ func (m *Mod) siteCandidates(ctx context.Context, c *corpCEO, ch Charter, purpos
 		return d
 	}
 	maxSec := evedb.StarbaseMaxAnchorSecurity(ctx, m.db)
+	// The tower may anchor where its work structures cannot (a harvester, a reactor, a refining
+	// array stop at 0.4 raw security): such a tower would never get past rigging.
+	workSec := m.purposeMaxSec(ctx, purpose, hub)
 	if purpose == purposeMining {
 		for _, mi := range intel {
 			if mi.BestClass < moonR4 || occupied[mi.MoonID] || mi.Value < miningFloor {
 				continue
 			}
 			meta := u.meta[mi.SystemID]
-			if meta.Security >= 0.45 { // a harvester will not anchor there
+			if meta.Security > workSec { // a harvester will not anchor there
 				continue
 			}
 			j, ok := reach[mi.SystemID]
@@ -661,7 +721,7 @@ func (m *Mod) siteCandidates(ctx context.Context, c *corpCEO, ch Charter, purpos
 			if !ok {
 				continue
 			}
-			rx, ok := m.reactionSite(ctx, rc, mi, meta.Security, miningFloor)
+			rx, ok := m.reactionSite(ctx, rc, mi, meta.Security, workSec, miningFloor)
 			if !ok {
 				continue
 			}
@@ -685,7 +745,7 @@ func (m *Mod) siteCandidates(ctx context.Context, c *corpCEO, ch Charter, purpos
 	byCluster := isAmenityPurpose(purpose) && len(cluster) > 0
 	cj := map[int64]int{}
 	for s, j := range reach {
-		if u.meta[s].Security >= maxSec {
+		if u.meta[s].Security >= maxSec || u.meta[s].Security > workSec {
 			continue
 		}
 		if purpose == purposeFortress {
@@ -749,11 +809,11 @@ func (m *Mod) siteCandidates(ctx context.Context, c *corpCEO, ch Charter, purpos
 }
 
 // reactionSite is whether a surveyed moon is a miner+reactor site for the corporation: a
-// moon up to R16 (richer ones are mined), where a harvester anchors (under 0.45), holding
-// both inputs of a simple reaction it can use, whose output is worth at least the mining
-// floor an hour. The best such reaction comes back.
-func (m *Mod) reactionSite(ctx context.Context, rc reactionContext, mi moonIntel, security, miningFloor float64) (reactionChoice, bool) {
-	if mi.BestClass > moonR16 || security >= 0.45 || len(mi.Materials) < 2 {
+// moon up to R16 (richer ones are mined), where its harvesters and reactor anchor (security at
+// most workSec, purposeMaxSec), holding both inputs of a simple reaction it can use, whose output
+// is worth at least the mining floor an hour. The best such reaction comes back.
+func (m *Mod) reactionSite(ctx context.Context, rc reactionContext, mi moonIntel, security, workSec, miningFloor float64) (reactionChoice, bool) {
+	if mi.BestClass > moonR16 || security > workSec || len(mi.Materials) < 2 {
 		return reactionChoice{}, false
 	}
 	rx, ok := m.moonReactionCase(ctx, rc, mi.Materials)
@@ -772,13 +832,14 @@ func (m *Mod) bestReactionCase(ctx context.Context, rc reactionContext, intel []
 		return reactionChoice{}, false
 	}
 	occupied := m.occupiedMoons(ctx)
+	workSec := m.purposeMaxSec(ctx, purposeReactions, false)
 	var best reactionChoice
 	found := false
 	for _, mi := range intel {
 		if occupied[mi.MoonID] {
 			continue
 		}
-		rx, ok := m.reactionSite(ctx, rc, mi, u.meta[mi.SystemID].Security, miningFloor)
+		rx, ok := m.reactionSite(ctx, rc, mi, u.meta[mi.SystemID].Security, workSec, miningFloor)
 		if !ok {
 			continue
 		}

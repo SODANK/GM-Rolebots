@@ -18,6 +18,8 @@ import (
 // (startTeardown); a depot still being bought is abandoned with its kit left on the shelf.
 // Mining, reactions and fortress towers are not reconsidered here: reviewTowers judges mining by
 // what its moon pays, a reactor by its feeders, a fortress by its sovereignty (fortressSystems).
+// The one exception is a tower of any purpose whose work structures cannot anchor where it stands
+// (towerWorkBarred): it is judged at once, its own purpose struck off, before it is ever finished.
 
 const (
 	reconsiderEverySec = 14 * 86400
@@ -122,6 +124,19 @@ func (m *Mod) reconsiderTowers(ctx context.Context, c *corpCEO, ch Charter, fact
 	var intel []moonIntel
 	var floor float64
 	loaded := false
+	load := func() {
+		if loaded {
+			return
+		}
+		loaded = true
+		hq := facts.StationID
+		if hq == 0 {
+			hq, _ = m.corpFactoryOffice(ctx, c.CorpID)
+		}
+		intel, _ = m.corpMoonIntel(ctx, c.CorpID, -1)
+		floor = m.miningValueFloor(ctx, c, ch, hq)
+	}
+	u, _ := m.universe(ctx)
 	for _, p := range plans {
 		if ctx.Err() != nil {
 			return
@@ -131,6 +146,22 @@ func (m *Mod) reconsiderTowers(ctx context.Context, c *corpCEO, ch Charter, fact
 		}
 		if m.advanceStrip(ctx, c, p) {
 			_ = m.saveTowerPlan(ctx, p)
+		}
+		if why := m.towerWorkBarred(ctx, u, p); why != "" {
+			if p.TowerID == 0 {
+				// Nothing in space yet: drop the plan, the kit bought so far stays on the shelf for
+				// the next tower (pullStash).
+				m.ceoLog(ctx, c, powerStarbase, "reconsider", p.MoonID, 0,
+					"dropped its %s tower plan at %s: %s; what kit it bought stays on the shelf",
+					purposeLabel[p.Purpose], moonNameOf(ctx, m, p.MoonID), why)
+				if err := m.startTeardown(ctx, c, p, why); err != nil {
+					m.logBot(c.CharID, logError, "ceo", "reconsider: %v", err)
+				}
+				continue
+			}
+			load()
+			m.reconsiderTower(ctx, c, facts, plans, p, intel, floor, why)
+			continue
 		}
 		if !reconsiderable(p.Purpose) {
 			continue
@@ -161,22 +192,54 @@ func (m *Mod) reconsiderTowers(ctx context.Context, c *corpCEO, ch Charter, fact
 				continue
 			}
 		}
-		if !loaded {
-			loaded = true
-			hq := facts.StationID
-			if hq == 0 {
-				hq, _ = m.corpFactoryOffice(ctx, c.CorpID)
-			}
-			intel, _ = m.corpMoonIntel(ctx, c.CorpID, -1)
-			floor = m.miningValueFloor(ctx, c, ch, hq)
-		}
-		m.reconsiderTower(ctx, c, facts, plans, p, intel, floor)
+		load()
+		m.reconsiderTower(ctx, c, facts, plans, p, intel, floor, "")
 	}
 }
 
-// reconsiderTower judges one tower and acts on the verdict.
+// towerWorkBarred says why a tower can never do its work where it stands, "" when it can: its
+// system's raw security is above what its work structures anchor in (purposeMaxSec). Such a tower
+// would sit in rigging for good. Only towers not yet running are judged: a running one already
+// has its structures up. A reactions tower that harvests nothing is a hub.
+func (m *Mod) towerWorkBarred(ctx context.Context, u *universe, p *towerPlan) string {
+	switch p.Status {
+	case towerPlanned, towerStaging, towerAnchored, towerRigging:
+	default:
+		return ""
+	}
+	if u == nil {
+		return ""
+	}
+	mt, ok := u.meta[p.SystemID]
+	if !ok {
+		return ""
+	}
+	hub := p.Purpose == purposeReactions && !planHarvests(p)
+	if ceil := m.purposeMaxSec(ctx, p.Purpose, hub); mt.Security > ceil {
+		return fmt.Sprintf("its %s structures cannot anchor in %.2f-sec space (%.1f and below only)",
+			purposeLabel[p.Purpose], mt.Security, ceil)
+	}
+	return ""
+}
+
+// workableSignals strikes a barred tower's own purpose off the signal list, and any purpose whose
+// work structures cannot anchor at sec either.
+func (m *Mod) workableSignals(ctx context.Context, sigs []purposeSignal, cur string, sec float64) []purposeSignal {
+	out := sigs[:0:0]
+	for _, s := range sigs {
+		if s.Purpose == cur || sec > m.purposeMaxSec(ctx, s.Purpose, s.Hub) {
+			continue
+		}
+		out = append(out, s)
+	}
+	return out
+}
+
+// reconsiderTower judges one tower and acts on the verdict. barred, when set, is why the tower's
+// work cannot be done where it stands (towerWorkBarred): its own purpose is struck off, so the
+// verdict is a refit to something that works there or a teardown.
 func (m *Mod) reconsiderTower(ctx context.Context, c *corpCEO, facts *CorpFacts, plans []*towerPlan, p *towerPlan,
-	intel []moonIntel, floor float64) {
+	intel []moonIntel, floor float64, barred string) {
 	now := clock.Unix()
 	others := make([]*towerPlan, 0, len(plans))
 	for _, q := range plans {
@@ -185,6 +248,11 @@ func (m *Mod) reconsiderTower(ctx context.Context, c *corpCEO, facts *CorpFacts,
 		}
 	}
 	sigs := m.purposeSignals(ctx, c, facts, others, intel, floor)
+	if barred != "" {
+		if u, err := m.universe(ctx); err == nil && u != nil {
+			sigs = m.workableSignals(ctx, sigs, p.Purpose, u.meta[p.SystemID].Security)
+		}
+	}
 	class := -1
 	for _, mi := range intel {
 		if mi.MoonID == p.MoonID {
@@ -222,6 +290,9 @@ func (m *Mod) reconsiderTower(ctx context.Context, c *corpCEO, facts *CorpFacts,
 		p.Layout.Pieces = kept
 		from := purposeLabel[p.Purpose]
 		why := signalWhy(sigs, to)
+		if barred != "" {
+			why = barred + "; " + why
+		}
 		p.Purpose, p.Note = to, why
 		p.Layout.ReconsiderAt = now
 		p.Layout.ReconsiderNote = fmt.Sprintf("refit from %s to %s", from, purposeLabel[to])
@@ -234,6 +305,9 @@ func (m *Mod) reconsiderTower(ctx context.Context, c *corpCEO, facts *CorpFacts,
 		_ = m.saveTowerPlan(ctx, p)
 	default:
 		why := fmt.Sprintf("nothing the corporation needs fits the %s tower at %s", purposeLabel[p.Purpose], place)
+		if barred != "" {
+			why = fmt.Sprintf("%s, and nothing else the corporation needs fits the tower at %s", barred, place)
+		}
 		p.Layout.ReconsiderAt, p.Layout.ReconsiderNote = now, "taken down: "+why
 		if err := m.startTeardown(ctx, c, p, why); err != nil {
 			m.logBot(c.CharID, logError, "ceo", "reconsider teardown: %v", err)

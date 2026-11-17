@@ -15,7 +15,8 @@ import (
 //   - a deploy leg (the tower itself) wants Anchoring I;
 //   - a rig leg (guns, arrays, harvesters, silos around an online tower) wants Anchoring II.
 // For anchorReserveSec after posting only an officer with that level may claim the leg, until
-// anchorOfficerSec any officer, then anybody. Hauling the kit to the staging office
+// anchorOfficerSec any officer, then anybody. Past anchorReserveSec the leg is also open to a
+// claimant at any distance from the staging office (haulClaimMaxJumps). Hauling the kit to the staging office
 // (postStagingMoves) stays everybody's work.
 
 const (

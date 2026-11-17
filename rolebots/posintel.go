@@ -316,13 +316,14 @@ func scoreSurveyCand(c surveyCand) float64 {
 // surveyCandidates is every system in reach still worth an order, best first: below highsec,
 // no order out (busy), and with moons nobody friendly has surveyed. Moons is what is left
 // (moons less covered), so a system one order in still scores on its remaining two thirds.
-// Ties go to the nearer system, then the lower ID. frontier marks unclaimed 0.0 systems. Pure.
+// Ties go to the nearer system, then the lower ID. frontier marks unclaimed 0.0 systems; maxSec
+// is the highest raw security a harvester anchors in (harvesterMaxSec). Pure.
 func surveyCandidates(reach map[int64]int, meta map[int64]sysMeta, busy map[int64]bool,
-	moons, covered map[int64]int, frontier map[int64]bool) []surveyCand {
+	moons, covered map[int64]int, frontier map[int64]bool, maxSec float64) []surveyCand {
 	var out []surveyCand
 	for sys, j := range reach {
 		mt, ok := meta[sys]
-		if !ok || busy[sys] || mt.Security >= 0.45 {
+		if !ok || busy[sys] || mt.Security > maxSec {
 			continue
 		}
 		left := moons[sys] - covered[sys]
@@ -425,9 +426,11 @@ func (m *Mod) postSurveysWith(ctx context.Context, c *corpCEO, ch Charter, fromS
 	for _, id := range posted {
 		busy[id] = true
 	}
+	// Only a system a harvester anchors in is worth surveying (harvesterMaxSec, 0.4 raw shipped).
+	harvestSec := m.harvesterMaxSec(ctx)
 	var sysIDs []int64
 	for sys := range reach {
-		if meta, ok := u.meta[sys]; ok && !busy[sys] && meta.Security < 0.45 {
+		if meta, ok := u.meta[sys]; ok && !busy[sys] && meta.Security <= harvestSec {
 			sysIDs = append(sysIDs, sys)
 		}
 	}
@@ -447,7 +450,7 @@ func (m *Mod) postSurveysWith(ctx context.Context, c *corpCEO, ch Charter, fromS
 		}
 		rows.Close()
 	}
-	cands := pullSurveyCands(surveyCandidates(reach, u.meta, busy, moons, covered, frontier), opts)
+	cands := pullSurveyCands(surveyCandidates(reach, u.meta, busy, moons, covered, frontier, harvestSec), opts)
 	n := 0
 	for _, cd := range cands {
 		if open+n >= limit || cd.Score <= 0 {

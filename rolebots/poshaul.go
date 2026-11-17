@@ -320,7 +320,7 @@ func (m *Mod) posHaulDue(ctx context.Context, b *botRun) (bool, error) {
 			continue // a blueprint original moves only in a Director's hold (postowerlab.go)
 		}
 		fromSys := l.FromSystemID
-		if j := m.jumpsTo(ctx, b, fromSys); j < 0 || j > corpWorkMaxJumps {
+		if j := m.jumpsTo(ctx, b, fromSys); j < 0 || j > haulClaimMaxJumps(l.Kind, now-l.PostedAt) {
 			continue
 		}
 		// A fuel leg is a tower's bay to fill, thousands of m³: only a pilot whose trade hull is a
@@ -401,6 +401,18 @@ func haulClaimOK(kind string, fueler, infra, hasInfra bool, age int64) bool {
 		return fueler || infra || !hasInfra || age >= haulReserveSec
 	}
 	return true
+}
+
+// haulClaimMaxJumps is how far from a leg's source a docked member may be to claim it:
+// corpWorkMaxJumps, except for a leg that ends in anchoring (deploy, rig) once its officer
+// reserve (anchorReserveSec) has run. Those are staged at the office nearest the moon, often a
+// forward office in 0.0 where nobody docks; held to the usual radius they would sit until they
+// went stale (haulStaleSec), so after the reserve anyone allowed to claim them may fly out. Pure.
+func haulClaimMaxJumps(kind string, age int64) int {
+	if anchorNeedFor(kind) > 0 && age >= anchorReserveSec {
+		return unlimitedJumps
+	}
+	return corpWorkMaxJumps
 }
 
 // haulBiggestUnit is the m3 of the largest single unit a leg still has to carry; for a deploy
