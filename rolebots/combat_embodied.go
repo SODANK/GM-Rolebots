@@ -853,8 +853,8 @@ type gridHostile struct {
 	// attacker (Assist) or a war target met in transit (warTargetsOnGrid). An unarmed pilot sits
 	// those out instead of fleeing (electiveOnly).
 	Elective bool
-	// Police marks law enforcement that has hit or locked this pilot. Only a careless, violent pilot
-	// (Tuning.FightsPolice) shoots back; anyone else leaves (shouldBreakOff).
+	// Police marks law enforcement that has hit or locked this pilot. Only a reckless pilot
+	// (Tuning.FightsPolice) shoots back; a cautious one leaves.
 	Police bool
 }
 
@@ -1316,7 +1316,7 @@ func (m *Mod) embodyCombatLoop(ctx context.Context, eb *embodiedBot) {
 		// A gank striker never breaks off mid-volley: warping out half-way throws the hull away. Once
 		// the mark is down or CONCORD has it, it runs or brawls (gankStrikerRuns).
 		gankRun := eb.gankStrike && m.gankStrikerRuns(ctx, eb)
-		// The law on this ship: only a careless, violent pilot stands and shoots it out (Tuning.FightsPolice).
+		// The law on this ship: only a reckless pilot stands and shoots it out (Tuning.FightsPolice).
 		policeRun := !eb.gankStrike && !eb.tune.FightsPolice && policeEngaged(sighted)
 		if policeRun && !policeNoted {
 			policeNoted = true
@@ -1561,8 +1561,8 @@ func (m *Mod) pickCombatTarget(eb *embodiedBot, l *combatLoadout, hostiles []uin
 		if e == nil || e.IsDestroyed() || e.IsInWarp() || e.IsCloaked() {
 			continue
 		}
-		// The law is something to leave, not to shoot, unless this pilot is careless and violent
-		// enough to try (Tuning.FightsPolice); shouldBreakOff's police check is already flying it out.
+		// The law is something to leave, not to shoot, unless this pilot is reckless enough to try
+		// (Tuning.FightsPolice); the police break-off is already flying a cautious one out.
 		if !e.IsPlayer && lawEnforcementGroup(e.Slim.GroupID) && !eb.tune.FightsPolice {
 			continue
 		}

@@ -169,12 +169,12 @@ func TestFightsPolice(t *testing.T) {
 		caution, aggression int
 		want                bool
 	}{
-		{100, 100, true},   // careless and violent
-		{50, 50, true},     // on the line
-		{100, 0, false},    // careless, not violent
-		{0, 100, false},    // violent, careful enough
-		{-100, 100, false}, // careful
-		{49, 100, false},
+		{100, 0, true},     // reckless
+		{50, 0, true},      // on the line
+		{100, -100, true},  // reckless pacifist: aggression does not enter into it
+		{49, 100, false},   // just short of reckless, however violent
+		{0, 100, false},    // middling
+		{-100, 100, false}, // cautious
 	}
 	for _, c := range cases {
 		tn := resolveTuning(map[string]int{TraitCaution: c.caution, TraitAggression: c.aggression})
