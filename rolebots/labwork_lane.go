@@ -87,9 +87,14 @@ func (m *Mod) labwork(ctx context.Context, b *botRun, startNew bool) (bool, erro
 	// A research career's product is its copies and the odd spare original: sell whatever it is docked with
 	// (listLibraryProducts). A research house's member hands its copies to the library instead
 	// (corpresearchdeposit.go). Throttled with the stray scan.
+	// Any pilot holding a hull original copies it for the board and lists the hull copies of its own make (ownercopy.go): the
+	// research lane alone leaves cruisers and up with no copy supply.
 	if strayDue {
-		if !m.depositResearchProducts(ctx, b) && researchCareer(b.Tune) {
+		if !m.depositResearchProducts(ctx, b) && (researchCareer(b.Tune) || ownerCopyOn(ctx, m)) {
 			m.listLibraryProducts(ctx, b)
+		}
+		if m.ownerHullCopy(ctx, b, factoryID, factorySys) {
+			return true, nil
 		}
 	}
 
@@ -349,6 +354,10 @@ func (m *Mod) labworkStep(ctx context.Context, b *botRun) (bool, error) {
 		return false, saveState(ctx, m.db, st)
 
 	case TaskLabCollect:
+		// At the lab: an owner's hull copies came off the line here, and this is the one visit that will list them.
+		if b.StationID == d.LabStationID {
+			m.ownerListAtLab(ctx, b)
+		}
 		if d.LabJobID == 0 {
 			// No job, but possibly a print still at the lab (the state labHaulHomeOrFinish leaves when it finds no hull, which
 			// labCollectDue re-opens). Finishing here would clear LabBPItemID and abandon the blueprint.

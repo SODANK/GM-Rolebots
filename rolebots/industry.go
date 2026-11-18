@@ -470,20 +470,8 @@ func (m *Mod) industryStartProject(ctx context.Context, b *botRun) error {
 	var skipped []string
 	// The cheapest purely monetary refusal of the pass, if any: it leaves this function as a shortfallError, not prose.
 	var cheapestNeed float64
-	// Prints it could never pay for leave the draw, not the book: a book headed by cruisers would spend every attempt on
-	// "needs ~34M ISK on hand" against a small wallet. Same test as the per-candidate gate below, done once.
-	cands, priced, ownedPrints := m.dropUnaffordablePrints(ctx, b.CharID, cands, balance)
-	if len(priced) > 0 {
-		for _, need := range priced {
-			if cheapestNeed == 0 || need < cheapestNeed {
-				cheapestNeed = need
-			}
-		}
-		skipped = append(skipped, fmt.Sprintf("%d print(s) beyond its wallet (cheapest needs ~%.0f ISK on hand)",
-			len(priced), cheapestNeed))
-	}
-	// The factory's own horizon, built at most once per pass and shared by the obtainability gate below and the supply
-	// bids at commit: what this pilot can reach from the counter it builds at.
+	// The factory's own horizon, built at most once per pass and shared by the affordability filter, the obtainability gate below and
+	// the supply bids at commit: what this pilot can reach from the counter it builds at.
 	var factoryReach map[int64]int
 	reachOfFactory := func() map[int64]int {
 		if factoryReach == nil {
@@ -494,6 +482,25 @@ func (m *Mod) industryStartProject(ctx context.Context, b *botRun) error {
 			}
 		}
 		return factoryReach
+	}
+	// Hulls above a frigate in the book, read once: the owned-print pin and the pass-over log (hullgates.go) both ask.
+	ladderHulls := m.hullsInGroups(ctx, cands, hullLadderGroupIDs)
+	var passOver hullPassOver
+	// Prints it could never pay for leave the draw, not the book: a book headed by cruisers would spend every attempt on
+	// "needs ~34M ISK on hand" against a small wallet. Same test as the per-candidate gate below, done once. A print with a
+	// claimable copy on escrow stays: the loop takes the copy before its own wallet gate.
+	cands, priced, ownedPrints, droppedPrints := m.dropUnaffordablePrints(ctx, b, cands, balance, reachOfFactory)
+	if len(priced) > 0 {
+		for i, need := range priced {
+			if cheapestNeed == 0 || need < cheapestNeed {
+				cheapestNeed = need
+			}
+			if i < len(droppedPrints) && ladderHulls[droppedPrints[i].TypeID] {
+				passOver.note(droppedPrints[i].TypeID, droppedHullNote(droppedPrints[i], need))
+			}
+		}
+		skipped = append(skipped, fmt.Sprintf("%d print(s) beyond its wallet (cheapest needs ~%.0f ISK on hand)",
+			len(priced), cheapestNeed))
 	}
 	// What the pilot's own prints have been researched to (labwork.go raises these), read once for the whole book. A
 	// candidate it does not own is quoted at ME 0 and PE 0, as bought.
@@ -531,7 +538,7 @@ func (m *Mod) industryStartProject(ctx context.Context, b *botRun) error {
 	}
 	// Its own print of a hull the roster is short of gets the second
 	// guaranteed attempt, behind the Industrial bootstrap (pickOwnedHullPin).
-	hullPin := pickOwnedHullPin(cands, m.hullsInGroups(ctx, cands, hullLadderGroupIDs), ownedPrints)
+	hullPin := pickOwnedHullPin(cands, ladderHulls, ownedPrints)
 	if pin := findCandidate(cands, hullPin); pin != nil {
 		m.logBot(b.CharID, logInfo, "industry",
 			"reserving an attempt for its own %s print — %d pilot(s) can fly one, %d being built",
@@ -542,7 +549,18 @@ func (m *Mod) industryStartProject(ctx context.Context, b *botRun) error {
 		pinAttempts(drawOrderN(cands, b.Tune.PickTemperature, industryBookAttempts),
 			cands, []int64{splitPin, hullPin}, industryBookAttempts),
 		cands, bootstrapType, industryBookAttempts)
+	// A hull refused in a pass that goes on to build something else would lose its reason with the pass: the last refusal a hull
+	// candidate added is kept for the pass-over line at commit.
+	var prevCand indCandidate
+	prevMark := -1
+	notePrevHull := func() {
+		if prevMark >= 0 && ladderHulls[prevCand.TypeID] && len(skipped) > prevMark {
+			passOver.note(prevCand.TypeID, skipped[len(skipped)-1])
+		}
+	}
 	for _, cand := range attempts {
+		notePrevHull()
+		prevCand, prevMark = cand, len(skipped)
 		candME, candPE := levelsOf(cand.BPTypeID)
 		// Inert blueprint types and orphaned products (a productTypeID that is not an item) install fine and fail on delivery,
 		// so they are checked before any money moves.
@@ -866,7 +884,9 @@ func (m *Mod) industryStartProject(ctx context.Context, b *botRun) error {
 			if minesOwn {
 				if mineable, offBelt := m.splitMinableShortfall(ctx, needs); len(mineable) > 0 &&
 					m.oreWithinReach(ctx, mineable, r) {
-					priced = offBelt
+					// The lines it cannot dig in its trip budget (mustBuy) are bought, and the wallet gate above charges them as cash: so
+					// does this one, or a hull whose zydrine and megacyte are all purchased looks free to make.
+					priced = append(append([]matNeed(nil), offBelt...), scaleNeeds(mustBuy, runs)...)
 				}
 			}
 			matValue := 0.0
@@ -876,8 +896,9 @@ func (m *Mod) industryStartProject(ctx context.Context, b *botRun) error {
 				}
 			}
 			units := int64(runs) * portion
-			ask := industryUnitPrice(matValue, fees, copyAmortCost(bpoAsk, runs, copyRuns), runs,
-				industryBPOAmortProjects, units, b.Tune.IndustryMargin)
+			amort := m.bpoAmortProjectsFor(ctx, cand.TypeID)
+			ask := industryUnitPrice(matValue, fees, copyAmortCost(bpoAsk, runs, copyRuns, amort), runs,
+				amort, units, b.Tune.IndustryMargin)
 			// Only against a real price: a product with no ask in reach and no basePrice comes back as the estimator's flat 100 ISK, which
 			// would refuse every item costing more than that to make. Without a market the cost-plus listing (industrySell) is the price.
 			if market, src, perr := m.estimatePriceSourceFor(ctx, b, cand.TypeID); perr == nil &&
@@ -900,6 +921,9 @@ func (m *Mod) industryStartProject(ctx context.Context, b *botRun) error {
 			}
 		}
 
+		if line := passOver.line(); line != "" {
+			m.logBot(b.CharID, logInfo, "industry", "%s — building %s instead", line, cand.TypeName)
+		}
 		st.Data = idleData(st.Data)
 		st.Data.IndDeadStops = nil // a new bill: every counter gets a fresh look
 		st.Data.IndBuyLines = nil
@@ -1260,18 +1284,30 @@ func (m *Mod) printRunsLeft(ctx context.Context, bpItemID int64) (runs int64, is
 	return runs, true
 }
 
-// copyAmortCost converts what a print cost into the figure industryUnitPrice amortises over industryBPOAmortProjects. An original
-// is capital spread over many projects; a copy is consumed, so the runs this project uses carry their share in full. copyRuns 0
-// means an original. Pure.
-func copyAmortCost(paid float64, runs int, copyRuns int64) float64 {
+// copyAmortCost converts what a print cost into the figure industryUnitPrice amortises over amortProjects (bpoAmortProjects). An
+// original is capital spread over many projects; a copy is consumed, so the runs this project uses carry their share in full. copyRuns
+// 0 means an original. Pure.
+func copyAmortCost(paid float64, runs int, copyRuns int64, amortProjects int) float64 {
 	if copyRuns <= 0 || paid <= 0 {
 		return paid
+	}
+	if amortProjects <= 0 {
+		amortProjects = industryBPOAmortProjects
 	}
 	used := float64(runs)
 	if used > float64(copyRuns) {
 		used = float64(copyRuns)
 	}
-	return paid * used / float64(copyRuns) * industryBPOAmortProjects
+	return paid * used / float64(copyRuns) * float64(amortProjects)
+}
+
+// scaleNeeds is per-run material lines times runs. Pure.
+func scaleNeeds(perRun []matNeed, runs int) []matNeed {
+	out := make([]matNeed, len(perRun))
+	for i, n := range perRun {
+		out[i] = matNeed{TypeID: n.TypeID, Needed: n.Needed * int64(runs)}
+	}
+	return out
 }
 
 // ownedBlueprintLevels is the same question asked once for a whole candidate list: the best ME and PE this pilot owns for each
@@ -1326,14 +1362,17 @@ func industryStocksToBatch(categoryID int64) bool {
 	return false
 }
 
-// dropUnaffordablePrints removes from the book every candidate whose print the pilot owns nowhere and whose catalogue price exceeds
-// what the wallet may commit (balance / industryAffordMultiple), before the draw so attempts go to candidates that can start. It returns
-// the kept book, the ISK each dropped print needs and the blueprint typeIDs the pilot owns (for pickOwnedHullPin). A read failure
-// keeps the whole book.
-func (m *Mod) dropUnaffordablePrints(ctx context.Context, charID int64, cands []indCandidate, balance float64) ([]indCandidate, []float64, map[int64]bool) {
+// dropUnaffordablePrints removes from the book every candidate whose print the pilot owns nowhere, has no claimable copy of on escrow
+// in reach (hullGateCopyAffordsKey), and whose catalogue price exceeds what the wallet may commit (balance / industryAffordMultiple),
+// before the draw so attempts go to candidates that can start. It returns the kept book, the ISK each dropped print needs, the
+// blueprint typeIDs the pilot owns (for pickOwnedHullPin) and the dropped candidates, parallel to the needs. A read failure keeps the
+// whole book.
+func (m *Mod) dropUnaffordablePrints(ctx context.Context, b *botRun, cands []indCandidate, balance float64,
+	reach func() map[int64]int) ([]indCandidate, []float64, map[int64]bool, []indCandidate) {
 	if len(cands) == 0 {
-		return cands, nil, nil
+		return cands, nil, nil, nil
 	}
+	charID := b.CharID
 	ids := make([]int64, 0, len(cands))
 	for _, c := range cands {
 		ids = append(ids, c.BPTypeID)
@@ -1343,7 +1382,7 @@ func (m *Mod) dropUnaffordablePrints(ctx context.Context, charID int64, cands []
 		SELECT typeID, COALESCE(basePrice, 0) FROM invTypes
 		WHERE typeID IN (`+placeholders(len(ids))+`)`, int64Args(ids)...)
 	if err != nil {
-		return cands, nil, nil
+		return cands, nil, nil, nil
 	}
 	for rows.Next() {
 		var id int64
@@ -1353,13 +1392,31 @@ func (m *Mod) dropUnaffordablePrints(ctx context.Context, charID int64, cands []
 		}
 	}
 	rows.Close()
+	// A copy on escrow is the cheap way in (bpcopy.go): the per-candidate loop looks for one before its own wallet gate, so this
+	// filter must not throw the candidate away first. Only asked when some print is beyond the wallet.
+	var copyable map[int64]bool
+	if hullGateOn(ctx, m, hullGateCopyAffordsKey) && escrowBuyingEnabled(ctx, m.db) {
+		budget := balance / industryAffordMultiple
+		beyond := false
+		for _, c := range cands {
+			if p := base[c.BPTypeID]; p > 0 && budget < p {
+				beyond = true
+				break
+			}
+		}
+		if beyond {
+			if all, lerr := m.escrowBPOListings(ctx); lerr == nil {
+				copyable = copyableEscrowTypes(all, reach(), charID, spendable(balance))
+			}
+		}
+	}
 	owned := map[int64]bool{}
 	args := append([]any{charID}, int64Args(ids)...)
 	orows, err := m.db.QueryContext(ctx, `
 		SELECT DISTINCT typeID FROM entity
 		WHERE ownerID = ? AND typeID IN (`+placeholders(len(ids))+`)`, args...)
 	if err != nil {
-		return cands, nil, nil
+		return cands, nil, nil, nil
 	}
 	for orows.Next() {
 		var id int64
@@ -1368,25 +1425,28 @@ func (m *Mod) dropUnaffordablePrints(ctx context.Context, charID int64, cands []
 		}
 	}
 	orows.Close()
-	kept, needs := filterAffordablePrints(cands, base, owned, balance)
-	return kept, needs, owned
+	kept, needs, dropped := filterAffordablePrints(cands, base, owned, copyable, balance)
+	return kept, needs, owned, dropped
 }
 
-// filterAffordablePrints is the arithmetic half of dropUnaffordablePrints,
-// pure so the harness can pin it.
-func filterAffordablePrints(cands []indCandidate, base map[int64]float64, owned map[int64]bool, balance float64) ([]indCandidate, []float64) {
+// filterAffordablePrints is the arithmetic half of dropUnaffordablePrints, pure so the harness can pin it. A print the pilot owns, or
+// one with a claimable copy on escrow (copyable, may be nil), is kept whatever the original costs. dropped is parallel to needs.
+func filterAffordablePrints(cands []indCandidate, base map[int64]float64, owned, copyable map[int64]bool,
+	balance float64) ([]indCandidate, []float64, []indCandidate) {
 	budget := balance / industryAffordMultiple
 	kept := cands[:0:0]
 	var needs []float64
+	var dropped []indCandidate
 	for _, c := range cands {
 		p := base[c.BPTypeID]
-		if !owned[c.BPTypeID] && p > 0 && budget < p {
+		if !owned[c.BPTypeID] && !copyable[c.BPTypeID] && p > 0 && budget < p {
 			needs = append(needs, industryAffordMultiple*p)
+			dropped = append(dropped, c)
 			continue
 		}
 		kept = append(kept, c)
 	}
-	return kept, needs
+	return kept, needs, dropped
 }
 
 // industrySizeRuns turns the want (in runs) into the job's run count. The ceiling is the want and the print's own run limit, the law a
@@ -2135,7 +2195,7 @@ func (m *Mod) industryBuyBPO(ctx context.Context, b *botRun) error {
 			if int64(d.IndRuns) > left {
 				d.IndRuns = int(left)
 			}
-			d.IndBPOCost = copyAmortCost(paid, d.IndRuns, left)
+			d.IndBPOCost = copyAmortCost(paid, d.IndRuns, left, m.bpoAmortProjectsFor(ctx, d.IndTypeID))
 			m.logBot(b.CharID, logInfo, "industry",
 				"bought a %s blueprint copy (%d runs, ME %d / PE %d) off escrow for %.0f ISK — building %d run(s) at %s",
 				d.IndTypeName, left, me, pe, paid, d.IndRuns, m.stationLabel(ctx, d.IndFactoryID))
@@ -2184,7 +2244,7 @@ stationBuy:
 				if int64(d.IndRuns) > left {
 					d.IndRuns = int(left)
 				}
-				d.IndBPOCost = copyAmortCost(paid, d.IndRuns, left)
+				d.IndBPOCost = copyAmortCost(paid, d.IndRuns, left, m.bpoAmortProjectsFor(ctx, d.IndTypeID))
 			}
 			if err := m.moveItemToCargo(ctx, b, bpItemID); err != nil {
 				return err
@@ -3662,7 +3722,7 @@ func (m *Mod) industrySell(ctx context.Context, b *botRun) error {
 		return err
 	}
 	price := industryUnitPrice(d.IndMatValue, d.IndFees, d.IndBPOCost,
-		d.IndRuns, industryBPOAmortProjects, qty, b.Tune.IndustryMargin)
+		d.IndRuns, m.bpoAmortProjectsFor(ctx, d.IndTypeID), qty, b.Tune.IndustryMargin)
 	// Sell where the buyers are: a run whose buyers have been paying an NPC a few jumps off, or finding a counter short, is carried there
 	// and listed (industryHaulToOutlet). Only from the factory; once carried, a run is listed where it lands.
 	if !awayFromFactory {
@@ -3675,7 +3735,7 @@ func (m *Mod) industrySell(ctx context.Context, b *botRun) error {
 	}
 	// What the batch cost: the cash, with the print charged as the price
 	// charges it (industryCostBasis).
-	cost := industryCostBasis(d.IndSpentISK, d.IndBPOPaid, d.IndBPOCost, industryBPOAmortProjects)
+	cost := industryCostBasis(d.IndSpentISK, d.IndBPOPaid, d.IndBPOCost, m.bpoAmortProjectsFor(ctx, d.IndTypeID))
 	// Cost-plus is the floor of the ask, not the ask: a rocket built from the pilot's own minerals costs a few ISK, and listing it beside
 	// an NPC selling it at 351 gives the margin away (npcanchor.go).
 	price, _ = m.anchoredAsk(ctx, b.Tune, b.StationID, d.IndTypeID, price)

@@ -88,14 +88,33 @@ func (m *Mod) productionGovernor(ctx context.Context, c *corpCEO, budget float64
 	return allow
 }
 
-// printPaysBack is poPaysBack for one print, bought for a factory in regionID.
-func (m *Mod) printPaysBack(ctx context.Context, bpTypeID, regionID int64, marginPerRun, price float64) bool {
+// printPaysBack is poPaysBack for one print, bought for a factory in regionID. wantedUnits is the roster's
+// own want for the product (the census), the fallback when the product has never traded (poPaysBackOrWant).
+func (m *Mod) printPaysBack(ctx context.Context, bpTypeID, regionID int64, marginPerRun, price float64, wantedUnits int64) bool {
 	f, err := m.printFactsFor(ctx, bpTypeID)
 	if err != nil || f.ProductTypeID == 0 {
 		return false
 	}
 	refs := m.tradeRefsOf(ctx, f.ProductTypeID)
-	return poPaysBack(marginPerRun, f.Portion, refs.Region[regionID].Units, refs.Cluster.Units, price)
+	return poPaysBackOrWant(marginPerRun, f.Portion, refs.Region[regionID].Units, refs.Cluster.Units, wantedUnits, price)
+}
+
+// poPaysBackOrWant is poPaysBack, except that a product with no trade on the tape anywhere is judged on the
+// roster's want for it instead: corpPOMarketShare of the pilots who would fly one. A hull nobody has ever
+// built cannot have traded, so the tape alone keeps every cruiser-and-up print out of the library forever.
+// wantedUnits 0 keeps the tape's answer. Pure.
+func poPaysBackOrWant(marginPerRun float64, portion int64, regionUnits, clusterUnits, wantedUnits int64, price float64) bool {
+	if regionUnits > 0 || clusterUnits > 0 || wantedUnits <= 0 {
+		return poPaysBack(marginPerRun, portion, regionUnits, clusterUnits, price)
+	}
+	if marginPerRun <= 0 || price <= 0 {
+		return marginPerRun > 0
+	}
+	if portion < 1 {
+		portion = 1
+	}
+	runs := float64(wantedUnits) * corpPOMarketShare / float64(portion)
+	return runs*marginPerRun >= price
 }
 
 // corpCopyDemandShare is the share of the roster's NPC purchases of a print a

@@ -79,6 +79,7 @@ var industryChokeRules = []industryChokeRule{
 	{Cat: "industry", Prefix: "the mining trip would not start", Name: "Mining trip refused", Kind: chokeBlock, Note: "no usable mining fit, or every reachable belt is unwinnable in this hull"},
 	{Cat: "industry", Prefix: "still short of", Name: "Short of a line nothing in reach sells", Kind: chokeBlock, Note: "the fitting or the bill is one item short and the market has none of it"},
 	{Cat: "industry", Prefix: "nothing in its build book it can build", Name: "Cold build book", Kind: chokeBlock, Note: "every candidate was refused; the activity goes on cooldown"},
+	{Cat: "industry", Prefix: "passed over hull(s): ", Name: "Hulls passed over for something else", Kind: chokeBlock, Note: "a destroyer-or-larger candidate was refused in a pass that built something smaller; the reason is in the message (hullgates.go)"},
 	{Cat: "industry", Prefix: "install came up short", Name: "Install refused, materials short", Kind: chokeBlock, Note: "it reached the line and the counter disagreed about the bill"},
 	{Cat: "industry", Prefix: "project for", Name: "Project abandoned on the stall clock", Kind: chokeBlock, Note: "no progress in a day; the claim is released and the sunk ISK written off"},
 	{Cat: "industry", Prefix: "it has no hull here to carry materials in", Name: "No hauler at the factory", Kind: chokeBlock, Note: "the bill can be bought and there is nothing on this station to carry it in"},

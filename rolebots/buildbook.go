@@ -748,7 +748,8 @@ func heldCountsAgainst(evidence string) bool {
 // clusterFlood is the flood cut off the cluster's record (mktdaily.go globalFlood) for a candidate
 // whose region has no record: cluster buying against everything listed, plus held stock where
 // heldCountsAgainst says so. A leak candidate never asks. decided is false with no record. Pure.
-func clusterFlood(hist *mktHistory, c indCandidate, globalListed map[int64]int64, heads map[int64]censusHead) (flooded, decided bool) {
+// thinHull switches it to the hull rule (historyFloodHullCover).
+func clusterFlood(hist *mktHistory, c indCandidate, globalListed map[int64]int64, heads map[int64]censusHead, thinHull bool) (flooded, decided bool) {
 	if hist == nil || c.Evidence == evidenceLeak {
 		return false, false
 	}
@@ -757,7 +758,7 @@ func clusterFlood(hist *mktHistory, c indCandidate, globalListed map[int64]int64
 	if heldCountsAgainst(c.Evidence) {
 		supply = floodSupply(listed, heldOf(heads, c.TypeID))
 	}
-	return globalFlood(hist.Ready, hist.globalPerDay(c.TypeID), listed, supply)
+	return floodCover(thinHull, hist.Ready, hist.globalPerDay(c.TypeID), listed, supply, c.Wanted, mktGlobalCoverDays)
 }
 
 // ownListingAt reports what this pilot still has resting on the market at its own factory, per
@@ -924,6 +925,12 @@ func (m *Mod) buildBook(ctx context.Context, b *botRun, factoryID, factorySysID 
 		bigHulls = m.bigHullPrintsNear(ctx, merged, m.hullsInGroups(ctx, merged, bigHullGroupIDs), reach)
 	}
 
+	// Hulls above a frigate are thin markets: one unsold unit in a region that has never bought one is not a glut (hullgates.go).
+	var thinHulls map[int64]bool
+	if hullGateOn(ctx, m, hullGateThinFloodKey) {
+		thinHulls = m.hullsInGroups(ctx, merged, hullLadderGroupIDs)
+	}
+
 	out := merged[:0]
 	priceless, foreign, flooded, leakLoss, unused := 0, 0, 0, 0, 0
 	covered, refused := 0, 0 // the history's two flood cuts
@@ -995,7 +1002,9 @@ func (m *Mod) buildBook(ctx context.Context, b *botRun, factoryID, factorySysID 
 				offered = listed
 			}
 			perDay := hist.regionPerDay(histRegion, c.TypeID)
-			if fl, decided := historyFlood(hist.Ready && histRegion != 0, perDay, offered, supply); decided {
+			thin := thinHulls[c.TypeID]
+			if fl, decided := floodCover(thin, hist.Ready && histRegion != 0, perDay, offered, supply, c.Wanted,
+				mktBuildCoverDays); decided {
 				if fl && perDay > 0 {
 					covered++
 					continue
@@ -1005,7 +1014,7 @@ func (m *Mod) buildBook(ctx context.Context, b *botRun, factoryID, factorySysID 
 					continue
 				}
 				c.MktPerDay, c.MktSupply = perDay, supply
-			} else if gfl, gdecided := clusterFlood(hist, c, globalListed, heads); gdecided {
+			} else if gfl, gdecided := clusterFlood(hist, c, globalListed, heads, thin); gdecided {
 				// No region record: the cluster's decides. Batch sizing stays regional, so MktPerDay is left unset.
 				if gfl {
 					clusterCut++

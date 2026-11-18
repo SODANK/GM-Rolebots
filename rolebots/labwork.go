@@ -128,10 +128,13 @@ func (m *Mod) labPickPrint(ctx context.Context, b *botRun, factoryID int64) (*la
 		       COALESCE(bt.researchCopyTime, 0), COALESCE(bt.maxProductionLimit, 10),
 		       CASE WHEN sh.typeID IS NOT NULL THEN 2
 		            WHEN dm.typeID IS NOT NULL THEN 1
-		            ELSE 0 END
+		            ELSE 0 END,
+		       COALESCE(pg.categoryID, 0), COALESCE(pg.groupID, 0)
 		  FROM entity e
 		  JOIN invBlueprintTypes bt ON bt.blueprintTypeID = e.typeID
 		  JOIN invTypes t ON t.typeID = e.typeID
+		  LEFT JOIN invTypes pt ON pt.typeID = bt.productTypeID
+		  LEFT JOIN invGroups pg ON pg.groupID = pt.groupID
 		  LEFT JOIN invBlueprints bp ON bp.blueprintID = e.itemID
 		  LEFT JOIN rolebot_industry_shelf sh
 		         ON sh.characterID = e.ownerID AND sh.stationID = e.locationID
@@ -139,6 +142,7 @@ func (m *Mod) labPickPrint(ctx context.Context, b *botRun, factoryID int64) (*la
 		  LEFT JOIN rolebot_market_demand dm ON dm.typeID = bt.productTypeID
 		 WHERE e.ownerID = ? AND e.locationID = ? AND e.flag = 4
 		   AND COALESCE(bp.copy, 0) = 0
+		 ORDER BY COALESCE(pt.basePrice, 0) DESC
 		 LIMIT ?`, b.CharID, factoryID, labCandidateLimit)
 	if err != nil {
 		return nil, fmt.Errorf("lab candidates: %w", err)
@@ -152,12 +156,13 @@ func (m *Mod) labPickPrint(ctx context.Context, b *botRun, factoryID int64) (*la
 		meTime, peTime   int64
 		copyTime, maxRun int64
 		evidence         int
+		category, group  int64
 	}
 	var pool []raw
 	for rows.Next() {
 		var r raw
 		if err := rows.Scan(&r.itemID, &r.typeID, &r.name, &r.meLevel, &r.peLevel,
-			&r.meTime, &r.peTime, &r.copyTime, &r.maxRun, &r.evidence); err != nil {
+			&r.meTime, &r.peTime, &r.copyTime, &r.maxRun, &r.evidence, &r.category, &r.group); err != nil {
 			return nil, err
 		}
 		pool = append(pool, r)
@@ -202,6 +207,9 @@ func (m *Mod) labPickPrint(ctx context.Context, b *botRun, factoryID int64) (*la
 
 	// Which pool this pilot's next slot should lean towards, decided once from what it already has on lines.
 	biasPE := labSlotBiasPE(b.State)
+	// A hull print (ownercopy.go) is copied without waiting for full research or a sale: research takes months at hull times, and
+	// no hull copy can sell before one is listed.
+	hullCopies := ownerCopyOn(ctx, m)
 
 	var under, over, copies []labCandidate
 	for _, r := range pool {
@@ -212,9 +220,9 @@ func (m *Mod) labPickPrint(ctx context.Context, b *botRun, factoryID int64) (*la
 		}
 		full := printFullyResearched(r.meLevel, r.peLevel, fullME, fullPE)
 		// A copy order for this print when its stock is short. A full print is always worth copying; one still
-		// being researched is copied only when copies are selling or the factory leans on its product.
+		// being researched is copied only when copies are selling, the factory leans on its product, or it is a hull.
 		if canCopy && r.copyTime > 0 && allowed[ramActivityCopying][r.typeID] &&
-			(full || copySold[r.typeID] > 0 || r.evidence >= 1) {
+			(full || copySold[r.typeID] > 0 || r.evidence >= 1 || (hullCopies && isOwnerCopyHull(r.category, r.group))) {
 			if f, ferr := m.printFactsFor(ctx, r.typeID); ferr == nil {
 				perCopy := labBaseCopySeconds(r.copyTime, r.maxRun, f.CopyRuns, science)
 				target := copyStockTargetFor(copySold[r.typeID])

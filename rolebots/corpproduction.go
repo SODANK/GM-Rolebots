@@ -772,6 +772,9 @@ func (m *Mod) postLibraryPurchase(ctx context.Context, c *corpCEO, ch Charter, f
 
 	var picks []poPick
 	var over []fundPick
+	// Hull prints the budget reached but the margin or the payback refused, named in the "saving" line instead of vanishing.
+	var hullRefused []string
+	cpScope := costPlusScope(ctx, m.db)
 	for _, cd := range cands {
 		k := kinds[cd.TypeID]
 		if k.Group == groupShuttle {
@@ -799,16 +802,33 @@ func (m *Mod) postLibraryPurchase(ctx context.Context, c *corpCEO, ch Charter, f
 			}
 			continue
 		}
-		r, err := m.planRowAt(ctx, ch, cd.BPTypeID, region)
-		if err != nil || r == nil || r.Margin() <= 0 {
-			continue
-		}
-		// Sold, not just buildable: the margin must earn the price back over
-		// what the product's market actually takes (corppayback.go).
-		if !m.printPaysBack(ctx, cd.BPTypeID, region, r.Margin(), value*poAdvanceMarkup) {
-			continue
-		}
 		hull := isRealHull(k.Category, k.Group)
+		r, err := m.planRowAt(ctx, ch, cd.BPTypeID, region)
+		if err != nil || r == nil {
+			continue
+		}
+		// A hull with no tape is valued as the board will value its market row (corpcostplus.go), not at the stale catalogue.
+		if hull {
+			m.applyCostPlus(ctx, ch, r, k.Group, cpScope)
+		}
+		if r.Margin() <= 0 {
+			if hull {
+				hullRefused = append(hullRefused, m.typeNameOr(ctx, cd.TypeID)+" (no margin)")
+			}
+			continue
+		}
+		// Sold, not just buildable: the margin must earn the price back over what the product's market actually takes, or, for a
+		// hull that has never traded, what the roster would fly (corppayback.go).
+		var want int64
+		if hull {
+			want = cd.Wanted
+		}
+		if !m.printPaysBack(ctx, cd.BPTypeID, region, r.Margin(), value*poAdvanceMarkup, want) {
+			if hull {
+				hullRefused = append(hullRefused, m.typeNameOr(ctx, cd.TypeID)+" (would not pay back)")
+			}
+			continue
+		}
 		picks = append(picks, poPick{BPType: cd.BPTypeID, Value: value,
 			Score:         poScore(r.Margin(), cd.Wanted, hull) * raceMul * poLedgerMul(demanded[cd.TypeID]),
 			HeldElsewhere: elsewhere[cd.BPTypeID]})
@@ -821,9 +841,17 @@ func (m *Mod) postLibraryPurchase(ctx context.Context, c *corpCEO, ch Charter, f
 			return
 		}
 		if shipyard && clock.Unix()-m.lastCEOActionAt(ctx, c.CorpID, "posave") >= corpPOEverySec {
+			note := ""
+			if len(hullRefused) > 0 {
+				shown := hullRefused
+				if len(shown) > 4 {
+					shown = append(shown[:4:4], fmt.Sprintf("%d more", len(hullRefused)-4))
+				}
+				note = " (passed over: " + strings.Join(shown, ", ") + ")"
+			}
 			m.ceoLog(ctx, c, powerProduction, "posave", 0, budget,
-				"saving for a ship print — no hull print it can build at a profit fits the %s it can spend on one",
-				iskString(budget))
+				"saving for a ship print — no hull print it can build at a profit fits the %s it can spend on one%s",
+				iskString(budget), note)
 		}
 		return
 	}
@@ -913,6 +941,8 @@ func (m *Mod) dropGluttedRows(ctx context.Context, c *corpCEO, stationID int64, 
 		globalListed = m.globalListedUnits(ctx, ids)
 	}
 
+	thinOn := hullGateOn(ctx, m, hullGateThinFloodKey)
+
 	keep := rows[:0]
 	var why []string
 	for _, r := range rows {
@@ -920,8 +950,11 @@ func (m *Mod) dropGluttedRows(ctx context.Context, c *corpCEO, stationID int64, 
 		name := m.typeNameOr(ctx, r.ProductTypeID)
 		supply := floodSupply(listed[r.ProductTypeID], heldOf(heads, r.ProductTypeID))
 		perDay := hist.regionPerDay(region, r.ProductTypeID)
-		histFlooded, histDecided := historyFlood(hist.Ready && region != 0, perDay,
-			listed[r.ProductTypeID], supply)
+		// A hull above a frigate is a thin market (hullgates.go): judged against the roster's headcount for it.
+		thin := thinOn && k.Category == catShip && isThinHullGroup(k.Group)
+		wanted := users[r.ProductTypeID] * capabilityUnitsPerPilot(k.Category)
+		histFlooded, histDecided := floodCover(thin, hist.Ready && region != 0, perDay,
+			listed[r.ProductTypeID], supply, wanted, mktBuildCoverDays)
 		// No record in the region: the cluster's (mktdaily.go globalFlood).
 		var globFlooded, globDecided bool
 		var globPerDay float64
@@ -929,7 +962,8 @@ func (m *Mod) dropGluttedRows(ctx context.Context, c *corpCEO, stationID int64, 
 		if !histDecided {
 			globPerDay = hist.globalPerDay(r.ProductTypeID)
 			globSupply = floodSupply(globalListed[r.ProductTypeID], heldOf(heads, r.ProductTypeID))
-			globFlooded, globDecided = globalFlood(hist.Ready, globPerDay, globalListed[r.ProductTypeID], globSupply)
+			globFlooded, globDecided = floodCover(thin, hist.Ready, globPerDay, globalListed[r.ProductTypeID], globSupply,
+				wanted, mktGlobalCoverDays)
 		}
 		switch {
 		case k.Group == groupShuttle:

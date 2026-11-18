@@ -418,7 +418,7 @@ func (m *Mod) supplyBidCeiling(ctx context.Context, b *botRun, line *manufacture
 	// industryUnitPrice inverted: ask = (matValue + fees + bpo/amort)/units x margin. The blueprint term must
 	// match what that function charges (industryBPOAmortProjects).
 	maxMat := market*float64(units)/margin - fees -
-		d.IndBPOCost/float64(industryBPOAmortProjects)
+		d.IndBPOCost/float64(m.bpoAmortProjectsFor(ctx, d.IndTypeID))
 	if head := (maxMat - others) / float64(target.Needed); head < ceiling {
 		ceiling, why = head, "what this batch can pay and still clear at market"
 	}

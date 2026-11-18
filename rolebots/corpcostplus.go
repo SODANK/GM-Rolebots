@@ -15,8 +15,12 @@ import (
 // builds for itself (a replacement owed, the store shelf, an Armory kit, a
 // department requisition) that is the wrong question: it will own the ship, so
 // the row is valued at cost plus the charter's store markup, what the store
-// lists it at (corpstore.go never undercuts cost). Market rows keep the tape.
-// rolebots.costPlusHulls widens it to market rows (all) or switches it off.
+// lists it at (corpstore.go never undercuts cost).
+//
+// Market rows take it too by default (rolebots.costPlusHulls = all): cruisers and up have so little tape
+// that a market row valued off it never posts, and the roster has wanted them for months. Where the tape
+// does pay for the hull, applyCostPlus leaves the row alone. "internal" keeps market rows on the tape;
+// "off" switches it off.
 
 const (
 	costPlusScopeKey      = "rolebots.costPlusHulls"
@@ -25,9 +29,12 @@ const (
 	costPlusScopeOff      = "off"
 )
 
-// costPlusHullGroups is the hull groups cost-plus applies to: Battlecruiser,
-// Battleship, Freighter, Dreadnought, Carrier.
-var costPlusHullGroups = map[int64]bool{419: true, 27: true, 513: true, 485: true, 547: true}
+// costPlusHullGroups is the hull groups cost-plus applies to: Destroyer, Cruiser,
+// Battlecruiser, Battleship, Freighter, Dreadnought, Carrier.
+var costPlusHullGroups = map[int64]bool{420: true, 26: true, 419: true, 27: true, 513: true, 485: true, 547: true}
+
+// costPlusScopeDefault is the scope when the setting is unset or unrecognised.
+const costPlusScopeDefault = costPlusScopeAll
 
 // costPlusScope reads the setting; anything unrecognised is the default.
 func costPlusScope(ctx context.Context, db *sql.DB) string {
@@ -37,7 +44,7 @@ func costPlusScope(ctx context.Context, db *sql.DB) string {
 			return v
 		}
 	}
-	return costPlusScopeInternal
+	return costPlusScopeDefault
 }
 
 // costPlusRow is the value a run must be booked at to clear its bill, wage and

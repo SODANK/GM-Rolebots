@@ -67,9 +67,22 @@ const researchProductFeeRuns = 2
 // go on escrow at bpcPrice (printListingDesc labels them), up to copyListingCap open listings.
 // A spare full original is sold at fullBPOPrice only with sellOriginalsEnabled; a partly
 // researched one is never sold. Returns how many it listed.
+//
+// A pilot outside a research career lists only hull copies it made itself from an original it holds here (ownercopy.go), never the
+// copies it builds from, and never an original.
 func (m *Mod) listLibraryProducts(ctx context.Context, b *botRun) int {
-	if !researchCareer(b.Tune) || b.StationID == 0 || !escrowSellingEnabled(ctx, m.db) {
+	career := researchCareer(b.Tune)
+	if b.StationID == 0 || !escrowSellingEnabled(ctx, m.db) || (!career && !ownerCopyOn(ctx, m)) {
 		return 0
+	}
+	// For a non-career pilot: the hull originals it holds, which make a copy of that type its own product rather than a print it
+	// bought to build from. None, and there is nothing it may list.
+	var ownMake map[int64]bool
+	if !career {
+		ownMake = m.ownerCopyOriginals(ctx, b.CharID)
+		if len(ownMake) == 0 {
+			return 0
+		}
 	}
 	// The broker's fee comes first: a researcher that cannot pay it is poor,
 	// not broken.
@@ -117,6 +130,9 @@ func (m *Mod) listLibraryProducts(ctx context.Context, b *botRun) int {
 		if inUse[c.ItemID] || c.Runs <= 0 {
 			continue
 		}
+		if !career && (!ownMake[c.TypeID] || ownerCopyKeepsType(b, c.TypeID)) {
+			continue
+		}
 		f, ferr := m.printFactsFor(ctx, c.TypeID)
 		if ferr != nil {
 			continue
@@ -136,8 +152,8 @@ func (m *Mod) listLibraryProducts(ctx context.Context, b *botRun) int {
 		open++
 	}
 
-	// Spare originals at the research target, only while sellOriginalsEnabled is on.
-	if !sellOriginalsEnabled(ctx, m.db) {
+	// Spare originals at the research target, only while sellOriginalsEnabled is on, and only a research career's.
+	if !career || !sellOriginalsEnabled(ctx, m.db) {
 		return listed
 	}
 	rows, err := m.db.QueryContext(ctx, `
