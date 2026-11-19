@@ -63,14 +63,14 @@ type indStageDef struct{ Key, Label, Note string }
 
 var indStageDefs = []indStageDef{
 	{indStageBuyBPO, "Buying the blueprint", "at a seller's station, or flying to one"},
-	{indStageGather, "At the factory, gathering", "the project's hub: unload, refine, decide dig-or-buy"},
-	{indStageBuyMats, "Shopping for materials", "out buying the lines the belts cannot cover"},
-	{indStageMining, "Mining its own materials", "a materials trip; the counter caps at " + strconv.Itoa(industryMaxMiningTrips)},
+	{indStageGather, "At the factory, gathering", "unloading, refining, deciding dig or buy"},
+	{indStageBuyMats, "Shopping for materials", "buying lines the belts cannot cover"},
+	{indStageMining, "Mining its own materials", "trip cap " + strconv.Itoa(industryMaxMiningTrips)},
 	{indStageInstall, "Installing", "at the line with the bill of materials"},
-	{indStageFinish, "Collecting and listing", "the bake is done; getting it onto the market"},
+	{indStageFinish, "Collecting and listing", "job done, listing it for sale"},
 	{indStageProcure, "Fitting out for the trip", "buying or fitting the hull the project needs"},
-	{indStageGang, "On fleet duty", "seconded to a gang; the project waits"},
-	{indStageIdle, "Parked", "idle with a project still on its books"},
+	{indStageGang, "On fleet duty", "seconded to a gang, project waits"},
+	{indStageIdle, "Parked", "idle with a project open"},
 	{indStageElsewhere, "Elsewhere", "doing something else entirely"},
 }
 

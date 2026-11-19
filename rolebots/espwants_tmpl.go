@@ -44,21 +44,14 @@ const tmplWants = tradeTabs + `{{define "content"}}
 
 <div class="card">
   <p style="margin:0 0 10px;color:#9ca3af;font-size:12px">
-    The capability census: for every <b>buildable</b> thing in the game, how many pilots on this
-    roster have the skills to use it. That headcount is the whole ranking — it is a forecast rather
-    than a report, so a type nobody has ever failed to buy still appears if five hundred pilots
-    could fly one. Hulls count {{.HullWeight}} and ammunition {{.ChargeWeight}} against a module
-    with the same headcount, because a hull is the purchase that unlocks every other purchase and a
-    magazine is bought again forever. <b>Units</b> is what the headcount adds up to: one each for a
-    hull or a module, {{.Rounds}} rounds each for ammunition, 5 each for drones.
+    Every <b>buildable</b> item, ranked by how many roster pilots have the skills to use it.
+    Hulls weigh {{.HullWeight}} and ammunition {{.ChargeWeight}} against a module. <b>Units</b> is demand:
+    one per hull or module, {{.Rounds}} per ammo type, 5 per drone.
   </p>
   <p style="margin:0 0 10px;color:#9ca3af;font-size:12px">
-    The right-hand half is what the roster has done about it. <b>BPOs</b> is how many
-    industrialists have bought the blueprint — real ISK and a trip to a seller's station, so it is
-    the first thing anybody spends on a want. <b>Suppliers</b> is how many carry it as a standing
-    shelf line at their factory, and where. The order columns split the live book into
-    <b>bot</b>, <b>player</b> and <b>NPC</b>, because "four thousand seeded asks" and "one bot
-    makes these" are opposite situations that a single order count reads as the same.
+    The right half is the roster's answer. <b>BPOs</b> is industrialists holding the blueprint.
+    <b>Suppliers</b> keep it as a standing shelf line. Order columns split the live book into
+    <b>bot</b>, <b>player</b> and <b>NPC</b>.
   </p>
   <div class="rb-tot">
     <div><div class="k">types on the census</div><div class="v">{{.Sum.Types}}</div></div>
@@ -92,8 +85,7 @@ const tmplWants = tradeTabs + `{{define "content"}}
 
   {{if not .Rows}}
     <p style="color:#9ca3af;font-size:12px">
-      Nothing on the roll. Either the census has not run yet (it sweeps every fifteen minutes), or
-      the filter is narrower than the ledger.
+      Nothing on the roll. The census runs every fifteen minutes.
     </p>
   {{else}}
   <div class="rb-scroll">
@@ -107,7 +99,7 @@ const tmplWants = tradeTabs + `{{define "content"}}
       </tr>
       <tr>
         <th class="n">#</th><th>item</th><th></th>
-        <th class="n" title="trained to use it">capable</th><th class="n" title="fits, loads or flies it — what the list is ranked on">users</th><th class="n">pull</th><th class="n">units</th>
+        <th class="n" title="trained to use it">capable</th><th class="n" title="fits, loads or flies it; the ranking">users</th><th class="n">pull</th><th class="n">units</th>
         <th class="n">bpos</th><th class="n">suppliers</th><th class="n">stations</th>
         <th class="n">built</th><th>where</th>
         <th class="n">bot ask</th><th class="n">player ask</th><th class="n">npc ask</th>
@@ -192,9 +184,7 @@ const tmplWant = tradeTabs + `{{define "content"}}
 <div class="card">
   <h3>Standing shelf lines</h3>
   <p style="margin:0 0 8px;color:#9ca3af;font-size:12px">
-    Industrialists that have undertaken to keep this in stock at a station — the promise, as
-    opposed to a job that happened once. A pinned line was typed by an operator and is exempt from
-    the pruner.
+    Industrialists keeping this in stock at a station. Pinned lines were set by an operator and are not pruned.
   </p>
   {{if not .Suppliers}}
     <p style="color:#6b7280;font-size:12px">Nobody carries this. It is an opening.</p>
@@ -222,8 +212,7 @@ const tmplWant = tradeTabs + `{{define "content"}}
 <div class="card">
   <h3>Blueprint holders</h3>
   <p style="margin:0 0 8px;color:#9ca3af;font-size:12px">
-    Rolebots holding a blueprint for this product. A blueprint is bought on the market at a
-    seller's station and carried home in the ship's hold, so one in transit shows as such.
+    Rolebots holding a blueprint for this product. One in transit shows as such.
   </p>
   {{if not .Holders}}
     <p style="color:#6b7280;font-size:12px">No rolebot owns the blueprint.</p>
@@ -274,8 +263,7 @@ const tmplWant = tradeTabs + `{{define "content"}}
   <h3>Bot-to-bot trades in this</h3>
   {{if not .Peers}}
     <p style="color:#6b7280;font-size:12px">
-      No rolebot has bought this off another rolebot. Every unit that changed hands did so with a
-      player or with the NPC market.
+      No rolebot has bought this off another rolebot.
     </p>
   {{else}}
   <div class="rb-scroll">

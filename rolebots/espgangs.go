@@ -84,32 +84,29 @@ const tmplGangs = gangTabs + `{{define "content"}}` + castTabsStyle + `
     </tbody>
   </table>
   {{else}}
-  <p>No fleets are flying. {{if .GangFormOn}}Commanders seat themselves on the corporation promotion pass; the next formation sweep raises one.{{else}}Corporations are not fielding fleets.{{end}}</p>
+  <p>No fleets are flying. {{if .GangFormOn}}Corporations will raise one soon.{{else}}Corporations are not fielding fleets.{{end}}</p>
   {{end}}
 </div>
 
 <div class="card gf-rules">
   <h3>Fleet Seats for Members</h3>
   <p class="gf-note">
-    With this on, a corporation's fleets appear on its members' Corporate Portal
-    (Galnet &rarr; Corporate Portal &rarr; Operations) with a <em>Request a seat</em> link.
-    The commander opens a real fleet, invites the capsuleer, and from then on narrates
-    the op in fleet chat: formed up, site picked, engaging, winding down. A CEO or
-    Director aboard may type <em>mine here</em>, <em>mine &lt;ore&gt;</em>, <em>hunt here</em>
-    or <em>stand down</em> and the whole op moves; anyone aboard may ask for <em>status</em>
-    or a <em>roll call</em>. The Window column above says which fleets have one open.
+    Corporation fleets show on members' Corporate Portal (Operations) with a <em>Request a seat</em> link.
+    A CEO or Director aboard may type <em>mine here</em>, <em>mine &lt;ore&gt;</em>, <em>hunt here</em>
+    or <em>stand down</em> in fleet chat. Anyone aboard may ask for <em>status</em> or a <em>roll call</em>.
+    The Window column above shows which fleets have a seat open.
   </p>
   <form method="POST" action="/rolebots/gangs">
     <input type="hidden" name="action" value="fleetmirror">
     <p><label><input type="checkbox" name="mirror" {{if .FleetMirrorOn}}checked{{end}}> Members may request a seat in a corporation fleet</label></p>
     <p><label><input type="checkbox" name="narration" {{if .FleetNarrationOn}}checked{{end}}> Commanders narrate the op in fleet chat</label>
-      <span class="gf-note">&mdash; only while a capsuleer is aboard; shares the voice budget below.</span></p>
+      <span class="gf-note">&mdash; only while a capsuleer is aboard.</span></p>
     <p><label><input type="checkbox" name="pointCalls" {{if .PointCallsOn}}checked{{end}}> Pilots call their points in fleet chat ("Point on X")</label>
       <span class="gf-note">&mdash; bot fleets and conscripts, only while a capsuleer is aboard.</span></p>
     <label class="row">Invitation lapses after (s) <input type="number" name="seatTTL" value="{{.SeatTTL}}" min="60" style="width:80px"></label>
     <br>
     <p><label><input type="checkbox" name="orders" {{if .CorpOrdersOn}}checked{{end}}> The chair gives orders on the portal</label>
-      <span class="gf-note">&mdash; a human CEO or Director posts fleet orders, a directive and work on the Orders page (with a mailed portal key); the order desk carries them out and the Operations page reports.</span></p>
+      <span class="gf-note">&mdash; a human CEO or Director posts fleet orders on the Orders page.</span></p>
     <label class="row">Order lapses after (h) <input type="number" name="orderTTL" value="{{.OrderTTLHours}}" min="1" style="width:70px"></label>
     <label class="row">Tries before refusing <input type="number" name="orderRetries" value="{{.OrderRetries}}" min="1" style="width:70px"></label>
     <label class="row">Fleet orders in hand per corp <input type="number" name="fleetMaxOpen" value="{{.FleetMaxOpen}}" min="1" style="width:70px"></label>
@@ -121,25 +118,21 @@ const tmplGangs = gangTabs + `{{define "content"}}` + castTabsStyle + `
 <div class="card gf-rules">
   <h3>Player Fleets</h3>
   <p class="gf-note">
-    With this on, a player can right-click a rolebot and invite it into their own fleet.
-    It joins, comes to them, and takes plain-English orders typed in fleet chat —
+    Players can invite a rolebot into their own fleet and give it orders in fleet chat:
     <em>mine</em>, <em>follow me</em>, <em>attack</em>, <em>stockpile here</em>, <em>sell</em>, <em>dismiss</em>.
-    A name in front of the order addresses one pilot; no name addresses the crew.
-    Only the fleet's LEADER is obeyed. A pilot refuses if it is mid-something that
-    dropping would strand, or if it dislikes the caller — neutral standing is enough
-    to be hired. Ore and loot go to the commander's hangar, and a sale's proceeds to
-    their wallet.
+    A name before the order addresses one pilot. Only the fleet's leader is obeyed.
+    A pilot may refuse if busy or if it dislikes the caller.
   </p>
   <form method="POST" action="/rolebots/gangs">
     <input type="hidden" name="action" value="conscript">
     <p><label><input type="checkbox" name="enabled" {{if .ConscriptOn}}checked{{end}}> Players may conscript rolebots</label></p>
     <p>
       <label><input type="checkbox" name="defend" {{if .ConscriptDefend}}checked{{end}}> Defend the fleet unasked</label>
-      <span class="gf-note">&mdash; a servant engages whatever opens up on its commander or its crewmates without being told. It still will not shoot a clean pilot in empire space.</span>
+      <span class="gf-note">&mdash; engages attackers of its commander or crewmates. Never shoots a clean pilot in empire space.</span>
     </p>
     <p>
       <label><input type="checkbox" name="voice" {{if .ConscriptVoice}}checked{{end}}> Speak in fleet chat</label>
-      <span class="gf-note">&mdash; acknowledgements, refusals and the occasional line about what it is doing. Budgeted below.</span>
+      <span class="gf-note">&mdash; acknowledgements and refusals. Limited by the settings below.</span>
     </p>
     <label class="row">Max bots per fleet <input type="number" name="maxFleet" value="{{.MaxFleet}}" min="1" style="width:70px"></label>
     <label class="row">Max serving server-wide <input type="number" name="maxTotal" value="{{.MaxTotal}}" min="1" style="width:70px"></label>
@@ -187,11 +180,7 @@ const tmplGangs = gangTabs + `{{define "content"}}` + castTabsStyle + `
   <p>Nobody is serving in a player's fleet.</p>
   {{end}}
   <p class="gf-note">
-    Rows clear themselves: a pilot is released when it is kicked, when the fleet
-    disbands, when the last human in it logs off, and after the silence window
-    above. Every row is dropped at boot as well — the core's fleet registry lives
-    in memory and renumbers from 1, so a surviving row would name whichever fleet
-    took that number next.
+    Rows clear when a pilot is kicked, the fleet disbands, the last human logs off, or the silence window passes. All rows clear at boot.
   </p>
 </div>
 
@@ -274,7 +263,7 @@ const tmplGangView = `{{define "content"}}
     {{range .Cans}}<tr><td>{{.CanID}}</td><td>{{.OwnerName}}</td><td>{{.BeltItemID}}</td><td>{{.Fill}}</td><td>{{.Age}}</td></tr>{{end}}
   </table>
   {{end}}
-  <p class="gv-note" style="margin-top:10px">This fleet flies itself: its commander picked the op, its corporation crewed it, and it winds down on its own clock. Nothing on this page steers it.</p>
+  <p class="gv-note" style="margin-top:10px">This fleet runs itself. Nothing on this page steers it.</p>
 </div>
 
 <div class="card">

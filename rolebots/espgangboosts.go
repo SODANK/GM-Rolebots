@@ -46,12 +46,8 @@ const tmplGangBoosts = gangTabs + `{{define "content"}}` + castTabsStyle + `
 <div class="card">
   <h3>Gang Bonuses <span class="gb-note">({{len .Gangs}} gang{{if ne (len .Gangs) 1}}s{{end}}, resolved {{.Resolved}})</span></h3>
   <p class="gb-note">
-    A bonus comes from the gang member with the best value for it and reaches every member
-    <strong>in space in the same solar system</strong>, the source included. Bonuses of one kind
-    never stack; different kinds on one stat multiply. Leadership skills are passive; a Warfare or
-    Foreman Link counts only while it is running. Docked and offline members give and receive
-    nothing. The board is re-resolved on every join, leave, undock and link switch, and every few
-    seconds regardless.
+    Each bonus comes from the member with the best value and reaches every member
+    <strong>in space in the same system</strong>. Bonuses of one kind never stack. Docked and offline members give and receive nothing.
   </p>
 </div>
 

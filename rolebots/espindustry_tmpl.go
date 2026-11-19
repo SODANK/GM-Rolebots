@@ -47,13 +47,8 @@ const tmplIndustry = industryTabs + `{{define "content"}}
 
 <div class="card">
   <p class="muted" style="margin:0">
-    Everything else that can see manufacturing sees it <b>after</b> a job
-    exists. This page is the half before that: what each supplier has committed
-    to, how far it has got toward putting the job on a line, and what is in the
-    way. The jobs themselves, the assembly lines and the blueprint catalogue
-    live on <a href="/industry/factories">Industry &rarr; Factories</a> and
-    <a href="/industry/blueprints">Industry &rarr; Blueprints</a> and are
-    deliberately not repeated here.
+    Projects suppliers have committed to, before a job exists. Jobs are on
+    <a href="/industry/factories">Industry &rarr; Factories</a>.
     Figures are {{.AgeSecs}}s old &mdash;
     <a href="/rolebots/industry?fresh=1">rebuild now</a>.
   </p>
@@ -79,15 +74,8 @@ const tmplIndustry = industryTabs + `{{define "content"}}
 <div class="card">
   <h3>The pipeline</h3>
   <p class="muted">
-    A project is chosen at the factory, then has to reach a line: buy the
-    blueprint, gather the bill of materials by digging or shopping, and install.
-    The rung a pilot is on is its <b>effective</b> phase &mdash; where it is
-    flying to, not the fact that it is flying &mdash; so a ship in transit
-    counts against the thing it is going to do. Age is a <b>median</b>: one
-    project stuck for a fortnight would drag a mean off the rung everybody else
-    is standing on. A project that
-    makes no progress for 24 hours is abandoned by the sim and its sunk ISK
-    written off, which is what the "over a day" column counts.
+    Each project moves from blueprint to materials to an installed job. Age is a median.
+    A project with no progress for 24 hours is abandoned and its ISK written off.
   </p>
   {{if .Board.Projects}}
   <table class="grid rb-funnel" id="rbFunnel">
@@ -112,9 +100,7 @@ const tmplIndustry = industryTabs + `{{define "content"}}
     </tbody>
   </table>
   {{else}}
-  <p class="rb-none">No industry projects in flight. Nobody on the roster has
-     committed to building anything &mdash; check that pilots carry a supply
-     trait above the floor, and that the build book is not cold.</p>
+  <p class="rb-none">No industry projects in flight.</p>
   {{end}}
 
   <h4>Out the other end</h4>
@@ -122,9 +108,7 @@ const tmplIndustry = industryTabs + `{{define "content"}}
     <div class="alert alert-error">{{.Board.ThroughputErr}}</div>
   {{else if .Board.Throughput}}
   <p class="muted">
-    Jobs installed per day, and how many of those have been delivered. This is
-    the rate, not the jobs &mdash; the jobs are on
-    <a href="/industry/factories">Factories</a>.
+    Jobs installed per day, and how many were delivered.
   </p>
   <table class="grid">
     <tr><th>Day</th><th class="n">Installed</th><th class="n">Delivered</th></tr>
@@ -142,21 +126,13 @@ const tmplIndustry = industryTabs + `{{define "content"}}
 <div class="card">
   <h3>Chokepoints</h3>
   <p class="muted">
-    Nearly every refusal in this lane is recorded as prose and nowhere else, so
-    this is the log folded: runs of digits collapsed, then the fragments named
-    where a rule recognises them. <b>Blocked</b> means the project cannot
-    proceed, <b>churn</b> means it is repeating itself, <b>work</b> means it is
-    getting on with it. Anything with no rule keeps its own row rather than
-    being hidden &mdash; an unnamed row near the top is a failure mode nobody
-    has written down yet. The <b>per pilot</b> column is the reading: a big line
-    count over a small pilot count is a handful of bots looping, the same count
-    spread over thousands is the roster doing something normal.
+    Industry log lines grouped by reason. <b>Blocked</b> cannot proceed, <b>churn</b> is repeating,
+    <b>work</b> is progressing. Many lines over few pilots means bots looping.
   </p>
   <p class="rb-wins">
     Window:
     {{range .Windows}}<a href="/rolebots/industry?win={{.Key}}"{{if eq $.Win .Key}} class="on"{{end}}>{{.Label}}</a>{{end}}
-    <span class="muted">&mdash; the fold is a full scan of the window; it runs
-    in the background and is refreshed every five minutes.</span>
+    <span class="muted">&mdash; refreshed every five minutes.</span>
   </p>
   {{if .ChokeErr}}
     <div class="alert alert-error">{{.ChokeErr}}</div>
@@ -182,27 +158,17 @@ const tmplIndustry = industryTabs + `{{define "content"}}
     </tbody>
   </table>
   {{else if .ChokeBuilding}}
-  <p class="rb-none">The fold over this window is being computed in the
-     background &mdash; reload in a few seconds.</p>
+  <p class="rb-none">Still computing. Reload in a few seconds.</p>
   {{else}}
-  <p class="rb-none">Nothing logged in this window &mdash; either the roster is
-     idle or the window is shorter than the gap between passes.</p>
+  <p class="rb-none">Nothing logged in this window.</p>
   {{end}}
 </div>
 
 <div class="card">
   <h3>What the projects are waiting on</h3>
   <p class="muted">
-    Scoped to <b>materials</b>, which is what makes it a different question from
-    the <a href="/rolebots/wants">wants list</a> (which ranks products) and the
-    <a href="/rolebots/minerals">mineral supply page</a> (which maps regional
-    stock). A ship hull here is not a mistake &mdash; a Coercer is the material
-    a Heretic blueprint eats. The verdict column is the reading: "nothing on
-    sale anywhere" and "on sale somewhere but not here" are opposite problems
-    with opposite fixes. <b>Minerals lead and the two halves are not
-    comparable</b>: a mineral figure is what is short right now, a non-mineral
-    figure is a running total of unmet asks since the ledger was last cleared,
-    so the table is banded rather than ranked across both.
+    Materials projects are short of. Minerals are listed first. Mineral figures are current shortfall,
+    others are running totals, so the two are not comparable.
   </p>
   {{if .Board.BlockedErr}}
     <div class="alert alert-error">{{.Board.BlockedErr}}</div>
@@ -228,18 +194,12 @@ const tmplIndustry = industryTabs + `{{define "content"}}
     </tbody>
   </table>
   {{else}}
-  <p class="rb-none">No material line is recorded as short. Either every bill is
-     being filled, or nothing has committed to a project recently enough for the
-     shortfall board to hold a row.</p>
+  <p class="rb-none">No material shortfalls recorded.</p>
   {{end}}
 
   <h4>Money on the counter</h4>
   <p class="muted">
-    When a project commits to a bill line it can neither dig at its comfort line
-    nor buy in reach, it leaves a standing buy order at its own factory and gets
-    on with the rest. A row here is a factory holding ISK in escrow waiting for
-    somebody to fly the goods in; a <b>fill</b> column of zeroes is the supply
-    chain not answering.
+    Standing buy orders factories placed for materials they could not dig or buy. ISK is held in escrow.
   </p>
   {{if .Board.BidsErr}}
     <div class="alert alert-error">{{.Board.BidsErr}}</div>
@@ -265,20 +225,15 @@ const tmplIndustry = industryTabs + `{{define "content"}}
     </tbody>
   </table>
   {{else}}
-  <p class="rb-none">No factory has a standing supply bid out. Either every bill
-     is being covered locally, or no project has reached the point of asking.</p>
+  <p class="rb-none">No standing supply bids.</p>
   {{end}}
 </div>
 
 <div class="card">
   <h3>Projects</h3>
   <p class="muted">
-    One row per committed project, oldest first &mdash; the top of this table is
-    the ISK with a deadline on it. <b>Evidence</b> is the build-book tier that
-    chose the product; <b>doing</b> is the sim's own description of the phase,
-    so it cannot drift from what the pilot thinks it is doing. For the bill of
-    materials, the priced build book and the shelf, open a pilot's own factory
-    page &mdash; that is a market sweep per pilot and deliberately not run here.
+    Committed projects, oldest first. <b>Evidence</b> is why the product was chosen.
+    Open a pilot's factory page for its bill of materials and shelf.
   </p>
   <form class="rb-ind-filters" method="GET" action="/rolebots/industry">
     <label>Stage
@@ -338,8 +293,7 @@ const tmplIndustry = industryTabs + `{{define "content"}}
     {{if .HasNext}}<a href="/rolebots/industry{{.NextQ}}" style="margin-left:12px">next &rarr;</a>{{end}}
   </p>
   {{else if .Board.Projects}}
-  <p class="rb-none">No project matches those filters. {{.Total}} project(s) in
-     flight overall.</p>
+  <p class="rb-none">No project matches. {{.Total}} in flight overall.</p>
   {{else}}
   <p class="rb-none">No industry projects in flight.</p>
   {{end}}

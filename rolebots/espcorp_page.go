@@ -362,8 +362,8 @@ const tmplCorpPage = corpTabs + `{{define "content"}}` + castTabsStyle + rbCardS
     <dd>{{if .RaceFilter}}<b>{{.RaceFilter}}</b> only{{else}}any race{{end}}</dd>
     <dt>Allegiance</dt>
     <dd>{{if .Allegiance}}<b>{{.AllegianceName}}</b>
-      <span class="rbdim">&mdash; members spare its rats and sites; its NPCs do not cold-aggro them</span>{{else}}unaligned
-      <span class="rbdim">&mdash; every faction's rats and sites are fair game, and every rat shoots first</span>{{end}}</dd>
+      <span class="rbdim">&mdash; members spare its rats and sites</span>{{else}}unaligned
+      <span class="rbdim">&mdash; every faction's rats and sites are fair game</span>{{end}}</dd>
     {{if .Managed}}
     <dt>Reviewed</dt>
     <dd>{{.LastThink}}; next {{.NextThink}}</dd>
@@ -376,7 +376,7 @@ const tmplCorpPage = corpTabs + `{{define "content"}}` + castTabsStyle + rbCardS
         <input type="hidden" name="state" value="{{if .Corp.Policy.Joinable}}off{{else}}on{{end}}">
         <button type="submit">{{if .Corp.Policy.Joinable}}shut it to bots{{else}}open it to bots{{end}}</button>
       </form>
-      {{if .Managed}}<span class="rbdim">&mdash; its CEO may change it at the next review</span>{{end}}
+      {{if .Managed}}<span class="rbdim">&mdash; the CEO may change it</span>{{end}}
     </dd>
   </dl>
 </div>
@@ -420,9 +420,7 @@ const tmplCorpPage = corpTabs + `{{define "content"}}` + castTabsStyle + rbCardS
   <table class="tbl" style="font-size:12px">
     {{range .Directive}}<tr><td>{{.Label}}</td><td><div style="background:#7c2d12;height:10px;width:{{.Pct}}%"></div></td><td>{{.Pct}}%</td></tr>{{end}}
   </table>
-  <p style="font-size:12px;color:#6b7280">Each member's appetite for the named work is lifted, and for the rest
-  damped, in proportion to how hard the CEO pushes and how obedient the member is (followers and devoted pilots
-  comply most).</p>
+  <p style="font-size:12px;color:#6b7280">Members lean toward the named work, in proportion to their obedience.</p>
   {{else}}<p>No directive yet — set at the next review.</p>{{end}}
 </div>
 
@@ -435,9 +433,7 @@ const tmplCorpPage = corpTabs + `{{define "content"}}` + castTabsStyle + rbCardS
       <td>{{if .Neg}}<span style="color:#ef4444">{{.Net}}</span>{{else}}{{.Net}}{{end}}</td></tr>{{end}}
   </table>
   {{else}}<p>Nothing booked yet.</p>{{end}}
-  <p style="font-size:12px;color:#6b7280">What the module moved on the corporation's behalf, by line of business.
-  The wallet is the truth; bounty tax on a player's kill and the monthly office rent bills are charged by the
-  server and do not appear here.</p>
+  <p style="font-size:12px;color:#6b7280">Module-driven money only. Bounty tax and office rent are not shown. The wallet is the truth.</p>
 </div>
 ` + tmplCEOShares + `
 
@@ -452,8 +448,8 @@ const tmplCorpPage = corpTabs + `{{define "content"}}` + castTabsStyle + rbCardS
     {{range .Desk}}<tr><td>{{if .OnRoster}}<a href="/rolebot/{{.CharID}}">{{.Name}}</a>{{else}}{{.Name}} <span style="color:#6b7280">(player)</span>{{end}}</td>
       <td>{{.Waiting}}</td></tr>{{end}}
   </table>
-  {{if .Managed}}<p style="font-size:12px;color:#6b7280">Read after {{.HRDelay}} on the desk (within the hour by its Personnel Managers). The desk is ranked by fit: the best take the free openings, a short waiting list is held, and the rest are turned down.</p>{{end}}
-  {{else}}<p>Nobody is waiting on a director.{{if not .Corp.Policy.Joinable}} The door is shut &mdash; nothing will.{{else if not .Corp.Policy.Tags}} The door is open but the corporation is <b>untagged</b>, so it has advertised nothing a pilot could want.{{end}}</p>{{end}}
+  {{if .Managed}}<p style="font-size:12px;color:#6b7280">Applications are read after {{.HRDelay}} on the desk, best fit first.</p>{{end}}
+  {{else}}<p>Nobody is waiting on a director.{{if not .Corp.Policy.Joinable}} The door is shut &mdash; nothing will.{{else if not .Corp.Policy.Tags}} The door is open but the corporation is <b>untagged</b>, so nothing is advertised.{{end}}</p>{{end}}
   {{if .Apps}}
   <h4 style="margin-top:12px">Bot applications</h4>
   <table class="tbl" style="font-size:12px">
@@ -479,9 +475,7 @@ const tmplCorpPage = corpTabs + `{{define "content"}}` + castTabsStyle + rbCardS
     </tr>
     {{end}}
   </table>
-  <p style="font-size:12px;color:#6b7280">A bot writes a real application into the corporation window and moves only
-  when a director accepts. An unanswered one is withdrawn after {{.ApplyDays}} days; a rejected pilot does not ask
-  again for {{.RejectDays}}.</p>
+  <p style="font-size:12px;color:#6b7280">Unanswered applications are withdrawn after {{.ApplyDays}} days. A rejected pilot waits {{.RejectDays}} to reapply.</p>
   {{end}}
 </div>
 
@@ -560,16 +554,13 @@ const tmplCorpPage = corpTabs + `{{define "content"}}` + castTabsStyle + rbCardS
         </select>
         <button type="submit">Save</button>
       </form>
-      <span style="font-size:12px" class="rbdim">&mdash; the side its members fly for: set once at founding from the
-      CEO's race, charter and Loyalty; the CEO never changes it, you may. Pledged members spare that faction's rats and
-      open sites, its NPCs do not cold-aggro them, and bots employed by it read them as kin.</span>
+      <span style="font-size:12px" class="rbdim">&mdash; the faction its members fly for. Set at founding. Only you can change it.</span>
     </p>
     {{if .Corp.Bots}}
     <form method="POST" onsubmit="return confirm('Send all {{.Corp.Bots}} rolebot(s) in {{.Corp.Name}} back to their school corporations?')">
       <input type="hidden" name="action" value="kickall">
       <button type="submit">Kick all {{.Corp.Bots}} bot(s) back to school</button>
-      <span style="font-size:12px" class="rbdim">&mdash; each goes back to the corporation it was created in, drops its
-      commitment, and looks for work again within half a day.{{if .Managed}} The CEO stays in the chair.{{end}}</span>
+      <span style="font-size:12px" class="rbdim">&mdash; each returns to the corporation it was created in.{{if .Managed}} The CEO stays.{{end}}</span>
     </form>
     {{end}}
   </div>

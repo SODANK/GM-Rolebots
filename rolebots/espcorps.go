@@ -545,7 +545,7 @@ func (m *Mod) kickBotsToSchool(ctx context.Context, corpID int64) (int, error) {
 		if ok {
 			moved++
 			m.logBot(id, logInfo, "corp",
-				"was let go by the operator and has gone back to its school corporation to look for work again")
+				"was let go by the operator and returned to its school corporation")
 		}
 	}
 	if len(ids) > 0 {
@@ -568,5 +568,5 @@ func (m *Mod) kickAllMessage(ctx context.Context, corpID int64) (msg, errMsg str
 		return "no rostered bot is in this corporation", ""
 	}
 	return fmt.Sprintf(
-		"%d pilot(s) sent back to their school corporations — they will look for work again within half a day", n), ""
+		"%d pilot(s) sent back to their school corporations", n), ""
 }

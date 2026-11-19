@@ -462,11 +462,11 @@ func (m *Mod) chairCharterOf(ctx context.Context, corpID int64) (Charter, bool) 
 func allianceDutiesLine(c *allianceCard) string {
 	switch {
 	case c.BotCorps == 0:
-		return "no bot corporations: nothing for the module to do here"
+		return "no bot corporations"
 	case c.ExecBot:
-		return fmt.Sprintf("bot executor; %d of %d corporations bot-run — the executor answers applications, sets relationships and weighs war requests; every bot member pays dues, votes and may leave", c.BotCorps, len(c.Members))
+		return fmt.Sprintf("bot executor; %d of %d corporations bot-run", c.BotCorps, len(c.Members))
 	default:
-		return fmt.Sprintf("capsuleer-run executor; %d of %d corporations bot-run — they pay dues, pay tithes, vote and may leave; applications and relationships are the executor's", c.BotCorps, len(c.Members))
+		return fmt.Sprintf("capsuleer-run executor; %d of %d corporations bot-run", c.BotCorps, len(c.Members))
 	}
 }
 
@@ -549,10 +549,7 @@ const tmplAlliances = corpTabs + `{{define "content"}}` + castTabsStyle + rbCard
 <div class="card">
   <h3>Founding</h3>
   <p style="font-size:12px;color:#6b7280;margin-top:-4px">
-    An alliance owns nothing in this client: it is a group of corporations run by its <b>executor</b>, elected one
-    corporation one vote. Bot CEOs always take part in alliances: they pay dues and tithes, vote, apply, answer
-    applications, set diplomacy, pick sovereignty targets and fly joint fleets. The one choice left is whether a bot
-    leader may found an alliance of its own.
+    Bot CEOs always take part in alliances. The one choice here is whether a bot leader may found one.
   </p>
   <table class="rb-table" style="max-width:760px">
     <tr><td>Bot founding — a leader may found an alliance ({{.FoundFee}} ISK from the founder's wallet)</td>
@@ -561,7 +558,7 @@ const tmplAlliances = corpTabs + `{{define "content"}}` + castTabsStyle + rbCard
           {{if .FoundOn}}<input type="hidden" name="on" value="0"><button class="btn btn-sm">on → off</button>
           {{else}}<input type="hidden" name="on" value="1"><button class="btn btn-sm btn-primary">off → on</button>{{end}}
         </form></td></tr>
-    <tr><td>Founding cap — bot-founded alliances standing: <b>{{.FoundLive}}</b> of <b>{{.FoundMax}}</b>; a bot alliance never takes an official logo slot or name</td>
+    <tr><td>Founding cap — bot-founded alliances standing: <b>{{.FoundLive}}</b> of <b>{{.FoundMax}}</b></td>
       <td style="text-align:right"><form method="post" style="display:inline"><input type="hidden" name="action" value="foundmax">
         <input name="value" value="{{.FoundMax}}" size="4" style="width:48px"> <button class="btn btn-sm">set</button></form></td></tr>
   </table>
@@ -569,7 +566,7 @@ const tmplAlliances = corpTabs + `{{define "content"}}` + castTabsStyle + rbCard
 
 <div class="card">
   <h3>Alliances <span style="font-size:12px;color:#6b7280">({{.Live}} standing, {{.BotRun}} bot-run)</span></h3>
-  {{if not .Cards}}<p style="color:#6b7280">No alliances. Create one on <a href="/alliances">Alliances</a> and add a bot corporation to it; the layer picks it up on the next CEO think.</p>{{else}}
+  {{if not .Cards}}<p style="color:#6b7280">No alliances. Create one on <a href="/alliances">Alliances</a> and add a bot corporation.</p>{{else}}
   <div class="rbal-tools">
     <input type="text" id="rbal-q" placeholder="filter: name, ticker, executor" style="width:240px">
     <button type="button" class="btn btn-sm" id="rbal-open">expand all</button>
@@ -634,7 +631,7 @@ const tmplAlliances = corpTabs + `{{define "content"}}` + castTabsStyle + rbCard
     <table class="rb-table">
       {{range .Feed}}<tr><td style="white-space:nowrap;color:#6b7280;width:120px">{{.When}}</td><td style="width:180px">{{.Actor}}</td><td>{{.Line}}</td></tr>{{end}}
     </table>
-    {{else}}<p style="color:#9ca3af;font-size:12px">nothing yet — the bots have not acted in this alliance's name</p>{{end}}
+    {{else}}<p style="color:#9ca3af;font-size:12px">nothing yet</p>{{end}}
     </div>
   </details>
   {{end}}

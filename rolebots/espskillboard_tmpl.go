@@ -42,16 +42,9 @@ const tmplSkillBoard = castTabs + `{{define "content"}}
 {{range .B.Notes}}<div class="alert alert-error">Panel unavailable — {{.}}</div>{{end}}
 
 <div class="card">
-  <p class="muted" style="margin:0 0 6px">
-    Every pilot's own queue is on its own page; this is the population. Where it sits on the
-    skill-point curve, what it is training <em>right now</em>, how much of that is the same
-    handful of skills over and over, and by what arithmetic any of it was chosen. Nothing here
-    is stored &mdash; it is recomputed from the sheets, the training rows and the plans
-    themselves, so it cannot drift from what the bots are actually doing.
-  </p>
   <p class="muted" style="margin:0">
-    Assembled {{.B.Age}} and held for a couple of minutes, because it is two grouped scans of
-    every rostered pilot's skill entities. <a href="/rolebots/skills?fresh=1">Rebuild it now</a>.
+    Skill training across the whole roster. Assembled {{.B.Age}}.
+    <a href="/rolebots/skills?fresh=1">Rebuild now</a>.
   </p>
 </div>
 
@@ -73,21 +66,12 @@ const tmplSkillBoard = castTabs + `{{define "content"}}
 <div class="card">
   <h3 style="margin-top:0">Reconsider, and how far ahead they plan</h3>
   <p class="muted" style="margin:0 0 8px">
-    Two levers over the whole roster. Neither plans anything itself: a plan is the most
-    expensive arithmetic in the module and there are {{.B.Roster}} pilots, so ten thousand of
-    them cannot happen inside a button press. <b>Reconsider</b> marks every pilot's plan as
-    stale, and the skill lane &mdash; which already runs in batches, idle pilots first, then
-    whoever has waited longest &mdash; drains them at its own pace. Nothing is interrupted:
-    each pilot keeps training what it has until its own turn comes.
+    <b>Reconsider</b> marks every pilot's plan stale. Pilots replan gradually and keep training meanwhile.
   </p>
   <p class="muted" style="margin:0 0 8px">
-    <b>Plan horizon</b> is how much training one plan lays down. It is the centre of a
-    personality spread, not a flat setting: at {{.B.HorizonStr}}, an unhurried pilot plans
-    {{.B.PatientStr}} ahead and a hurried one {{.B.HurriedStr}}. Longer plans mean the lane
-    has to come back to a pilot less often, which on a roster this size is the difference
-    between a queue that runs dry and one that does not. A plan is still capped at
-    <b>{{.MaxSteps}} steps</b> whatever the horizon says, so past a point that cap is what
-    binds rather than the time. Shipped default: {{.HorizonShip}}.
+    <b>Plan horizon</b> is how much training one plan lays down. At {{.B.HorizonStr}}, a patient pilot
+    plans {{.B.PatientStr}} ahead and a hurried one {{.B.HurriedStr}}. Plans are capped at
+    <b>{{.MaxSteps}} steps</b>. Default: {{.HorizonShip}}.
   </p>
   <div class="rb-lever">
     <form method="POST" style="display:inline">
@@ -116,26 +100,18 @@ const tmplSkillBoard = castTabs + `{{define "content"}}
     </form>
   </div>
   <p class="muted" style="margin:10px 0 0">
-    <b>The refining floor</b> is the blunt instrument for the ore economy. A pilot only refines
-    instead of feeding its rock to an NPC bid once its after-tax yield clears {{.RefineBar}},
-    which Refining&nbsp;V alone does and Refining&nbsp;IV alone does not &mdash; and Refining is
-    a rank&nbsp;1 skill, so buying the whole roster that level costs hours. Left at 0 the pair is
-    still offered on merit like any other lever; set, it rides the same pinned path an operator
-    override does and the arithmetic is not consulted. The Ore page counts who is currently short.
+    <b>The refining floor</b> forces every pilot to train Refining to that level. Pilots only refine
+    ore once their yield clears {{.RefineBar}}. At 0 it is off.
   </p>
   {{if .B.SweepAsked}}
   <p class="muted" style="margin:10px 0 2px">
-    Sweep asked for <b>{{.B.SweepStamp}}</b> &mdash; <b>{{.B.Swept}}</b> pilot(s) have been
-    round since, <b>{{.B.Sweeping}}</b> still to go, roughly <b>{{.B.SweepETA}}</b> left at the
-    pace the lane is currently managing.
+    Sweep asked for <b>{{.B.SweepStamp}}</b>. <b>{{.B.Swept}}</b> done, <b>{{.B.Sweeping}}</b> to go,
+    about <b>{{.B.SweepETA}}</b> left.
   </p>
   <div class="rb-bar blue"><i style="width:{{.B.SweepPc}}%"></i></div>
   {{else}}
   <p class="muted" style="margin:10px 0 0">
-    No sweep running. Plans are rebuilt on the ordinary cadence: roughly every
-    {{.ReplanMin}} minutes per pilot when the lane can keep up, and immediately for a pilot
-    whose queue has emptied (with a {{.IdleReplan}}-minute cool-down so an unplannable one
-    cannot monopolise the pass).
+    No sweep running. Plans rebuild about every {{.ReplanMin}} minutes per pilot, and when a queue empties.
   </p>
   {{end}}
 </div>
@@ -144,9 +120,7 @@ const tmplSkillBoard = castTabs + `{{define "content"}}
   <div class="card">
     <h3 style="margin-top:0">Where the skill-point curve is</h3>
     <p class="muted" style="margin:0 0 8px">
-      Total SP per pilot. The bands double because SP does &mdash; the distance from a fresh
-      pilot to a useful one is the same number of doublings as from a useful one to a
-      specialist, and linear bands would put nine tenths of any roster in the first bar.
+      Total SP per pilot. Each band is double the last.
     </p>
     <div class="rb-hist">
       {{range .B.Bands}}
@@ -157,22 +131,18 @@ const tmplSkillBoard = castTabs + `{{define "content"}}
       {{end}}
     </div>
     <p class="muted" style="margin:10px 0 0">
-      Quartiles: <b>{{.B.P10Str}}</b> at the tenth percentile, <b>{{.B.P25Str}}</b> /
-      <b>{{.B.MedianSPStr}}</b> / <b>{{.B.P75Str}}</b>, <b>{{.B.P90Str}}</b> at the ninetieth,
-      <b>{{.B.MaxSPStr}}</b> at the top. The richest tenth of the roster holds
-      <b>{{.B.TopDecileStr}}</b> of all {{.B.TotalSPStr}} skill points in it &mdash; which is
-      what says whether the mean above describes the population or only its oldest wave. The
-      median pilot knows <b>{{.B.MedianSkills}}</b> skills; the mean is
-      {{.B.MeanSkillsStr}}.{{if .B.NoSheet}} <b>{{.B.NoSheet}}</b> pilot(s) have no skill sheet
-      at all.{{end}}
+      10th percentile <b>{{.B.P10Str}}</b>, quartiles <b>{{.B.P25Str}}</b> /
+      <b>{{.B.MedianSPStr}}</b> / <b>{{.B.P75Str}}</b>, 90th <b>{{.B.P90Str}}</b>, top
+      <b>{{.B.MaxSPStr}}</b>. The richest tenth holds <b>{{.B.TopDecileStr}}</b> of all
+      {{.B.TotalSPStr}} SP. Median pilot knows <b>{{.B.MedianSkills}}</b> skills, mean {{.B.MeanSkillsStr}}.{{if .B.NoSheet}}
+      <b>{{.B.NoSheet}}</b> pilot(s) have no skill sheet.{{end}}
     </p>
   </div>
 
   <div class="card">
     <h3 style="margin-top:0">Where the points went</h3>
     <p class="muted" style="margin:0 0 8px">
-      Skill points by group, over the whole roster. This is the population's shape as an
-      economy: what it has spent its one unspendable resource on.
+      Skill points by group, whole roster.
     </p>
     <table class="rb-sk rb-sortable">
       <thead><tr>
@@ -200,20 +170,10 @@ const tmplSkillBoard = castTabs + `{{define "content"}}
 <div class="card">
   <h3 style="margin-top:0">What is training right now</h3>
   <p class="muted" style="margin:0 0 8px">
-    One row per pilot in <code>chrSkillTraining</code> &mdash; not a queue, not a plan, what is
-    actually running this second. <b>Levels</b> is the mix of target levels, biggest first,
-    and it matters as much as the skill name: a front made of level Vs is a population
-    deepening, a front made of level Is is one still unlocking. Right now the whole front
-    reads {{.B.FrontLevelStr}}.
-  </p>
-  <p class="muted" style="margin:0 0 8px">
-    <b>Planned</b> is the attribution, and it is the number to read hardest. It is the share of
-    the pilots training this skill whose own current plan contains it. The rest were given it
-    by the <em>floor</em> &mdash; the cheap stopgap that fills an empty queue with the next
-    level of something the pilot already owns, because a pilot with an empty queue is losing
-    the one resource it cannot earn back &mdash; or by a plan that has since been rewritten.
-    Across the whole front, <b>{{.B.PlannedFrontStr}}</b> of what is training was asked for by
-    a plan that still exists.
+    Skills being trained this moment. <b>Levels</b> is the mix of target levels, biggest first
+    (whole front: {{.B.FrontLevelStr}}). <b>Planned</b> is the share of pilots whose current plan
+    contains the skill. The rest got it as a stopgap for an empty queue.
+    Overall <b>{{.B.PlannedFrontStr}}</b> is planned.
   </p>
   <input class="rb-filter" data-target="fronttab" placeholder="filter by skill or group&hellip;">
   <table class="rb-sk rb-sortable" id="fronttab">
@@ -243,11 +203,9 @@ const tmplSkillBoard = castTabs + `{{define "content"}}
   <div class="card">
     <h3 style="margin-top:0">Overlap</h3>
     <p class="muted" style="margin:0 0 8px">
-      Two things people mean by one word. <b>How narrow the education is</b>: the roster holds
-      {{.B.DistinctSkills}} distinct skills of the {{.B.CatalogueSkills}} the game publishes,
-      and <b>{{.B.CoreSkills}}</b> of those are held by {{.CoreShare}} or more of everybody
-      &mdash; a common core the average sheet carries {{.B.CorePerPilotStr}} of, against
-      {{.B.MeanSkillsStr}} skills in total.
+      The roster holds {{.B.DistinctSkills}} of {{.B.CatalogueSkills}} skills. <b>{{.B.CoreSkills}}</b> are
+      held by {{.CoreShare}} or more of pilots. The average pilot has {{.B.CorePerPilotStr}} of them
+      out of {{.B.MeanSkillsStr}} skills.
     </p>
     <div class="rb-hist">
       {{range .B.CoverBands}}
@@ -258,11 +216,8 @@ const tmplSkillBoard = castTabs + `{{define "content"}}
       {{end}}
     </div>
     <p class="muted" style="margin:10px 0 0">
-      <b>How narrow the front is</b>: the ten biggest skills in training hold
-      <b>{{.B.FrontTop10Str}}</b> of it, and the whole front is as varied as
-      <b>{{.B.FrontEffectiveStr}}</b> skills trained evenly (1 &divide; &Sigma;&nbsp;share&sup2;).
-      The effective count rather than a top-ten share because it comes out in the unit the
-      question is asked in, and because it does not move when the roster grows.
+      The ten biggest skills in training hold <b>{{.B.FrontTop10Str}}</b> of it. The training mix is as
+      varied as <b>{{.B.FrontEffectiveStr}}</b> evenly trained skills.
     </p>
   </div>
 
@@ -270,9 +225,7 @@ const tmplSkillBoard = castTabs + `{{define "content"}}
     <h3 style="margin-top:0">What is queued behind it</h3>
     <p class="muted" style="margin:0 0 8px">
       <b>{{.B.QueueSteps}}</b> step(s) waiting across <b>{{.B.Queued}}</b> pilot(s), about
-      <b>{{.B.QueueDepthStr}}</b> each; <b>{{.B.QueueEmpty}}</b> pilot(s) have nothing behind
-      what they are training. Counted as steps, not pilots &mdash; a queue is a plan's residue,
-      and what the roster has committed to next is the question.
+      <b>{{.B.QueueDepthStr}}</b> each. <b>{{.B.QueueEmpty}}</b> pilot(s) have nothing queued.
     </p>
     <table class="rb-sk rb-sortable">
       <thead><tr>
@@ -299,12 +252,7 @@ const tmplSkillBoard = castTabs + `{{define "content"}}
 <div class="card">
   <h3 style="margin-top:0">Who knows what</h3>
   <p class="muted" style="margin:0 0 8px">
-    The overlap panel counted; this names. Every skill anybody on the roster holds, widest
-    first, with the average level it is held to. The top of this table is the common core &mdash;
-    the education a rolebot gets whatever it was generated to be &mdash; and the bottom of it is
-    where a population's specialists actually are. <b>Training</b> beside it is how many of the
-    holders are taking it further right now, which is the difference between a skill the roster
-    has and one it is still buying.
+    Every skill held on the roster, most common first, with average level.
   </p>
   <input class="rb-filter" data-target="covertab" placeholder="filter by skill or group&hellip;">
   <table class="rb-sk rb-sortable" id="covertab">
@@ -333,33 +281,12 @@ const tmplSkillBoard = castTabs + `{{define "content"}}
 <div class="card">
   <h3 style="margin-top:0">How a pilot picks</h3>
   <p class="muted" style="margin:0 0 8px">
-    <b>The planning unit is a chain, not a step.</b> Marginal value alone is myopic &mdash;
-    Gunnery&nbsp;I unlocks nothing on its own, so a step-at-a-time planner would never train it
-    and never reach the gun behind it. A pilot prices a <em>goal</em> together with the whole
-    prerequisite closure it still needs:
-    <code>priority = value(goal) &divide; minutes of the whole chain</code>, and commits the
-    best ratio. Committing one chain makes every chain sharing its prerequisites cheaper, so
-    the cheap enabling skills &mdash; Mechanic, Navigation, Gunnery, Engineering, Electronics
-    &mdash; get trained first without any list of them existing anywhere. They sit in the most
-    chains, so they are the cheapest way to buy the most value, and the arithmetic finds them.
+    Pilots rank goals by value per minute of training, including prerequisites. Learning skills are valued
+    by the time they give back, capped at {{.LearnHorizon}}.
   </p>
   <p class="muted" style="margin:0 0 8px">
-    Dividing by chain minutes <em>is</em> the "prefer what you can have sooner" rule &mdash; not
-    a tie-break bolted on the side, the whole ranking. Learning is the one goal priced
-    differently: it is worth the time it gives back, valued at whatever the best other chain
-    pays per minute, capped at {{.LearnHorizon}} of foreseen training so its payback cannot run
-    to infinity and win every plan forever. When every goal prices at zero the pilot still
-    trains &mdash; the cheapest chain going, because a level of anything beats a level of
-    nothing and training is the one thing a docked, broke, shipless pilot can still do.
-  </p>
-  <p class="muted" style="margin:0 0 8px">
-    The table is that ranking's outcome across every current plan on the roster:
-    {{.B.KindSteps}} step(s) of training, by the kind of goal that pulled each one in. It is
-    the nearest thing there is to a statement of what this population is <em>for</em>.
-    <b>Waiting on a book</b> is planned but not queued &mdash; the server injects a skillbook
-    only when its prerequisites are <em>trained</em>, not queued, so a book behind queued levels
-    is bought on a later pass rather than now &mdash; <b>{{.B.KindPending}}</b> of the
-    {{.B.KindSteps}} planned steps are in that state.
+    {{.B.KindSteps}} planned step(s) by the kind of goal behind each. <b>Waiting on a book</b> means planned
+    but not queued yet: <b>{{.B.KindPending}}</b> step(s).
   </p>
   <table class="rb-sk rb-sortable">
     <thead><tr>
@@ -388,12 +315,8 @@ const tmplSkillBoard = castTabs + `{{define "content"}}
   <div class="card">
     <h3 style="margin-top:0">How far the planner reaches</h3>
     <p class="muted" style="margin:0 0 8px">
-      A plan takes eight to ten seconds of arithmetic and {{.Workers}} of them run at once, so
-      the lane makes a bounded number an hour however big the roster is. It asks for
-      <b>{{.B.PlansPerPass}}</b> pilot(s) each pass at the pace it is currently managing, which
-      is a full circuit of the roster about every <b>{{.B.PlanReachStr}}</b> &mdash; against an
-      aim of {{.ReplanMin}} minutes. Everything below that line is a pilot whose plan predates
-      whatever it has bought, lost or joined since.
+      <b>{{.B.PlansPerPass}}</b> pilot(s) replan per pass, so a full circuit takes about
+      <b>{{.B.PlanReachStr}}</b> against a target of {{.ReplanMin}} minutes. Age of current plans:
     </p>
     <div class="rb-hist">
       {{range .B.PlanAges}}
@@ -404,24 +327,17 @@ const tmplSkillBoard = castTabs + `{{define "content"}}
       {{end}}
     </div>
     <p class="muted" style="margin:10px 0 0">
-      Nobody is idle in the meantime: the floor lays down up to {{.FloorSteps}} cheap steps for
-      {{.FloorPerPass}} unqueued pilots a pass, and a real plan replaces whatever it wrote when
-      its turn comes.{{if .B.AutoOff}} <b>{{.B.AutoOff}}</b> pilot(s) have training automation
-      switched off and are never in the batch.{{end}}
+      Unqueued pilots get up to {{.FloorSteps}} stopgap steps ({{.FloorPerPass}} pilots a pass) until
+      their real plan.{{if .B.AutoOff}} <b>{{.B.AutoOff}}</b> pilot(s) have training automation off.{{end}}
     </p>
   </div>
 
   <div class="card">
     <h3 style="margin-top:0">The dials, as the roster carries them</h3>
     <p class="muted" style="margin:0 0 8px">
-      Two of the planner's numbers are personality rather than policy, so the roster holds a
-      spread of them rather than one value. <b>Satisfied level</b> is where a wanted skill
-      stops being urgent &mdash; past it, further levels are worth only the affinity they add.
-      Patience sets it. <b>Group cap</b> is how many steps of one skill group a single plan may
-      contain: the diversification brake, without which a pilot with one good gunboat spends
-      every plan inside Gunnery. Wanderlust sets it, so a settled pilot builds a specialism and
-      a nomad ends up a generalist. Shipped defaults, for a pilot with neither trait set:
-      satisfied at <b>{{.Satisfied}}</b>, <b>{{.GroupCap}}</b> steps per group.
+      <b>Satisfied level</b> is where a wanted skill stops being urgent (set by patience).
+      <b>Group cap</b> is the most steps of one skill group in a plan (set by wanderlust).
+      Defaults: satisfied at <b>{{.Satisfied}}</b>, <b>{{.GroupCap}}</b> steps per group.
     </p>
     <div class="rb-hist">
       {{range .B.Satisfied}}
@@ -438,12 +354,8 @@ const tmplSkillBoard = castTabs + `{{define "content"}}
       {{end}}
     </div>
     <p class="muted" style="margin:10px 0 0">
-      The rest are the same for everyone: no single step longer than <b>{{.StepCap}}</b> (so one
-      rank-6 level V cannot swallow a plan full of cheap unlocks), at most <b>{{.MaxSteps}}</b>
-      steps in a plan, at most <b>{{.EvalBudget}}</b> fits re-judged against sheets the pilot
-      does not have yet, and a standing <b>{{.WalletFloor}}</b> the wallet is never taken below
-      to buy a book &mdash; only what it holds above that floor is book money, so no plan can
-      leave a pilot unable to buy the hull the skills were for.
+      Same for everyone: steps up to <b>{{.StepCap}}</b>, at most <b>{{.MaxSteps}}</b> steps per plan,
+      <b>{{.EvalBudget}}</b> fits re-judged, and a <b>{{.WalletFloor}}</b> wallet floor that book buying never touches.
     </p>
   </div>
 </div>
@@ -452,10 +364,8 @@ const tmplSkillBoard = castTabs + `{{define "content"}}
 <div class="card">
   <h3 style="margin-top:0">Operator overrides</h3>
   <p class="muted" style="margin:0 0 8px">
-    Pins and bans somebody has set on individual pilots. A pin trains a skill to V ahead of
-    everything else and bypasses the arithmetic entirely; a ban removes it, and everything
-    behind it, from that pilot's reach. Deliberately sparse &mdash; every row here is an
-    argument with the planner that somebody has to remember making.
+    Pins and bans set on individual pilots. A pin trains a skill to V first. A ban removes it, and
+    anything needing it, from the pilot's reach.
   </p>
   <table class="rb-sk rb-sortable">
     <thead><tr><th>Skill</th><th>Override</th><th class="n">Pilots</th></tr></thead>

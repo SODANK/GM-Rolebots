@@ -177,12 +177,8 @@ const tmplCEOShares = `
     <input type="hidden" name="action" value="paydividend">
     <button type="submit">Pay now</button>
   </form>
-  <p style="font-size:12px;color:#6b7280">Blank = the CEO's charter decides. 0% stops dividends. A dividend is
-  capped at half the free capital; under 250k it waits for the next review (Pay now skips the wait, not the cap).
-  Holders see it in the wallet journal as a dividend payment.</p>
-  <p style="font-size:12px;color:#6b7280">Members buy out of the treasury at the ask and sell back at the bid,
-  out of a weekly buyback budget. Players buy with Give Money to the corporation, "shares" in the reason, and
-  sell by giving their shares to the corporation. The CEO votes the treasury.</p>
+  <p style="font-size:12px;color:#6b7280">Blank = the CEO's charter decides. 0% stops dividends. A dividend is capped at half the free capital.</p>
+  <p style="font-size:12px;color:#6b7280">Players buy by Give Money to the corporation with "shares" in the reason, and sell by giving shares back.</p>
 </div>
 {{end}}
 `

@@ -392,13 +392,8 @@ const tmplCorps = corpTabs + `{{define "content"}}` + castTabsStyle + rbTableSty
 <summary>Self-founding <span class="rbcount">({{if .FoundOn}}ON{{else}}OFF{{end}} &middot; {{.FoundLive}} of {{.FoundMax}} live)</span></summary>
 <div class="card">
   <p style="font-size:12px" class="rbdim">
-    Leaders (Leadership above 50) found corporations of their own at their employment review &mdash; every 2 to 21
-    days depending on loyalty, docked, out of school, in an NPC corporation, with no applications out and twice the
-    {{.FoundFee}} ISK fee in their wallet. Each review is a roll on how strong a leader they are, and at most one
-    corporation is founded every ten minutes, server-wide. An industry or research outfit is headquartered at the
-    founder's factory base, anyone else at their clone station; if that system already holds {{.HQMax}} player
-    headquarters the founder spreads out to the nearest uncrowded station within {{.SpreadJumps}} jumps and moves
-    home there. The headquarters' region names the corporation.
+    Leaders (Leadership above 50) may found a corporation at their employment review. Needs twice the
+    {{.FoundFee}} ISK fee in their wallet. At most one founding every ten minutes server-wide.
     {{if .FoundLast}}Last founded {{.FoundLast}} UTC.{{end}}
   </p>
   <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:center">
@@ -427,7 +422,7 @@ const tmplCorps = corpTabs + `{{define "content"}}` + castTabsStyle + rbTableSty
       <input type="hidden" name="back" value="{{.Query}}">
       <button type="submit"{{if not .ProbeReady}} disabled{{end}}>Found one now</button>
     </form>
-    <span class="rbdim" style="font-size:12px">Test buttons skip the switch, the roll and the ten-minute pace; the cap and every refusal still apply.</span>
+    <span class="rbdim" style="font-size:12px">Test buttons skip the switch and the ten-minute pace. The cap still applies.</span>
   </div>
   {{if .Probe}}
   <table class="rbtight" style="margin-top:8px">
@@ -462,7 +457,7 @@ const tmplCorps = corpTabs + `{{define "content"}}` + castTabsStyle + rbTableSty
       <span><b>{{.BotFounded}}</b> open corporation(s) were founded by a rolebot (a character on a RoleBot&lt;N&gt; account).</span>
       <input type="text" name="confirm" placeholder="type DELETE" style="width:120px">
       <button type="submit"{{if not .BotFounded}} disabled{{end}}>Close them all</button>
-      <span class="rbdim" style="font-size:12px">The core's own close: members return to their NPC corporations, wars end, bills are written off, the name is kept. A corporation that still owns a starbase is refused.</span>
+      <span class="rbdim" style="font-size:12px">Members return to their NPC corporations. A corporation that owns a starbase is refused.</span>
     </form>
   </div>
 
@@ -484,8 +479,7 @@ const tmplCorps = corpTabs + `{{define "content"}}` + castTabsStyle + rbTableSty
 
   {{if .Preview}}
   <p style="font-size:12px;margin-top:12px" class="rbdim">
-    Sample brands from rostered pilots' real names and races, spread over every kind and every region that may be
-    named, under the same rules a founding applies. Nothing is written. Logos stack slot 3 (bottom) to slot 1.
+    Sample brands. Nothing is written. Logos stack slot 3 (bottom) to slot 1.
   </p>
   <table class="rbtight">
     <thead><tr><th>Logo</th><th>Name</th><th>Ticker</th><th>Kind</th><th>Founder</th><th>Region</th><th>Description</th></tr></thead>
@@ -566,10 +560,8 @@ const tmplCorps = corpTabs + `{{define "content"}}` + castTabsStyle + rbTableSty
     </tbody>
   </table>
   <p style="margin-top:8px;font-size:12px" class="rbdim">
-    <b>Members</b> counts pilots on the books against the corporation's own limit &mdash; bots included, a bot takes a
-    place like anybody. <b>Pool</b> is the enabled pilots who clear the hard rules as if the door were open.
-    <b>7-day net</b> is what the CEO's books show earned (share sales, dividends and the CEO's own capital left out);
-    a human-run corporation keeps no books here. Every heading sorts.
+    <b>Members</b> counts bots against the corporation's limit. <b>Pool</b> is enabled pilots who could join if the door were open.
+    <b>7-day net</b> is the CEO's earnings, excluding share sales, dividends and its own capital. Human-run corporations show none. Every heading sorts.
   </p>
   {{else}}
   <p style="margin-top:12px">{{if .Stats.Corps}}No player corporation matches.{{if .Stats.Hidden}} {{.Stats.Hidden}} have no bot in them &mdash; <a href="/rolebots/corps?state=all">list every player corporation</a>.{{end}}{{else}}No player corporations exist on this server yet.{{end}}</p>
@@ -606,9 +598,7 @@ const tmplCorps = corpTabs + `{{define "content"}}` + castTabsStyle + rbTableSty
     {{end}}
   </table>
   <p style="margin-top:8px;font-size:12px" class="rbdim">
-    A rolebot writes a real application into the corporation window's Applications tab and moves only when a
-    director accepts. An unanswered one is withdrawn after {{.ApplyDays}} days; a rejected pilot does not ask again
-    for {{.RejectDays}}. <b>Withdraw</b> takes it off the director's list early.
+    Unanswered applications are withdrawn after {{.ApplyDays}} days. A rejected pilot waits {{.RejectDays}} to reapply. <b>Withdraw</b> removes one early.
   </p>
 </details>
 </div>

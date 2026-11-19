@@ -35,12 +35,6 @@ const tmplOre = industryTabs + `{{define "content"}}
 
 <div class="card">
   <h3 style="margin-top:0">How the ore market is priced</h3>
-  <p class="muted" style="margin:0 0 8px">
-    Miners list their holds, factories buy and bid for rock, traders flip it and stranded
-    stacks get swept. That is standard logic and there is no switch for it &mdash; the five
-    that used to sit here were a staged rollout, and the rollout is over. What is left are the
-    two numbers, because they are tuning rather than on-and-off.
-  </p>
   <div class="rb-edge">
     <form method="POST">
       <input type="hidden" name="action" value="askEdge">
@@ -58,30 +52,15 @@ const tmplOre = industryTabs + `{{define "content"}}
     </form>
   </div>
   <p class="muted" style="margin:10px 0 0">
-    The first is what a miner deliberately leaves on the table: price at a refiner&rsquo;s exact
-    break-even and nobody has a reason to act, which is not listing at all with a broker fee
-    attached. The second is how much cheaper rock has to be than metal before a factory buys it
-    &mdash; 1.00 is &ldquo;strictly cheaper&rdquo;. Neither applies to a factory that cannot
-    buy the metal at all: <b>if it needs the material it takes the rock</b>, whatever the
-    arithmetic says, because the comparison only means something when there is something to
-    compare against.
+    The first is the margin a miner leaves when listing rock. The second is how much cheaper rock must be
+    than metal before a factory buys it. A factory that cannot buy the metal takes the rock regardless.
   </p>
 </div>
 
 <div class="card">
-  <p class="muted" style="margin:0 0 6px">
-    The Minerals tab asks whether a region's shelves are stocked. This one asks the question
-    underneath it: a shelf is stocked by <b>refining</b>, refining is fed by <b>rock</b>, and
-    until this counter existed nothing recorded what became of the rock. The number to read
-    first is the <b>sink share</b> &mdash; how much of everything mined went into an
-    <em>NPC bid</em>, which pays forever and takes the units out of the game. Whatever is sold
-    into an NPC bid is not on anyone's market as a mineral, was not built into anything, and
-    never will be.
-  </p>
   <p class="muted" style="margin:0">
-    Counted per day and kept for {{.KeepDays}} days. A trip's rock is counted once when it comes
-    out of the belt and again at whatever it was disposed of, so the disposal rows are shares of
-    the mined row rather than a second population.
+    What happens to mined rock. <b>Sink share</b> is the part sold into an NPC bid, which removes it from the game.
+    Counted per day, kept for {{.KeepDays}} days.
   </p>
 </div>
 
@@ -107,18 +86,8 @@ const tmplOre = industryTabs + `{{define "content"}}
 <div class="card">
   <h3 style="margin-top:0">Where the rock went</h3>
   <p class="muted" style="margin:0 0 8px">
-    Today beside the last seven days. <b>Mined</b> is the denominator; everything below it is a
-    disposal. <b>Stockpiled</b> is neither a loss nor a supply &mdash; it is the pile that has
-    not decided yet &mdash; and <b>jettisoned</b> is a fleet miner filling a can its hauler
-    will collect, which is counted again under the fleet row when the commander disposes of it.
-  </p>
-  <p class="muted" style="margin:0 0 8px">
-    <b>Listed</b> is not a sale: the rock is resting on a book and still belongs to the miner,
-    and its fill turns up again later under one of the two sold rows. <b>Bought to refine</b> is
-    the other side of the same market &mdash; a builder taking ore instead of metal, or a trader
-    flipping a stack. The two will not balance, because a purchase off an NPC ask has no bot sale
-    to pair with. The number to watch is <b>sold to an NPC bid</b>, which should FALL: those
-    units leave the game, and nothing they would have refined into reaches anybody's market.
+    Today beside the last seven days. Rows below <b>Mined</b> are what became of it.
+    <b>Listed</b> is not a sale yet. <b>Sold to an NPC bid</b> should fall.
   </p>
   <table class="rb-ore">
     <thead><tr>
@@ -145,19 +114,9 @@ const tmplOre = industryTabs + `{{define "content"}}
 <div class="card">
   <h3 style="margin-top:0">What a rock is worth</h3>
   <p class="muted" style="margin:0 0 8px">
-    <b>Break-even</b> is the net refining yield at which this ore's own refined value and its own
-    best bid are the same number &mdash; the real version of the flat
-    {{.RefineBar}} bar the disposal rule applies. A rock whose break-even is at or under
-    {{.ReferenceYield}} (a station-standard plant worked by Refining&nbsp;IV / Refinery
-    Efficiency&nbsp;IV, after tax) is marked <span class="rb-yes">worth refining</span>; the rest
-    are worth more as rock. Refined value is priced off the best live <em>bid</em> on each mineral,
-    because that is what a refiner can actually realise today.
-  </p>
-  <p class="muted" style="margin:0 0 8px">
-    The volume pair is why the ore market is local and the mineral market is not. A batch of
-    Arkonor is 3,200&nbsp;m&sup3; of rock and 8&nbsp;m&sup3; of metal: nobody can haul the rock to a
-    hub, so it has to be bought where it is dug. An ore with <span class="rb-none">no ask</span>
-    is not for sale anywhere in the game.
+    <b>Break-even</b> is the refining yield where refined value equals the ore's best bid.
+    At or under {{.ReferenceYield}} (Refining&nbsp;IV, Refinery Efficiency&nbsp;IV) it is marked
+    <span class="rb-yes">worth refining</span>. <span class="rb-none">no ask</span> means not for sale anywhere.
   </p>
   <input class="rb-filter" data-target="oretab" placeholder="filter by name or group&hellip;">
   <table class="rb-ore rb-sortable" id="oretab">
@@ -196,17 +155,9 @@ const tmplOre = industryTabs + `{{define "content"}}
 <div class="card">
   <h3 style="margin-top:0">Who can refine</h3>
   <p class="muted" style="margin:0 0 8px">
-    Read off <b>skills</b>, not off the counter: the question is not who reprocessed something
-    yesterday but who <em>could</em>, because a pilot one level short is the one worth doing
-    something about. Yield is at a station-standard plant after the usual 5% tax; the bar a
-    disposal is judged against is {{.RefineBar}}. Every enabled pilot is counted here
-    &mdash; {{.RefinerTotal}} of them, {{.RefinerTrained}} with any refining skill at all.
-  </p>
-  <p class="muted" style="margin:0 0 8px">
-    <b>One level short</b> is the row to act on. Refinery&nbsp;Efficiency has the bigger term
-    (0.04 a level against Refining's 0.02) but it is rank&nbsp;3 to Refining's rank&nbsp;1
-    <em>and</em> needs Refining&nbsp;V first, so a pilot under the bar always reaches it through
-    Refining &mdash; which is why the census counts that level and not the other one.
+    Pilots by refining skill. Yield is after 5% tax, and the bar is {{.RefineBar}}.
+    {{.RefinerTotal}} enabled pilots, {{.RefinerTrained}} with any refining skill.
+    <b>One level short</b> means one Refining level below the bar.
   </p>
   <table class="rb-ore rb-sortable">
     <thead><tr>
@@ -233,9 +184,7 @@ const tmplOre = industryTabs + `{{define "content"}}
 <div class="card">
   <h3 style="margin-top:0">A few of the best</h3>
   <p class="muted" style="margin:0 0 8px">
-    {{.RefinerNamed}} named pilots off the top of the distribution above, so a row can be
-    followed to a character. Not a ranking of the roster and not the whole of it &mdash; the
-    table above is the population.
+    {{.RefinerNamed}} pilots from the top of the table above.
   </p>
   <table class="rb-ore rb-sortable">
     <thead><tr>
@@ -262,10 +211,7 @@ const tmplOre = industryTabs + `{{define "content"}}
 <div class="card">
   <h3 style="margin-top:0">What is left in the belts</h3>
   <p class="muted" style="margin:0 0 8px">
-    Written down whenever a pilot actually works a field, joined to the asteroid seed &mdash; a
-    regenerated field rolls a new seed, the row drops out, and the system correctly reads as
-    untouched again rather than reporting last cycle's depletion against this cycle's rocks. Only
-    systems somebody has visited appear. Thinnest first.
+    Only systems a pilot has worked appear. Thinnest first.
   </p>
   {{if .BeltNote}}<p class="rb-none" style="margin:0">Belt fullness unavailable: {{.BeltNote}}</p>{{end}}
   <table class="rb-ore rb-sortable">

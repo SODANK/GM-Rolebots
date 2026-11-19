@@ -212,11 +212,7 @@ const tmplArms = corpTabs + `{{define "content"}}` + castTabsStyle + `
 {{template "rb_corptabs" .}}
 {{if .Msg}}<div class="alert alert-ok">{{.Msg}}</div>{{end}}
 {{if .Err}}<div class="alert alert-error">{{.Err}}</div>{{end}}
-<div class="card">
-  <h3>How it works</h3>
-  <p>Bot CEOs split their corporations into departments (Security, Industry, Mining, Sales, Human Resources, Finance)
-  and place every active member in one. A department is kept only when the corporation has the people and the work for it.</p>
-</div>
+<p style="font-size:12px;color:#9ca3af">How each bot CEO splits its members into departments.</p>
 <div class="card">
   <h3>Bot-run corporations</h3>
   {{if .Corps}}
@@ -226,8 +222,7 @@ const tmplArms = corpTabs + `{{define "content"}}` + castTabsStyle + `
       {{range .Arms}}<td>{{if .Justified}}<b>{{.Count}}</b>{{if .Target}} / {{.Target}}{{end}}{{else}}{{if .Count}}{{.Count}}{{else}}<span style="color:#6b7280">—</span>{{end}}{{end}}</td>{{end}}
       <td>{{.Pool}}</td><td>{{if .Checked}}{{.Checked}}{{else}}<span style="color:#6b7280">not yet</span>{{end}}</td></tr>{{end}}
   </table>
-  <p style="font-size:12px;color:#6b7280">Bold: a department the corporation keeps, members / target. A plain number is a department the corporation
-  has not yet earned, with the position holders already recorded in it.</p>
+  <p style="font-size:12px;color:#6b7280">Bold: a department kept, members / target. Plain: not kept yet.</p>
   {{else}}<p>No corporation has a bot CEO.</p>{{end}}
 </div>
 {{end}}`

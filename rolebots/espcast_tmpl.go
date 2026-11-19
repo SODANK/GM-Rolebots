@@ -61,29 +61,23 @@ const tmplCast = castTabs + `{{define "content"}}` + castTabsStyle + `
     <button type="submit">{{if .MasterOn}}Switch RoleBot OFF{{else}}Switch RoleBot ON{{end}}</button>
   </form>
   <p style="margin-top:8px;font-size:12px;color:#6b7280">
-    The switch is the whole module, cast and generated population together — it is not scoped to
-    this tab. Persisted in server_settings, so it survives restarts; config.json
-    <code>modules.rolebots.enabled</code> is only the pre-first-toggle default.
+    Covers the whole module, cast and generated population together.
   </p>
   <form method="POST" action="/rolebots" style="display:inline">
     <input type="hidden" name="action" value="rehome">
     <button type="submit">Reconsider every pilot's address</button>
   </form>
   <p style="margin-top:8px;font-size:12px;color:#6b7280">
-    Not a setting — a refresh. Every rostered pilot looks again at where it lives and where it builds:
-    its employer's stations first, then the nearest medical bay and manufacturing line to them. Use it
-    after changing a corporation's stations. Nobody moves who is already living with their employer, and
-    the looks land one per pilot per planning pass.
+    Every pilot re-picks its home and factory near its employer's stations. Use after changing a corporation's stations.
   </p>
 </div>
 
 <div class="card">
   <h3>The Cast <span style="font-size:12px;color:#6b7280">({{len .Bots}})</span></h3>
   <p style="font-size:12px;color:#6b7280;margin-top:-4px">
-    Characters you made yourself and handed to the sim. Nothing the generator produced appears here or
-    in the browser below — those live on
+    Characters you made yourself. Generated pilots live on
     <a href="/rolebots/seed">RoleBot Generation</a> and
-    <a href="/rolebots/generated">Generated Characters</a>, and there is no setting that mixes them in.
+    <a href="/rolebots/generated">Generated Characters</a>.
   </p>
   {{if .Bots}}
   <div class="rb-cast">
@@ -163,8 +157,7 @@ const tmplCast = castTabs + `{{define "content"}}` + castTabsStyle + `
 <div class="card">
   <h3>Your Characters <span style="font-size:12px;color:#6b7280">({{len .AllChars}} — <span id="rb-shown">{{len .AllChars}}</span> shown)</span></h3>
   <p style="font-size:12px;color:#6b7280;margin-top:-4px">
-    Every character on a player account. Casting one hands it to the sim; removing it later leaves the
-    character exactly as it was.
+    Every character on a player account. Removing one from the cast leaves it untouched.
   </p>
   <input type="text" id="rb-filter" placeholder="Filter by name, character ID, account, or corporation..." style="width:100%;max-width:420px;margin-bottom:8px" autocomplete="off">
   {{if .AllChars}}

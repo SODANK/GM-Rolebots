@@ -404,7 +404,7 @@ func (m *Mod) handleCorpRelationsPost(w http.ResponseWriter, r *http.Request, ct
 const tmplCEORelations = `{{with .Relations}}
 <div class="card">
   <h3>Relations</h3>
-  {{if not .Ledger}}<p style="font-size:12px;color:#b45309">The relations ledger is switched off (Relations page): values are frozen and nothing is written.</p>{{end}}
+  {{if not .Ledger}}<p style="font-size:12px;color:#b45309">The relations ledger is switched off (Relations page). Values are frozen.</p>{{end}}
   <h4 style="margin:6px 0 4px">What it holds toward others</h4>
   {{if .Declared}}
   <table class="tbl rb-sortable" style="font-size:12px">
@@ -426,7 +426,7 @@ const tmplCEORelations = `{{with .Relations}}
     Declare toward corporation <input type="number" name="to" placeholder="corp ID" required style="width:110px">
     standing <input type="number" name="standing" step="0.1" min="-10" max="10" value="-5" required style="width:70px">
     <button type="submit">Declare</button>
-    <span style="color:#6b7280">0 clears it. {{if .Managed}}A pair you declare is yielded: the ledger never re-decides it until you hand it back.{{end}}</span>
+    <span style="color:#6b7280">0 clears it. {{if .Managed}}A declared pair stays yours until you hand it back.{{end}}</span>
   </form>
 
   <h4 style="margin:12px 0 4px">What others hold toward it</h4>
@@ -486,8 +486,7 @@ const tmplCEORelations = `{{with .Relations}}
   <p style="font-size:12px">{{if gt .IncPage 0}}<a href="{{.Self}}?rp={{.IncPrev}}&rkind={{.IncKind}}&rto={{.IncTo}}">&larr; newer</a> {{end}}{{if .IncMore}}<a href="{{.Self}}?rp={{.IncNext}}&rkind={{.IncKind}}&rto={{.IncTo}}">older &rarr;</a>{{end}}</p>
   {{else}}<p style="font-size:12px;color:#6b7280">Nothing on the ledger{{if or .IncKind .IncTo}} for that filter{{end}}.</p>{{end}}
   {{end}}
-  <p style="font-size:12px;color:#6b7280">The <b>standing</b> is what the game holds (crpStandings) and what every pilot reads; the <b>live</b> value is the
-  ledger's own, moved by incidents and decaying toward the <b>baseline</b> the CEO's temperament sets. Tiers: ally &ge; 7.5, friend &ge; 2.5,
-  rival &le; &minus;2.5, enemy &le; &minus;7.5. Switches and dials are on the <a href="/rolebots/corps/diplomacy">Diplomacy page</a>.</p>
+  <p style="font-size:12px;color:#6b7280"><b>Standing</b> is the game's value. <b>Live</b> is the ledger's, drifting toward the <b>baseline</b>. Tiers: ally &ge; 7.5, friend &ge; 2.5,
+  rival &le; &minus;2.5, enemy &le; &minus;7.5. Switches are on the <a href="/rolebots/corps/diplomacy">Diplomacy page</a>.</p>
 </div>
 {{end}}`

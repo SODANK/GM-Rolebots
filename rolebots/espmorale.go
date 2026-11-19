@@ -412,10 +412,8 @@ const tmplMorale = corpTabs + `{{define "content"}}` + castTabsStyle + rbTableSt
 <summary>Attrition <span class="rbcount">({{if .AttritionOn}}ON{{else}}OFF{{end}})</span></summary>
   <p style="margin-top:8px">
     {{if .AttritionOn}}<strong style="color:#22c55e">ON</strong>{{else}}<strong style="color:#ef4444">OFF</strong>{{end}}
-    — the ledger below runs either way. OFF, the leave hazard is rolled in <b>shadow</b>: a pilot that would have
-    left is logged and counted here, nobody moves. ON, a pilot that rolls an exit is flagged and goes at its next
-    review (a better offer, or a walkout to its previous NPC employer), unless a purchase order, loaned kit, a fleet
-    or a claim holds it for the day; the hazard ramps in over 14 days from the switch (now {{.Ramp}}).
+    — the ledger runs either way. OFF, would-be leavers are only counted. ON, pilots that roll an exit leave at
+    their next review. The hazard ramps in over 14 days (now {{.Ramp}}).
     <form method="POST" style="display:inline;margin-left:8px">
       <input type="hidden" name="action" value="attrition">
       <input type="hidden" name="state" value="{{if .AttritionOn}}off{{else}}on{{end}}">
@@ -423,10 +421,7 @@ const tmplMorale = corpTabs + `{{define "content"}}` + castTabsStyle + rbTableSt
     </form>
   </p>
   <p style="font-size:12px" class="rbdim">
-    Every pilot carries a morale debt against its employer: grievances push it up (skipped on payroll, SRP denied,
-    a war it never wanted, nothing to do, work it dislikes, far from the corporation), goodwill pays it down (a
-    cheque, a granted claim, a promotion, a fleet seat, a book bought for it). It halves every 21 days. The chance
-    of leaving per day is h0·e^(3.6·D), h0 bent by loyalty and halved in NPC corporations and for officers.
+    Grievances raise a pilot's morale debt, goodwill pays it down. Higher debt means a higher chance of leaving.
   </p>
 </details>
 </div>

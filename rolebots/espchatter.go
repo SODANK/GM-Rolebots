@@ -356,57 +356,55 @@ const tmplChatter = chatterTabs + `{{define "content"}}` + castTabsStyle + `
 {{if not .Master}}<div class="alert alert-error">The rolebot master switch is off; nothing is said while it is.</div>{{end}}
 <div class="card">
   <h3>Switches &amp; dials</h3>
-  <p style="font-size:12px;color:#6b7280">Bots say one short line about what they or their corporation just did, in a
-  corporation channel a <b>person</b> is connected to &mdash; never otherwise. Every line goes through the budget below;
-  the lane says at most one line per channel per 15&nbsp;s whatever the dials.</p>
+  <p style="font-size:12px;color:#6b7280">Bots speak only in channels a <b>person</b> is connected to.</p>
   <form method="POST">
     <input type="hidden" name="action" value="settings">
     <table class="tbl" style="font-size:12px">
       <tr><td><label><input type="checkbox" name="on" {{if .On}}checked{{end}}> <b>Chatter on</b></label></td>
-          <td>Master switch. Off, the audience table below still fills; nothing is queued or said.</td></tr>
+          <td>Master switch. Off, nothing is queued or said.</td></tr>
       <tr><td><label><input type="checkbox" name="greet" {{if .Greet}}checked{{end}}> Greet a person who appears</label></td>
-          <td>One bot, 5&ndash;30&nbsp;s after they join the channel, once per 6&nbsp;h. The CEO when present, else the most leaderly bot.</td></tr>
+          <td>The CEO, or the most leaderly bot, greets them once per 6&nbsp;h.</td></tr>
       <tr><td><label><input type="checkbox" name="replies" {{if .Replies}}checked{{end}}> Reply to people</label></td>
-          <td>o7 / hi / gf / thanks get an answer; a bot addressed by name says what it is doing; an <i>x</i> after a fleet announce (&ldquo;x up&rdquo;) sends an invite.</td></tr>
+          <td>Answers o7, hi, gf and thanks, and bots addressed by name. An <i>x</i> after a fleet announce sends an invite.</td></tr>
       <tr><td><label><input type="checkbox" name="farewell" {{if .Farewell}}checked{{end}}> o7 when a person leaves</label></td>
-          <td>Off by default: a log-off is usually a closed client, and the line reads to whoever is left.</td></tr>
-      <tr><td>Lines per channel per hour</td><td><input name="perHour" value="{{.PerHour}}" size="4"> &nbsp;(events may not use the last {{.Reserve}}; greetings and replies may)</td></tr>
-      <tr><td>Seconds between any two lines in a channel</td><td><input name="minGap" value="{{.MinGap}}" size="4"> &nbsp;(a reply to a direct question waits a third of this)</td></tr>
+          <td>Off by default.</td></tr>
+      <tr><td>Lines per channel per hour</td><td><input name="perHour" value="{{.PerHour}}" size="4"> &nbsp;(events leave the last {{.Reserve}} for greetings and replies)</td></tr>
+      <tr><td>Seconds between any two lines in a channel</td><td><input name="minGap" value="{{.MinGap}}" size="4"> &nbsp;(direct replies wait a third of this)</td></tr>
       <tr><td>Seconds between one pilot's own lines</td><td><input name="pilotGap" value="{{.PilotGap}}" size="4"></td></tr>
       <tr><th colspan="2" style="text-align:left;padding-top:10px">Exchanges &mdash; bots answering each other ({{.VoiceLines}} lines loaded)</th></tr>
       <tr><td><label><input type="checkbox" name="local" {{if .Local}}checked{{end}}> Speak in Local</label></td>
-          <td>A bot that locks a pilot says why, the target's name linked, in its own voice; a bot victim answers, the aggressor has the last word, a bystander bot sometimes remarks; a kill gets a gloat and a reply from the pod. Only in a system a person is in Local of.</td></tr>
+          <td>Bots comment on locks and kills, and victims and bystanders answer. Only where a person is in Local.</td></tr>
       <tr><td><label><input type="checkbox" name="race" {{if .Race}}checked{{end}}> Race insults</label></td>
-          <td>EVE-lore insults from strong xenophobes, harsher the further gone they are. Off, they still say they dislike a people, without the insults.</td></tr>
+          <td>Xenophobes insult other races. Off, they only say they dislike a people.</td></tr>
       <tr><td><label><input type="checkbox" name="corp" {{if .CorpTalk}}checked{{end}}> Conversations in corp chat</label></td>
-          <td>A director calls a member out on a new fleet order and the member answers (or grumbles); a member under fire calls for help and Security answers &ldquo;coming&rdquo; only if it really is; a corpmate answers a loss; work-board claims get a nod. Spends the hourly budget above; a reply in a conversation skips the gaps, never the ceiling.</td></tr>
+          <td>Directors, members and corpmates talk about fleet orders, calls for help, losses and work-board claims. Uses the hourly budget above.</td></tr>
       <tr><td><label><input type="checkbox" name="retorts" {{if .Retorts}}checked{{end}}> Answer players in Local</label></td>
-          <td>A person who answers a bot that barked at them in the last 90&nbsp;s, links it or names it gets one reply back per 2&nbsp;min. An insult makes that one bot think worse of them for two hours.</td></tr>
+          <td>A bot replies when a person answers it, links it or names it. One reply per 2&nbsp;min.</td></tr>
       <tr><td>Local lines per minute per system</td><td><input name="localPerMin" value="{{.LocalPerMin}}" size="4"></td></tr>
-      <tr><td>Seconds between one pilot's own lines in Local</td><td><input name="speakerGap" value="{{.SpeakerGap}}" size="4"> &nbsp;(an opening line and a reply in a conversation skip it)</td></tr>
+      <tr><td>Seconds between one pilot's own lines in Local</td><td><input name="speakerGap" value="{{.SpeakerGap}}" size="4"> &nbsp;(conversation lines skip it)</td></tr>
       <tr><td>Bystander remarks (%)</td><td><input name="bystander" value="{{.Bystander}}" size="4"></td></tr>
       <tr><td>Victim replies (%)</td><td><input name="replyPct" value="{{.ReplyPct}}" size="4"></td></tr>
       <tr><th colspan="2" style="text-align:left;padding-top:10px">Market talk &mdash; Local and region channels</th></tr>
       <tr><td><label><input type="checkbox" name="market" {{if .Market}}checked{{end}}> Talk about the market</label></td>
-          <td>A bot that lists something says so (item linked, units, price, station); a bot that pays or walks away from a gouged price says so; a docked bot looking at its region's market remarks on a spike or a crash in what its career uses. A person answering an ad or a remark, or asking after a linked item someone is selling, gets one reply. Needs &ldquo;Speak in Local&rdquo;; nothing goes where no person is listening.</td></tr>
+          <td>Bots announce listings, remark on gouged prices and market spikes, and answer people who reply. Needs &ldquo;Speak in Local&rdquo;.</td></tr>
       <tr><td><label><input type="checkbox" name="marketRegion" {{if .MarketRegion}}checked{{end}}> Region channel too</label></td>
-          <td>When nobody is in a system's Local but a person is in its region channel, the line may go there instead (one in {{.MarketRegionGap}}&nbsp;min per region; Local one in {{.MarketLocalGap}}&nbsp;min).</td></tr>
-      <tr><td>Listings announced (%)</td><td><input name="marketAdPct" value="{{.MarketAdPct}}" size="4"> &nbsp;(listings under {{.MarketAdMin}} are never announced; ore and materials never)</td></tr>
-      <tr><td>Purchases remarked on (%)</td><td><input name="marketRemarkPct" value="{{.MarketRemarkPct}}" size="4"> &nbsp;(only past {{.MarketGouge}}&times; or under {{.MarketBargain}}&times; the region's two-week trade average)</td></tr>
+          <td>If nobody is in Local but a person is in the region channel, the line goes there (one per {{.MarketRegionGap}}&nbsp;min per region; Local one per {{.MarketLocalGap}}&nbsp;min).</td></tr>
+      <tr><td>Listings announced (%)</td><td><input name="marketAdPct" value="{{.MarketAdPct}}" size="4"> &nbsp;(never under {{.MarketAdMin}}; never ore or materials)</td></tr>
+      <tr><td>Purchases remarked on (%)</td><td><input name="marketRemarkPct" value="{{.MarketRemarkPct}}" size="4"> &nbsp;(only past {{.MarketGouge}}&times; or under {{.MarketBargain}}&times; the two-week regional average)</td></tr>
       <tr><td>Minutes between market looks per channel</td><td><input name="marketLookMin" value="{{.MarketLookMin}}" size="4"></td></tr>
       <tr><th colspan="2" style="text-align:left;padding-top:10px">Alliance channel &mdash; member corporations talking to each other</th></tr>
       <tr><td><label><input type="checkbox" name="allianceTalk" {{if .AllianceTalk}}checked{{end}}> Speak in alliance channels</label></td>
-          <td>A member under fire whose own corporation cannot answer asks the alliance, and a member fleet says &ldquo;coming&rdquo; only when it is really pointed at that system; fleet help calls, reinforced towers and their defenders; a person asking for help gets a truthful answer (nothing is ordered for them). The alliance's own politics &mdash; a new member, a vote, a bill, a war, a system won or lost &mdash; said by the corporation that did it and answered by a pilot of another, in a tone its prejudices and standings set. Allies are never insulted: a xenophobe is cold, not abusive.</td></tr>
-      <tr><td>Alliance lines per channel per hour</td><td><input name="alliancePerHr" value="{{.AlliancePerHr}}" size="4"> &nbsp;(shared by every member corporation's bots)</td></tr>
+          <td>Calls for help, reinforced towers and alliance politics (new members, votes, bills, wars, systems). Allies are never insulted.</td></tr>
+      <tr><td>Alliance lines per channel per hour</td><td><input name="alliancePerHr" value="{{.AlliancePerHr}}" size="4"> &nbsp;(shared by all member corporations)</td></tr>
       <tr><td><label><input type="checkbox" name="allianceGreet" {{if .AllianceGreet}}checked{{end}}> Greet in the alliance channel</label></td>
-          <td>The executor corporation's CEO or most leaderly bot, unless the person was greeted in their corp channel within the hour.</td></tr>
-      <tr><td>Remarks on another member's loss or kill (%)</td><td><input name="ribPct" value="{{.RibPct}}" size="4"> &nbsp;(condolences past 50M, teasing under; once per corporation per 30&nbsp;min)</td></tr>
-      <tr><td>Shop talk across the alliance (%)</td><td><input name="shopPct" value="{{.ShopPct}}" size="4"> &nbsp;(a listing mentioned to the alliance; &ldquo;anyone making this?&rdquo; asked only when a member corporation's work board really builds it)</td></tr>
+          <td>The executor's CEO or most leaderly bot, unless already greeted in corp chat within the hour.</td></tr>
+      <tr><td>Remarks on another member's loss or kill (%)</td><td><input name="ribPct" value="{{.RibPct}}" size="4"> &nbsp;(condolences past 50M, teasing under)</td></tr>
+      <tr><td>Shop talk across the alliance (%)</td><td><input name="shopPct" value="{{.ShopPct}}" size="4"> &nbsp;(listings mentioned to the alliance)</td></tr>
       <tr><th colspan="2" style="text-align:left;padding-top:10px">Banter &mdash; pilots of different peoples passing the time</th></tr>
       <tr><td><label><input type="checkbox" name="banterLocal" {{if .BanterLocal}}checked{{end}}> In Local</label></td>
-          <td>Two bots of different races in a system a person is in: one talks of its people's ways, the other answers curious, polite or cold by its Tolerance; race insults follow the switch above. Needs &ldquo;Speak in Local&rdquo;.</td></tr>
+          <td>Bots of different races chat where a person is in Local. Needs &ldquo;Speak in Local&rdquo;.</td></tr>
       <tr><td><label><input type="checkbox" name="banterAlliance" {{if .BanterAlliance}}checked{{end}}> In alliance channels</label></td>
-          <td>The same between member corporations of different peoples, never insulting; one turn in three is shop talk about the speaker's own work instead.</td></tr>
+          <td>The same between member corporations. Never insulting.</td></tr>
       <tr><td>Minutes between banter per channel</td><td><input name="banterMin" value="{{.BanterMin}}" size="4"> &nbsp;(&plusmn;30%)</td></tr>
     </table>
     <button type="submit">save</button>
@@ -422,7 +420,7 @@ const tmplChatter = chatterTabs + `{{define "content"}}` + castTabsStyle + `
       <td>{{.Bots}}</td><td>{{.Humans}}</td><td>{{.SaidHour}}</td><td>{{.Queued}}</td>
       <td>{{if .OfferSecs}}{{.OfferSecs}}&nbsp;s left{{else}}&mdash;{{end}}</td></tr>{{end}}
   </table>
-  {{else}}<p>No person is connected to a channel a bot sits in. (Polled every 15&nbsp;s; a player who changed corporation stays in the old channel until relog.)</p>{{end}}
+  {{else}}<p>No person is connected to a channel a bot sits in.</p>{{end}}
   <form method="POST" style="margin-top:8px">
     <input type="hidden" name="action" value="test">
     Say a test line as a bot of
@@ -430,7 +428,7 @@ const tmplChatter = chatterTabs + `{{define "content"}}` + castTabsStyle + `
     corporation or alliance ID <input name="corpID" size="10">
     &nbsp;kind <select name="kind"><option value="">(plain test line)</option>{{range .Kinds}}<option value="{{.Kind}}">{{.Label}}</option>{{end}}</select>
     <button type="submit">say it</button>
-    <span style="font-size:12px;color:#6b7280">Past the budget; still stamps the channel. Slots render as [slot].</span>
+    <span style="font-size:12px;color:#6b7280">Ignores the budget. Slots render as [slot].</span>
   </form>
 </div>
 <div class="card">
@@ -464,9 +462,9 @@ const tmplChatter = chatterTabs + `{{define "content"}}` + castTabsStyle + `
     {{range .Drops}}<tr><td><code>{{.K}}</code></td><td>{{.V}}</td></tr>{{end}}
   </table>
   <p style="font-size:12px;color:#6b7280"><code>off</code> switch off &middot; <code>replay</code> during a catch-up &middot; <code>noaudience</code> no person in that channel &middot;
-  <code>muted</code> kind muted &middot; <code>queue.full</code>/<code>stale</code> backlog &middot; <code>speaker</code> the pilot is not in that channel any more &middot;
-  <code>hour</code>/<code>mingap</code>/<code>pilotgap</code>/<code>kind</code>/<code>repeat</code> the budget, in dial order &middot; <code>render</code> no wording fit the facts &middot; <code>replygap</code> one person asking too fast &middot;
-  <code>local</code> the per-system Local ceiling or a pilot's Local gap.</p>
+  <code>muted</code> kind muted &middot; <code>queue.full</code>/<code>stale</code> backlog &middot; <code>speaker</code> pilot left the channel &middot;
+  <code>hour</code>/<code>mingap</code>/<code>pilotgap</code>/<code>kind</code>/<code>repeat</code> budget limits &middot; <code>render</code> no wording fit &middot; <code>replygap</code> one person asking too fast &middot;
+  <code>local</code> Local rate limit.</p>
   {{else}}<p>Nothing refused yet.</p>{{end}}
 </div>
 {{end}}`

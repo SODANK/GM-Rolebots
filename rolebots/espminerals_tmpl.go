@@ -22,19 +22,9 @@ const tmplMinerals = industryTabs + `{{define "content"}}
 {{if .Err}}<div class="alert alert-error">{{.Err}}</div>{{end}}
 
 <div class="card">
-  <p style="font-size:12px;color:#9ca3af;margin:0 0 6px">
-    Nothing tells a miner what to dig and nothing tells a trader what to carry. A miner ranks the rock it
-    can reach by what the metal inside is worth <strong>per m³</strong> at the bids on its own markets, and
-    flies further only for rock worth more; a trader lists goods no higher than what the destination region
-    has actually paid. A factory that is short of a mineral says so by <strong>bidding</strong> for it
-    &mdash; the bid raises the mineral's price, which raises the value of every ore that yields it, which is
-    what brings miners to that rock.
-  </p>
-  <p style="font-size:12px;color:#6b7280;margin:0">
-    Each mineral cell is <strong>units listed</strong> in the region over its <strong>best standing bid</strong>
-    (&mdash; = nobody bidding; ore values then use the catalogue price). <strong>Best rock</strong> is the
-    region's own ore ranked by ISK/m³ at those bids &mdash; a pilot's own ranking reads its wider shopping
-    range, so it can differ. <strong>Mined</strong> is what its pilots planned trips for in the last hour.
+  <p style="font-size:12px;color:#9ca3af;margin:0">
+    Each mineral cell is <strong>units listed</strong> over <strong>best bid</strong>. &mdash; means no bid.
+    <strong>Best rock</strong> is the region's ore ranked by ISK/m³.
     Busiest regions first.
   </p>
 </div>
@@ -70,16 +60,8 @@ const tmplMinerals = industryTabs + `{{define "content"}}
 <div class="card">
   <h3 style="margin:0 0 4px">What the factories are asking for</h3>
   <p style="font-size:12px;color:#9ca3af;margin:0 0 8px">
-    The table above is <strong>supply</strong> and nothing stores it &mdash; it is the order book as it
-    stands. This is <strong>demand</strong>, and it is the one thing on this page anybody wrote
-    down: a factory naming an exact shortfall at an exact station, posted when a project <em>commits</em>
-    as well as when one gets stuck. <strong>Asking</strong> and <strong>escrowed</strong> are different
-    facts and come apart often: a mineral wanted by thirty stations with no ISK behind it is a shortage
-    nobody has put money on, and only the money moves a miner &mdash; a bid is a price, and price is what
-    it digs for.
-    <strong>Famine</strong> is the point past which &ldquo;a pilot could go and dig this&rdquo; stops
-    excusing a factory from bidding for it &mdash; measured in that mineral's own lots, so the deep rungs
-    can reach it.
+    Shortfalls factories have posted. <strong>Escrowed</strong> is ISK actually bid. <strong>Famine bar</strong>
+    is the point past which factories bid even if the mineral is diggable.
   </p>
   {{if .Demand}}
   <table class="rb-min">
@@ -106,10 +88,7 @@ const tmplMinerals = industryTabs + `{{define "content"}}
 <div class="card">
   <h3 style="margin:0 0 4px">Materials no asteroid answers</h3>
   <p style="font-size:12px;color:#9ca3af;margin:0 0 8px">
-    A bill of materials is not all minerals, and the rest of it used to go nowhere &mdash; the mineral
-    ledger drops every line that is not one, so a project stuck on a component left no trace a miner or a
-    trader could read. These are the non-mineral lines a factory needed and <em>nothing within its reach
-    was selling</em>. Nobody can dig them: they are somebody's next production run, or a hauler's.
+    Non-mineral materials a factory needed that nothing in reach was selling.
   </p>
   {{if .Materials}}
   <table class="rb-min">

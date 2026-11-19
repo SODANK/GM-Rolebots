@@ -114,10 +114,6 @@ const tmplCEOStaff = `{{with .Staff}}
   {{end}}
   {{if or .Demand .War}}<p style="font-size:12px;color:#6b7280">Seat demand:
     {{range .Demand}}{{.Dept}} {{.Share}} · {{end}}{{if .War}}<b>war footing</b> — extra combat seats{{end}}</p>{{end}}
-  <p style="font-size:12px;color:#6b7280">The CEO sets policy; its officers carry it out every 15 minutes. The Treasurer pays
-  stipends, skillbooks, salary and dividends. Recruitment Officers answer applications and headhunt commanders. Directors run
-  a department each: Operations orders what the mining fleets dig, Security where the combat wing sweeps, Commerce the
-  corporation's market business, Diplomacy (part-time, every several hours) the corporation's relations and letters.
-  A post held by a player is covered by the CEO in their name.</p>
+  <p style="font-size:12px;color:#6b7280">The CEO sets policy and officers carry it out. A post held by a player is covered by the CEO.</p>
 </div>
 {{end}}`

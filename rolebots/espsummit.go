@@ -271,22 +271,20 @@ const tmplSummit = chatterTabs + `{{define "content"}}` + castTabsStyle + `
 {{if .Idle}}<div class="alert alert-error">Idle: no capsuleer has logged in for {{.D.IdleDays}} day(s) (last {{.LastHuman}}). The desk waits.</div>{{end}}
 <div class="card">
   <h3>Switches &amp; dials</h3>
-  <p style="font-size:12px;color:#6b7280">Bots post the drama of their world on the Intergalactic Summit forum: one thread per war, alliance,
-  pact, recruitment ad or shop, and every later event a reply in it. Posts read as any capsuleer's; nothing on the board marks them.
-  The desk posts at most one beat per 5&nbsp;min pass, the hottest the budget allows. {{.Lines}} lines loaded.</p>
+  <p style="font-size:12px;color:#6b7280">Bots post world events to the Intergalactic Summit forum: one thread per story, later events as replies. {{.Lines}} lines loaded.</p>
   <p style="font-size:12px">Today: <b>{{.Today}}</b> posted, curve target by now <b>{{.Target}}</b> of {{.D.PerDay}}. Last capsuleer login {{.LastHuman}}.</p>
   <form method="POST">
     <input type="hidden" name="action" value="settings">
     <table class="tbl" style="font-size:12px">
       <tr><td><label><input type="checkbox" name="on" {{if .D.On}}checked{{end}}> <b>Desk on</b></label></td>
           <td>Off, nothing is filed or posted.</td></tr>
-      <tr><td>Posts per day</td><td><input name="perDay" value="{{.D.PerDay}}" size="4"> &nbsp;(spread over the day, busiest in the evening, server time)</td></tr>
-      <tr><td>New threads per day</td><td><input name="newThreads" value="{{.D.NewThreads}}" size="4"> &nbsp;(the rest are replies in existing threads)</td></tr>
+      <tr><td>Posts per day</td><td><input name="perDay" value="{{.D.PerDay}}" size="4"> &nbsp;(server time)</td></tr>
+      <tr><td>New threads per day</td><td><input name="newThreads" value="{{.D.NewThreads}}" size="4"> &nbsp;(the rest are replies)</td></tr>
       <tr><td>Minutes between posts in one thread</td><td><input name="threadGapMin" value="{{.D.ThreadGapMin}}" size="4"> &nbsp;(and at most {{.ThreadCap}} a day in one thread)</td></tr>
       <tr><td>Posts per author per day</td><td><input name="authorPerDay" value="{{.D.AuthorPerDay}}" size="4"></td></tr>
       <tr><td><label><input type="checkbox" name="nameCapsuleers" {{if .D.NameCapsuleers}}checked{{end}}> Name capsuleers</label></td>
-          <td>A capsuleer on the killmail of a bot that dies in a bot war is named in that war's thread. Bots never reply to a person's post either way.</td></tr>
-      <tr><td>Idle after (days)</td><td><input name="idleDays" value="{{.D.IdleDays}}" size="4"> &nbsp;(no capsuleer login for this long and the desk waits; 0 = never idle)</td></tr>
+          <td>Names a capsuleer on a bot's killmail in that war's thread.</td></tr>
+      <tr><td>Idle after (days)</td><td><input name="idleDays" value="{{.D.IdleDays}}" size="4"> &nbsp;(0 = never idle)</td></tr>
       <tr><td>Title and opener repeat block (days)</td><td><input name="repeatDays" value="{{.D.RepeatDays}}" size="4"></td></tr>
       <tr><th colspan="2" style="text-align:left;padding-top:10px">Category share of the day (%, 0 = off)</th></tr>
       {{range .Shares}}<tr><td>{{.Cat}}</td><td><input name="share_{{.Cat}}" value="{{.Share}}" size="4"></td></tr>{{end}}
@@ -323,9 +321,9 @@ const tmplSummit = chatterTabs + `{{define "content"}}` + castTabsStyle + `
     <tr><th>Gate</th><th>Count since boot</th></tr>
     {{range .Drops}}<tr><td><code>{{.K}}</code></td><td>{{.V}}</td></tr>{{end}}
   </table>
-  <p style="font-size:12px;color:#6b7280">day/hour: budget; newthread: new-thread cap; threadgap/threadday: one thread's pace;
-  author/twice: one author's pace; category: a category's share; idle: no capsuleer lately; author (dropped): no bot to write it;
-  render: no line fits its facts; closed: the thread was locked or deleted; stale: expired waiting; killqueue: kill feed overflow.</p>
+  <p style="font-size:12px;color:#6b7280">day/hour: budget. newthread: new-thread cap. threadgap/threadday: thread pace.
+  author/twice: author pace. category: category share. idle: no capsuleer lately. render: no line fits. closed: thread locked or deleted.
+  stale: expired. killqueue: kill feed overflow.</p>
   {{else}}<p>Nothing refused yet.</p>{{end}}
 </div>
 {{end}}`

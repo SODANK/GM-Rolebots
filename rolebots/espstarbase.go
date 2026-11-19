@@ -616,7 +616,7 @@ const tmplCEOStarbase = `
     <input type="hidden" name="action" value="consider"><input type="hidden" name="corp" value="{{.CorpID}}">
     <input type="hidden" name="back" value="/rolebots/corp/{{.CorpID}}">
     <button type="submit">Consider a tower now</button>
-    <span style="font-size:11px;color:#6b7280">runs the CEO's tower decision on the spot, with every gate; the answer shows above</span>
+    <span style="font-size:11px;color:#6b7280">runs the CEO's tower decision now</span>
   </form>
   {{if .Board.Rows}}{{template "rb_towertable" .Board}}{{else}}<p>No towers planned or standing.</p>{{end}}
   {{if .Sieges}}<h4>Sieges</h4>
@@ -928,8 +928,8 @@ const tmplStarbases = `{{define "content"}}
       {{range .Picks}}<option value="{{.CorpID}}">{{.Name}} — ~{{.Free}} free{{if .Towers}}, {{.Towers}} tower plan(s){{end}}{{if not .Ready}} (under the line){{end}}</option>{{end}}
     </select>
     <button type="submit" style="padding:3px 8px;font-size:11px">Consider now</button>
-    <span style="color:#6b7280" title="A CEO weighs a new tower on every think (30 minutes to 6 hours, by temperament). This runs that decision for one corporation on the spot. Every gate still applies: {{.StartISK}} of free capital, an office within reach, a reason for the tower, a free moon, and the plan's own price with its margin. If it plans, the kit and first fuel go on the requisition board at once.">
-      runs the CEO's tower decision on the spot, every gate applies ({{.StartISK}} free capital first); the answer shows at the top</span>
+    <span style="color:#6b7280" title="Runs the CEO's tower decision for this corporation now. Normal requirements apply, starting with {{.StartISK}} free capital.">
+      runs the CEO's tower decision now ({{.StartISK}} free capital needed)</span>
   </form>
   {{else}}<p style="margin-top:8px">No bot CEO is running a corporation.</p>{{end}}
 </div>
@@ -937,7 +937,7 @@ const tmplStarbases = `{{define "content"}}
   <h3>Every bot tower</h3>
   {{if .Truncated}}<p class="alert alert-error">Showing the first {{.Limit}} towers by corporation; the rest are not on this page.</p>{{end}}
   {{if .Board.Rows}}{{template "rb_towertable" .Board}}
-  <p style="font-size:11px;color:#6b7280;margin-top:6px">Click a tower for its fitting, defence, logistics and production line. Click a header to sort.</p>
+  <p style="font-size:11px;color:#6b7280;margin-top:6px">Click a tower for details. Click a header to sort.</p>
   {{else}}<p>No bot corporation has planned a tower yet.</p>{{end}}
 </div>
 <div class="card">

@@ -38,9 +38,7 @@ type clashTabCard struct {
 const tmplClash = `{{define "content"}}
 <h2>Mind Clash &mdash; the bot crowd</h2>
 <p style="font-size:12px;color:#9ca3af;max-width:980px">
-  The sport is the MindClash module's: its own roster fights, and the schedule, venues and rules are on <a href="/mindclash">ESP Mind Clash</a>.
-  This page is the bot population's part in it: how the bot money sits on the tote, how far the crowd's biases lean, and who is
-  flying to a venue to stand in the house. Bots bet through the circuit's API like any capsuleer.
+  Bot betting and fans for Mind Clash. Schedule, venues and rules are on <a href="/mindclash">ESP Mind Clash</a>.
 </p>
 {{if .Msg}}<div class="alert alert-success">{{.Msg}}</div>{{end}}
 <div class="stats">

@@ -273,11 +273,8 @@ const tmplTimezones = castTabs + `{{define "content"}}
 <div class="card">
   <h3 style="margin-top:0">Play hours</h3>
   <p style="font-size:12px;color:#9ca3af;max-width:860px">
-    Each rolebot plays a few hours a day in the server machine's local time ({{.Now}}).
-    Outside its hours it is logged off: no sim turn, no presence, no ball, no corporation
-    decisions. Skill training carries on, and nothing else — the hours it was away are not
-    given back. A pilot whose hours end logs off when it is docked or idle, or after the
-    grace; a gang logs off whole when most of it is done.
+    Each rolebot plays a few hours a day in server time ({{.Now}}). Outside them it is logged off.
+    Skill training continues.
   </p>
   <div class="rb-tz-sum">
     <div><div class="k">Active on the roster</div><div class="v">{{.Enabled}}</div></div>
@@ -312,21 +309,15 @@ const tmplTimezones = castTabs + `{{define "content"}}
     <button type="submit">Save</button>
   </form>
   <p style="font-size:11px;color:#6b7280;margin-top:6px">
-    Corp share is how much of a bot CEO's corporation the one-time seed put on the CEO's home
-    timezone; later joiners lean toward corporations whose CEO plays their hours.
-    Claim jobs after: a pilot off for its hours whose factory or lab job has sat finished this
-    long logs in briefly to take it off the line, freeing the line and the blueprint. It lists
-    nothing and installs nothing; the goods wait in the hangar for its hours. 0 turns it off.
+    Corp share: how much of a bot CEO's corporation shares the CEO's timezone.
+    Claim jobs after: a logged-off pilot with a finished job for this long logs in briefly to free the line. 0 turns it off.
   </p>
 </div>
 
 <div class="card">
   <h3>Open calls to arms</h3>
   <p style="font-size:12px;color:#9ca3af;max-width:860px">
-    A siege in its window or an alliance defend call pages the corporation: the CEO and the
-    Security head log in, members in reach who are on stay on, and logged-off members are asked
-    likeliest first until the corporation has the numbers (1.25&times; the enemy, within the need
-    range). Each pilot is asked once per call; near its own hours it nearly always answers.
+    A siege or alliance defend call pages the corporation's logged-off members until it has the numbers.
   </p>
   {{if .Arms}}
   <table class="rb-tz">

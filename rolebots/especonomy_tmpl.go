@@ -76,20 +76,13 @@ const tmplEconomy = tradeTabs + `{{define "content"}}
   <span class="asof">built {{.AsOf}} &middot; <a href="{{.Refresh}}">refresh</a></span>
 </div>
 <p class="ec-lede">
-  What the roster's money does, over the last <b>{{.Window.Label}}</b>, read out of every rostered
-  pilot's and bot-run corporation's wallet journal. A <b>faucet</b> is ISK that did not exist a
-  moment ago: an NPC bid filled, a bounty, an insurance payout. A <b>sink</b> is ISK gone from the
-  world: an NPC ask bought, a tax, a fee, rent to an NPC landlord. A <b>transfer</b> moves ISK between
-  two wallets that are both in the economy &mdash; bot to bot, bot to corporation, bot to player &mdash;
-  and nets to zero inside it. Players appear only as the other side of a transfer; a bot-to-bot trade
-  is counted once on each side.
+  Roster ISK flows over the last <b>{{.Window.Label}}</b>. A <b>faucet</b> creates ISK, a <b>sink</b> destroys it,
+  a <b>transfer</b> moves it between wallets.
 </p>
 
 {{range .O.Warnings}}<div class="alert alert-error" style="margin-bottom:12px">Panel unavailable &mdash; {{.}}</div>{{end}}
 {{if .O.Stats.Partial}}<div class="alert alert-error" style="margin-bottom:12px">
-  The ledger started reading on <b>{{.O.Stats.LedgerSince}}</b>, inside this window, so the window is
-  incomplete. Bot wallet journals are trimmed to their newest 200 rows every hour, so history before
-  that moment was only partly recoverable.</div>{{end}}
+  The ledger started on <b>{{.O.Stats.LedgerSince}}</b>, inside this window, so the window is incomplete.</div>{{end}}
 
 <div class="ec-kpis">
   <div class="ec-kpi"><div class="label">Faucets</div><div class="big up">{{.O.Stats.Faucet}}</div><div class="split">ISK created</div></div>
@@ -130,7 +123,7 @@ const tmplEconomy = tradeTabs + `{{define "content"}}
 
   <div class="ec-p c6">
     <h3>Sold to an NPC bid, by goods <span class="hint">{{.O.Goods.SoldTotal}} on the tape</span></h3>
-    <p class="note">What the faucet line above is made of, from the roster's market transactions (pilots only, not corporation treasury orders). The tape is not trimmed per pilot like the journal, so its total can run ahead of the journal line.</p>
+    <p class="note">Pilot market transactions only. Can run ahead of the faucet line.</p>
     {{if .O.Goods.Sold}}
     <table><thead><tr><th>goods</th><th class="r">isk</th><th class="r">units</th><th class="r">share</th><th style="width:24%"></th></tr></thead><tbody>
     {{range .O.Goods.Sold}}<tr>
@@ -140,11 +133,11 @@ const tmplEconomy = tradeTabs + `{{define "content"}}
     </tr>{{end}}
     </tbody></table>
     {{else if .O.Goods.Has}}<div class="ec-empty">Nothing sold to an NPC bid in this window.</div>
-    {{else}}<div class="ec-empty">The goods ledger has not read the tape yet &mdash; it backfills thirty days within a few sweeps.</div>{{end}}
+    {{else}}<div class="ec-empty">The goods ledger has not loaded yet.</div>{{end}}
   </div>
   <div class="ec-p c6">
     <h3>Bought from an NPC ask, by goods <span class="hint">{{.O.Goods.BoughtTotal}} on the tape</span></h3>
-    <p class="note">The matching sink, over the same tape. Skillbooks bought straight from Genolution are on it as Skillbooks.</p>
+    <p class="note">Includes skillbooks bought from Genolution.</p>
     {{if .O.Goods.Bought}}
     <table><thead><tr><th>goods</th><th class="r">isk</th><th class="r">units</th><th class="r">share</th><th style="width:24%"></th></tr></thead><tbody>
     {{range .O.Goods.Bought}}<tr>
@@ -154,7 +147,7 @@ const tmplEconomy = tradeTabs + `{{define "content"}}
     </tr>{{end}}
     </tbody></table>
     {{else if .O.Goods.Has}}<div class="ec-empty">Nothing bought from an NPC ask in this window.</div>
-    {{else}}<div class="ec-empty">The goods ledger has not read the tape yet &mdash; it backfills thirty days within a few sweeps.</div>{{end}}
+    {{else}}<div class="ec-empty">The goods ledger has not loaded yet.</div>{{end}}
   </div>
 
   <div class="ec-p c12">
@@ -167,8 +160,8 @@ const tmplEconomy = tradeTabs + `{{define "content"}}
   </div>
 
   <div class="ec-p c7">
-    <h3>NPC market by category <span class="hint">what the roster buys off and sells into the seeder</span></h3>
-    <p class="note">Sold is a faucet, bought a sink; net is sold minus bought. From the roster's own market transactions, NPC counterparty only.</p>
+    <h3>NPC market by category <span class="hint">what the roster buys from and sells to NPCs</span></h3>
+    <p class="note">Sold is a faucet, bought a sink.</p>
     {{if .O.Categories}}
     <table><thead><tr><th>category</th><th class="r">bought</th><th class="r">sold</th><th class="r">net</th><th class="r">units</th><th style="width:22%"></th></tr></thead><tbody>
     {{range .O.Categories}}<tr>
@@ -194,7 +187,7 @@ const tmplEconomy = tradeTabs + `{{define "content"}}
 
   <div class="ec-p c6">
     <h3>Top corporations by net capture <span class="hint">faucets minus sinks, members and treasury</span></h3>
-    <p class="note">A pilot's flows are booked to the corporation it was in when the sweep read them.</p>
+    <p class="note">Pilot flows count toward the corporation they were in at the time.</p>
     {{if .O.Corps}}
     <table><thead><tr><th>corporation</th><th class="r">created</th><th class="r">destroyed</th><th class="r">net</th><th>biggest line</th><th style="width:20%"></th></tr></thead><tbody>
     {{range .O.Corps}}<tr>
@@ -209,7 +202,7 @@ const tmplEconomy = tradeTabs + `{{define "content"}}
   <div class="ec-p c6">
     <h3>Bot wallets <span class="hint">live balances, not tied to the window</span></h3>
     {{if .O.Wallets.Bands}}
-    <p class="note">Bots under {{.O.Wallets.FloorISK}} can't work: they can't replace lost ships or pay market fees. Watch the red rows.</p>
+    <p class="note">Bots under {{.O.Wallets.FloorISK}} can't replace ships or pay market fees.</p>
     <div style="display:flex;gap:18px;flex-wrap:wrap;margin-bottom:8px">
       <div><div class="sub">Under the minimum</div><div style="font-size:20px;color:{{if gt .O.Wallets.BelowPct 10.0}}var(--si){{else}}var(--fa){{end}}">{{.O.Wallets.BelowFloor}} <small class="sub">({{.O.Wallets.BelowStr}}%)</small></div></div>
       <div><div class="sub">Median wallet</div><div style="font-size:20px;color:#e6ded6">{{.O.Wallets.MedianISK}}</div></div>
@@ -226,8 +219,8 @@ const tmplEconomy = tradeTabs + `{{define "content"}}
   </div>
 
   <div class="ec-p c12 ec-wrap">
-    <h3>Every touch point <span class="hint">where a bot wallet moves, and what it did this window</span></h3>
-    <p class="note">One row per line the ledger can classify, in the order the panels rank them. A line with no rows this window is dimmed, not hidden &mdash; the catalogue's job is to list every door. &ldquo;Unclassified&rdquo; above zero means a new refType needs a line.</p>
+    <h3>Every touch point <span class="hint">every way a bot wallet moves</span></h3>
+    <p class="note">Dimmed lines had no rows this window. Unclassified above zero needs a new line.</p>
     <table><thead><tr><th>line</th><th>direction</th><th>other side</th><th>refType</th><th>written by</th><th class="r">in</th><th class="r">out</th><th class="r">rows</th></tr></thead><tbody>
     {{range .O.Catalogue}}<tr{{if not .Has}} class="dim"{{end}}>
       <td class="name" title="{{.Desc}}"><b>{{.Label}}</b>{{if .Desc}}<div class="sub">{{.Desc}}</div>{{end}}</td>

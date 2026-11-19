@@ -406,10 +406,7 @@ const tmplCEOs = corpTabs + `{{define "content"}}` + castTabsStyle + rbCardStyle
 <div class="card">
   <h3>The CEOs <span style="font-size:12px;color:#6b7280">({{len .Rows}})</span></h3>
   <p style="font-size:12px;color:#6b7280;margin-top:-4px">
-    Every player corporation whose CEO is a rostered pilot. A CEO that is <b>running</b> the corporation decides
-    its tags, directive, applications, officers, titles, treasury and offices from its own personality — and
-    follows the roster: an <b>active</b> bot in the chair takes charge within a minute of being activated, and
-    a deactivated one is only <b>seated</b>. Open a card for the corporation.
+    Player corporations whose CEO is a rostered pilot. <b>Running</b> means an active bot is in charge. <b>Seated</b> means it is deactivated.
   </p>
   {{if .Rows}}
   <div class="rb-cast">
@@ -468,10 +465,8 @@ const tmplCEOs = corpTabs + `{{define "content"}}` + castTabsStyle + rbCardStyle
 <details>
 <summary style="cursor:pointer;font-size:15px;font-weight:600">Human members</summary>
   <p style="font-size:12px;color:#6b7280;margin-top:8px">What a player in a bot-run corporation is told and offered.
-  Applicant letters, offer expiry and the welcome; bulletins in the Corp mail tab; paid assignments with
-  signed accept/decline links; and the merit ladder (rank, roles, title, pay) — which, unlike the other
-  three, applies to <b>every</b> member, bots included, and grants and strips real corp roles.
-  Who may refuse a human applicant is not a switch: only the CEO's Tolerance.</p>
+  The merit ladder applies to <b>every</b> member, bots included, and grants and strips real corp roles.
+  Refusing a human applicant is the CEO's Tolerance, not a switch.</p>
   <table class="tbl" style="font-size:12px">
     {{range .HumanSwitch}}
     <tr><td>{{.Label}}</td><td>{{if .On}}<b style="color:#16a34a">on</b>{{else}}<span style="color:#6b7280">off</span>{{end}}</td>

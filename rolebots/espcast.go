@@ -132,8 +132,8 @@ func (m *Mod) handleCastPost(w http.ResponseWriter, r *http.Request, ctx context
 		settled := reconsiderAllCorpHomes()
 		reconsiderAllMoveOuts()
 		redirect(w, r, "/rolebots", fmt.Sprintf(
-			"every pilot will look at where it lives and where it builds on its next planning pass "+
-				"(%d were settled with an employer) — watch the activity log", settled), "")
+			"Every pilot will re-check where it lives and builds on its next planning pass "+
+				"(%d already settled with an employer).", settled), "")
 	case "add":
 		charID, _ := strconv.ParseInt(r.FormValue("charID"), 10, 64)
 		if charID == 0 {

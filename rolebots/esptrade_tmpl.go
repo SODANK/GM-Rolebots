@@ -409,8 +409,7 @@ const tmplTradeMap = tradeTabs + `{{define "content"}}
 <h2>Trade Hubs</h2>
 
 <p style="margin:0 0 10px;color:#9ca3af;font-size:12px">
-  Where commerce actually happens, measured rather than assumed — New Eden by <b>region</b>, drawn on
-  a lattice rather than at real coordinates. Click a region to open it. Swept <b>{{.Swept}}</b>.
+  New Eden by <b>region</b>, scored by measured trade. Click a region to open it. Swept <b>{{.Swept}}</b>.
   <a href="#" id="rbWhy" style="color:#9ca3af">how it is scored &rsaquo;</a>
   {{if not .ShowPurge}}<a href="/rolebots/trademap?purge=1" style="color:#9ca3af;margin-left:8px">wipe economic data &rsaquo;</a>{{end}}
 </p>
@@ -419,40 +418,29 @@ const tmplTradeMap = tradeTabs + `{{define "content"}}
 <div class="card" style="border-color:#7f1d1d">
   <h3 style="margin:0 0 6px;color:#fca5a5">Wipe economic data</h3>
   <p style="margin:0 0 10px;color:#9ca3af;font-size:12px">
-    This is the economy's own wipe, separate from the bot wipe on purpose — it takes what the roster
-    LEARNED and what it DID, and leaves the pilots alone. Retuning prices or bands without it means
-    the roster keeps routing by a map of hubs scored under the old economy.
+    Wipes what the roster learned and did. Pilots are left alone.
   </p>
   <form method="post" action="/rolebots/trademap">
     <input type="hidden" name="action" value="purgeecon">
     <p style="margin:0 0 6px">
       <label><input type="checkbox" name="learned" checked>
-        <b>Learned data</b> — hub and station scores, traffic (systems, lanes, stations), the trade
-        book behind the Feed and the bot-to-bot half behind Bot&rarr;Bot Trades, the roster's order
-        ledger, the market and mineral demand ledgers, the mineral hold, the industry shelf and trade
-        stock, and the ISK-flow ledgers behind the Economy overview. <b>{{.LearnedRows}}</b> row(s). All of it rebuilds: the sweeps re-score within minutes
-        and the ledgers refill as pilots trade.</label>
+        <b>Learned data</b> — hub and station scores, traffic, the trade book behind the Feed and
+        Bot&rarr;Bot Trades, order and demand ledgers, mineral hold, industry shelf and stock, and the
+        Economy ISK-flow ledgers. <b>{{.LearnedRows}}</b> row(s). It all rebuilds.</label>
     </p>
     <p style="margin:0 0 6px">
       <label><input type="checkbox" name="orders" checked>
         <b>Resting orders</b> — every order the roster currently has on the market.
-        <b>{{.RestingOrders}}</b> live. Cancelled properly rather than deleted: bids refund their
-        escrow and asks return their unsold goods to the hangar, so no ISK and no cargo is destroyed.
-        Taken automatically with the learned data whether or not this is ticked — emptying the order
-        ledger while the orders are still resting would leave them on the market with nothing left
-        that knows to cancel them.</label>
+        <b>{{.RestingOrders}}</b> live. Cancelled, not deleted: bids refund escrow, asks return goods.
+        Always taken with the learned data.</label>
     </p>
     <p style="margin:0 0 6px">
       <label><input type="checkbox" name="history">
         <b>Wallet history</b> — the rostered pilots' own market transactions and journal entries.
-        <b>{{.HistoryRows}}</b> row(s). This does <b>not</b> come back. Real players' rows are keyed
-        out of it; only characters on the roster are touched.</label>
+        <b>{{.HistoryRows}}</b> row(s). This does <b>not</b> come back. Only roster characters are touched.</label>
     </p>
     <p style="margin:0 0 8px;color:#6b7280;font-size:12px">
-      Never touched: the NPC seeder's orders and any real player's — only orders belonging to
-      characters on the roster come down, and both wallet queries are keyed the same way. Killmails
-      are not economic data and keep their own retention. The pilots themselves, their skills,
-      corporations and gangs are the bot wipe's business, not this one's.
+      Never touched: NPC seeder and real player orders, killmails, pilots, skills, corporations and gangs.
     </p>
     <p style="margin:0">
       <input type="text" name="confirm" placeholder="type {{.PurgeConfirm}}" autocomplete="off"
@@ -467,31 +455,19 @@ const tmplTradeMap = tradeTabs + `{{define "content"}}
 {{end}}
 <div class="card" id="rbWhyBox" style="display:none;color:#6b7280;font-size:12px">
   <p style="margin:0 0 6px">
-    One region per cell, borders at right angles or clean diagonals, seeded from real positions so the
-    cluster still sits where you expect it — nothing overlaps, which is the only way sixty-odd names
-    and their numbers fit in one frame. A region is drawn on its <b>best</b> system, because a region
-    is somewhere you go to trade at its hub and forty quiet stations do not add up to one busy one;
-    <b>depth</b> is every system in it added up.
+    A region is drawn on its <b>best</b> system. <b>Depth</b> is every system in it added up.
   </p>
   <p style="margin:0 0 6px">
-    A system scores only if it has a station: arrivals, lane weight either side, the size of the local
-    book, ISK the roster has moved there, gate count (a dead end is a place you go <i>to</i>, a
-    crossroads one you go <i>through</i>) and security. <b>This map describes; it does not steer.</b>
-    No bot reads this score to decide anything. Where a bot sells reads measured <b>liquidity</b>
-    &mdash; what actually changed hands at a station between two parties neither of whom is an NPC
-    seeder &mdash; and where a bot lives is its employer's call, priced against how crowded each
-    address already is. Homes and factories are shown, never scored.
+    Only systems with a station score, from arrivals, lane weight, order book size, ISK moved, gate count and
+    security. <b>The map describes, it does not steer</b>: no bot reads the score.
   </p>
   <p style="margin:0">
-    <b>Every order count and book value here is players and rolebots only</b> — the NPC seeder is at
-    every station, never runs out, and is much the same everywhere, so counting it tells one station
-    from another not at all (it still earns a fifth of a real order's weight in the score).
+    <b>Order counts and book values are players and rolebots only.</b> NPC seeder orders are excluded.
   </p>
 </div>
 
 {{if not .HasAny}}
-<div class="alert alert-error">No scores yet. The sweep runs every five minutes. Nothing waits on it:
-the map is a description, and no bot reads it.</div>
+<div class="alert alert-error">No scores yet. The sweep runs every five minutes.</div>
 {{end}}
 
 <div class="card">
@@ -785,22 +761,15 @@ const tmplTradeMapRegion = tradeTabs + `{{define "content"}}
 
 <div class="card">
   <p style="margin:0;color:#9ca3af;font-size:12px">
-    Every system in the region on its real gate graph, drawn on a <b>lattice rather than at its real
-    coordinates</b>: one system per cell, every road at a right angle or a clean diagonal. The shape
-    is no longer to scale and is not trying to be — what it buys is that no two labels can collide
-    and a route can be followed from one end to the other. The pale lines are stargates, the bright
-    ones are lanes the roster has actually flown; hover either for what has moved over it. The table
-    below is the whole score, term by term. The score is a description &mdash; no bot reads it.
-    <b>Traded</b> is what bots do read when choosing where to sell: ISK that changed hands here lately
-    between two parties neither of whom is an NPC seeder. <b>Orders</b> and <b>on the book</b> are what
-    players and rolebots have written here; the NPC seeder is at every station in the game and is
-    never counted into either. Last swept: <b>{{.Swept}}</b>.
+    Systems on a schematic grid, not to scale. Pale lines are stargates, bright lines are lanes the roster
+    has flown. The score is a description and no bot reads it. <b>Traded</b> is what bots read when choosing
+    where to sell: ISK moved here lately, NPC seeder excluded. <b>Orders</b> and <b>on the book</b> are
+    players and rolebots only. Last swept: <b>{{.Swept}}</b>.
   </p>
 </div>
 
 {{if not .HasAny}}
-<div class="alert alert-error">Nothing in this region has a score. Either no system here has a
-station, or the sweep has not run yet.</div>
+<div class="alert alert-error">Nothing in this region has a score yet.</div>
 {{end}}
 
 <div class="card">
@@ -867,16 +836,9 @@ station, or the sweep has not run yet.</div>
 <div class="card">
   <h3>Docks</h3>
   <p class="term" style="margin-top:0">
-    The contest INSIDE each system: once a bot has picked a system to trade in,
-    this says which of its docks it stocks, sells loot at or heads for. It is
-    built from what a station offers that its neighbours do not &mdash; a
-    medical bay, a factory floor, a laboratory &mdash; plus what actually trades
-    there and how many pilots have been landing there. Bot homes and factories
-    are shown, not scored. Market, fitting, repair and docking are worth nothing
-    here: every station in New Eden has them, so they separate nothing.
-    <b>Winner</b> marks the dock its system would send a bot to today.
-    <b>Shop gap</b> counts the goods shoppers came here for this week and found
-    short; sellers carry those goods toward it. It is not part of the score.
+    Which dock in a system bots use. Scored on unique amenities, trading and pilot landings.
+    <b>Winner</b> is the dock the system sends a bot to today. <b>Shop gap</b> is goods shoppers
+    found short here this week. It is not scored.
   </p>
   <table class="rb-hubs">
     <thead><tr>
@@ -1153,12 +1115,9 @@ const tmplTrades = tradeTabs + `{{define "content"}}
 
 <div class="card">
   <p style="margin:0 0 10px;color:#9ca3af;font-size:12px">
-    Every movement of goods the roster makes, and nothing else — this is the trade book, not the
-    activity log. A <b>listing</b> commits an order slot and pays nothing until somebody takes it;
-    the <b>fill</b> that follows, whenever it comes, is where that money shows up. Profit is what
-    reached the wallet: every sale is booked net of its sales tax, and the <b>broker fee</b> a
-    listing cost is its own line, charged where the ISK actually left — at placement, whether or
-    not the order ever fills. The figures are refreshed every minute; the ledger is paged.
+    Every movement of goods the roster makes. A <b>listing</b> pays nothing until a <b>fill</b>.
+    Profit is net of sales tax. The <b>broker fee</b> is charged at placement, filled or not.
+    Figures refresh every minute.
   </p>
   <div class="rb-tot">
     <div><div class="k">bought</div><div class="v">{{.Summary.Day.Bought}} <small>24h</small></div><div class="k">{{.Summary.Week.Bought}} 7d</div></div>

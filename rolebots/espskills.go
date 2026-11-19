@@ -242,7 +242,7 @@ const tmplSkills = `{{define "content"}}
     This pilot is not training itself. Whatever is queued now will finish and nothing will replace it.{{end}}
     Last planned: {{.Planned}}. Wallet: {{.Wallet}}.
   </p>
-  <p style="font-size:12px;color:#6b7280">A plan is rebuilt roughly hourly, and immediately whenever the queue empties. Its shape comes from this pilot's personality: satisfied at level <b>{{.Satisfied}}</b>, about <b>{{.Horizon}}</b> of training laid down at a time, no single step longer than <b>{{.StepCap}}</b>, at most <b>{{.GroupCap}}</b> step(s) from any one skill group per plan, and <b>{{.BookCushion}}</b> its clone cover plus a replacement ship held back from book buying. Book money is only what the wallet holds above a standing <b>{{.WalletFloor}}</b> floor, so no plan can leave the pilot unable to buy a hull.</p>
+  <p style="font-size:12px;color:#6b7280">Plans rebuild hourly and when the queue empties. Limits: satisfied at level <b>{{.Satisfied}}</b>, about <b>{{.Horizon}}</b> planned at a time, steps up to <b>{{.StepCap}}</b>, <b>{{.GroupCap}}</b> step(s) per skill group, <b>{{.BookCushion}}</b> held back for clone cover and a ship, wallet floor <b>{{.WalletFloor}}</b>.</p>
 </div>
 
 <div class="card">
@@ -262,7 +262,7 @@ const tmplSkills = `{{define "content"}}
     </tr>
     {{end}}
   </table>
-  <p style="margin-top:8px;font-size:12px;color:#6b7280">{{.PlanTime}} of training in this plan. A greyed row was planned but not queued: the server injects a skillbook only when its prerequisites are <i>trained</i>, so a book behind queued levels is bought on a later pass rather than now.</p>
+  <p style="margin-top:8px;font-size:12px;color:#6b7280">{{.PlanTime}} of training in this plan. A greyed row is planned but not queued yet.</p>
   {{else}}
   <p>No plan recorded yet. It will be built on the next sim pass.</p>
   {{end}}
@@ -277,7 +277,7 @@ const tmplSkills = `{{define "content"}}
     <tr><td>{{.Position}}</td><td>{{.Name}}</td><td>{{.Level}}</td><td>{{.ETA}}</td></tr>
     {{end}}
   </table>
-  <p style="margin-top:8px;font-size:12px;color:#6b7280">These estimates use the pilot's attributes <i>as they are now</i> — the server does not model learning skills that are still queued, so a plan that trains learning first will finish sooner than the dates here suggest.</p>
+  <p style="margin-top:8px;font-size:12px;color:#6b7280">Estimates use current attributes, so queued learning skills are not counted.</p>
   {{else}}
   <p>Nothing queued.</p>
   {{end}}
@@ -285,7 +285,7 @@ const tmplSkills = `{{define "content"}}
 
 <div class="card">
   <h3>Overrides</h3>
-  <p style="font-size:12px;color:#6b7280">Pinning trains a skill to V ahead of everything else. Banning removes it — and anything that needs it — from the pilot's reach entirely.</p>
+  <p style="font-size:12px;color:#6b7280">Pin trains a skill to V first. Ban removes it, and anything needing it, from the pilot's reach.</p>
   {{if .Prefs}}
   <table class="tbl">
     <tr><th>Skill</th><th>Override</th><th></th></tr>

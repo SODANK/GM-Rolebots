@@ -270,9 +270,8 @@ const tmplFactory = `{{define "content"}}
 
 {{if not .Supplier}}
 <div class="alert alert-error">
-  This pilot's <b>supply</b> trait is at or below zero, so manufacturing never
-  enters its activity draw. It will never build anything, whatever is on the
-  shelf below. Raise supply on its profile to make it a producer.
+  This pilot's <b>supply</b> trait is zero or below, so it never builds. Raise
+  supply on its profile to make it a producer.
 </div>
 {{end}}
 
@@ -280,18 +279,10 @@ const tmplFactory = `{{define "content"}}
   <h3>Base</h3>
   <p><b>{{.BaseLabel}}</b></p>
   <p class="muted">
-    The factory is the pilot's own memory, not a setting: it settles on one the
-    first time it manufactures and moves when its work takes it far enough away.
-    An operator's pin on the profile always wins. Sale margin {{.Margin}};
-    a rival listing counts as competition within {{.Compete}} jumps of here.
+    Set by the pilot the first time it manufactures. A pin on the profile wins.
+    Sale margin {{.Margin}}. Rival listings within {{.Compete}} jumps count as competition.
   </p>
   <p>Wakes up at: <b>{{.AnchorLabel}}</b></p>
-  <p class="muted">
-    A pilot with a factory clones at it, or at the nearest medical bay TO IT —
-    not to wherever it was standing when it needed a clone. Installing where it
-    stands moves its home to match, and one shopping trip that ended in a bay
-    would relocate it for good.
-  </p>
 </div>
 
 <div class="card">
@@ -308,26 +299,14 @@ const tmplFactory = `{{define "content"}}
   {{else}}
   <p class="muted">Nothing on a line.</p>
   {{end}}
-  <p class="muted">
-    A job is installed and walked away from: the pilot goes back to the build
-    book for the next one rather than standing next to the first. It comes back
-    for the tail of a bake only when every line is busy.
-  </p>
 </div>
 
 <div class="card">
   <h3>Build book</h3>
   <p class="muted">
-    Four tiers of evidence, strongest first — <b>ledger</b> (somebody tried to
-    buy it and could not), <b>shelf</b> (its own stock line has run down),
-    <b>bid</b> (somebody in reach has money out), <b>gap</b> (the fit library
-    burns it and nothing near the factory sells it). Each is discounted twice —
-    by how many rivals sell it nearby, and by how many other suppliers already
-    have it in the oven. The pilot then <b>draws</b> from this list rather than
-    taking the top row, so the order below is the ranking and not the decision:
-    tied candidates are settled by a coin, which is what keeps the whole roster
-    off one product. Reading the book sweeps the whole market, so it runs only
-    when you ask.
+    What the pilot may build next, strongest evidence first: <b>ledger</b> (unmet buy),
+    <b>shelf</b> (stock ran down), <b>bid</b> (open bid in reach), <b>gap</b> (nothing nearby sells it).
+    The pilot draws from this list, so order is not the decision. Reading it is slow, so it runs on request.
   </p>
   {{if not .Asked}}
   <p><a class="btn" href="/rolebot/{{.Bot.CharacterID}}/factory?book=1">Read the book now</a></p>
@@ -350,18 +329,15 @@ const tmplFactory = `{{define "content"}}
     {{end}}
   </table>
   {{else if .Asked}}{{if not .BookErr}}
-  <p class="muted">Nothing in the book: nothing asked for, nothing on the shelf,
-     no bids in reach, and everything the fits burn is already on sale nearby.</p>
+  <p class="muted">Nothing in the book.</p>
   {{end}}{{end}}
 </div>
 
 <div class="card">
   <h3>Shelf</h3>
   <p class="muted">
-    Standing stock lines. A line appears on its own the first time the pilot
-    builds something here and is dropped again if it neither sells nor gets
-    rebuilt for a month; at most {{.MaxRows}} auto lines are kept per station.
-    A line you set here is <b>pinned</b> and survives both.
+    Standing stock lines. Auto lines are dropped after a month without a sale or rebuild, up to {{.MaxRows}} per station.
+    Lines you set are <b>pinned</b> and kept.
   </p>
   {{if .Shelf}}
   <table class="grid">
@@ -399,7 +375,7 @@ const tmplFactory = `{{define "content"}}
     {{end}}
   </table>
   {{else}}
-  <p class="muted">Nothing on the shelf yet — the first thing it builds here starts the list.</p>
+  <p class="muted">Nothing on the shelf yet.</p>
   {{end}}
 
   <h4>Pin a stock line</h4>
@@ -410,6 +386,6 @@ const tmplFactory = `{{define "content"}}
     <label>Target units <input type="number" name="target" min="0" value="10" style="width:6em"></label>
     <button type="submit">Pin</button>
   </form>
-  <p class="muted">The type must have a blueprint behind it, or the pilot could never keep the promise.</p>
+  <p class="muted">The type must have a blueprint.</p>
 </div>
 {{end}}`

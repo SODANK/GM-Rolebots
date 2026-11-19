@@ -288,7 +288,7 @@ const tmplCorpNPC = corpTabs + `{{define "content"}}` + castTabsStyle + `
     <tr><th>Activity</th><td>{{.Corp.ActivityName}}{{if .Corp.Activity2ID}} + {{.Corp.Activity2Name}}{{end}}</td></tr>
     <tr><th>Headquarters</th><td>{{if .Corp.StationName}}{{.Corp.StationName}}{{else}}—{{end}}{{if .Corp.SystemName}} — {{.Corp.SystemName}}{{if .Corp.RegionName}} ({{.Corp.RegionName}}){{end}}{{end}}</td></tr>
     <tr><th>Stations owned</th><td>{{.Corp.Stations}}</td></tr>
-    <tr><th>Player pilots</th><td>{{.Corp.Members}} <span style="color:#6b7280">(accountID &gt; 0 — NPC agents excluded)</span></td></tr>
+    <tr><th>Player pilots</th><td>{{.Corp.Members}} <span style="color:#6b7280">(NPC agents excluded)</span></td></tr>
     <tr><th>Rostered bots here</th><td>{{.Corp.Bots}}</td></tr>
   </table>
 </div>
@@ -309,9 +309,8 @@ const tmplCorpNPC = corpTabs + `{{define "content"}}` + castTabsStyle + `
       {{else}}
       Nothing this corporation does puts a hull where something could shoot it, so it fields nobody.
       {{end}}
-      <span style="font-size:12px;color:#6b7280">Derived from the tags below — the violence tag decides what
-      the wing does, an industrial tag caps how big it gets.</span></p>
-    <p><b>Tags</b> — what kind of outfit this is. A pilot's own appetites are scored against these.</p>
+      <span style="font-size:12px;color:#6b7280">Derived from the tags below.</span></p>
+    <p><b>Tags</b> — what kind of outfit this is.</p>
     <div style="display:flex;flex-wrap:wrap;gap:6px 18px">
       {{range .Tags}}
       <label style="width:210px" title="{{.Blurb}}">
@@ -321,7 +320,7 @@ const tmplCorpNPC = corpTabs + `{{define "content"}}` + castTabsStyle + `
     </div>
     <p style="margin-top:8px">
       Extra tags <input type="text" name="extraTags" value="" placeholder="comma separated" style="width:260px">
-      <span style="font-size:12px;color:#6b7280">Anything you invent here filters and displays; it scores nothing until it gains an entry in the tag catalogue.</span>
+      <span style="font-size:12px;color:#6b7280">Custom tags display and filter only. They score nothing.</span>
     </p>
     <p>
       Race rule
@@ -345,26 +344,20 @@ const tmplCorpNPC = corpTabs + `{{define "content"}}` + castTabsStyle + `
   <form method="POST" style="margin-top:8px" onsubmit="return confirm('Send all {{.Corp.Bots}} rolebot(s) in {{.Corp.Name}} back to their school corporations?')">
     <input type="hidden" name="action" value="kickall">
     <button type="submit">Kick all {{.Corp.Bots}} bot(s) back to school</button>
-    <span style="font-size:12px;color:#6b7280">&mdash; each goes back to the corporation it was created in, drops its
-    commitment, and looks for work again within half a day. Shutting the door above stops new ones arriving;
-    this empties it of the ones already here.</span>
+    <span style="font-size:12px;color:#6b7280">&mdash; each returns to the corporation it was created in. Shutting the door only stops new arrivals.</span>
   </form>
   {{end}}
   <p style="margin-top:8px;font-size:12px;color:#6b7280">
-    The <b>weight</b> multiplies this corporation's appeal for every pilot — the thumb on the scale for an
-    outfit you want busy (or quiet) without changing what it is. <b>Minimum standing</b> is a hard door: a
-    pilot below it is refused whatever else it wants. Despising the faction (−7.5 or worse) is always a
-    refusal and needs no setting.
+    <b>Weight</b> scales this corporation's appeal to every pilot. <b>Minimum standing</b> refuses any pilot below it.
+    Standing of −7.5 or worse toward the faction is always refused.
   </p>
 </div>
 
 <div class="card">
   <h3>Chain of command <span style="font-weight:normal;color:#6b7280">(fleet commanders)</span></h3>
   <p style="font-size:13px">
-    {{if .Chair}}<b>{{.Chair}}.</b> The chair re-deals the seats daily, weighted to its Security desk's demand.<br>{{end}}
-    Only a seated commander may take a fleet out (the formation sweep reads these seats and nothing
-    else). Without an NPC chair they are reviewed weekly: one pooled seat per FCSeatDivisor members, Leadership first — it sizes and
-    buffs the whole fleet — career skills the tiebreak, over the activities this corporation's tags name{{if .FleetActs}} (<b>{{range $i, $a := .FleetActs}}{{if $i}}, {{end}}{{$a}}{{end}}</b>){{else}} (<b style="color:#ef4444">none</b> — tag it mining, combat, security or outlaw and it will start organizing){{end}}.
+    {{if .Chair}}<b>{{.Chair}}.</b> The chair re-deals the seats daily.<br>{{end}}
+    Only a seated commander may take a fleet out. Activities{{if .FleetActs}}: <b>{{range $i, $a := .FleetActs}}{{if $i}}, {{end}}{{$a}}{{end}}</b>{{else}}: <b style="color:#ef4444">none</b> (tag it mining, combat, security or outlaw to start organizing){{end}}.
     Seats by headcount: <b>{{.FleetSeats}}</b>.
   </p>
   {{if .Ranks}}
@@ -393,8 +386,7 @@ const tmplCorpNPC = corpTabs + `{{define "content"}}` + castTabsStyle + `
   <form method="POST" style="margin-top:8px">
     <input type="hidden" name="action" value="promote">
     <button type="submit">Run the promotion pass now</button>
-    <span style="font-size:12px;color:#6b7280">&mdash; the same review the weekly clock runs: rank the
-    roster, fill the seats, stand down the outranked. In game: <code>/rolebots promote {{.Corp.CorpID}}</code>.</span>
+    <span style="font-size:12px;color:#6b7280">&mdash; ranks the roster and fills the seats. In game: <code>/rolebots promote {{.Corp.CorpID}}</code>.</span>
   </form>
 </div>
 
@@ -402,40 +394,28 @@ const tmplCorpNPC = corpTabs + `{{define "content"}}` + castTabsStyle + `
   <h3>The race rule for this corporation</h3>
   {{if .Corp.School}}
   <p style="margin-bottom:10px;padding:8px;border-left:3px solid #eab308">
-    <b>This is a school</b>, and a school is where a pilot starts. It is refused as a destination whatever
-    the door above says: a graduate leaving its academy for the academy next door has not left school.
-    Opening it changes nothing.
+    <b>This is a school.</b> Pilots start here and are never sent to it. Opening the door changes nothing.
   </p>
   {{end}}
   {{if eq .Corp.BlocLabel "empire"}}
   <p style="margin-bottom:10px;padding:8px;border-left:3px solid #22c55e">
-    <b>This is a {{.CorpRace}} corporation and it employs {{.CorpRace}} pilots.</b> A state's corporation
-    recruits its own people — nothing softer, and no standing arithmetic. It is
-    <code>corporation.raceID</code> and nothing else, which is why the awkward cases need no exception:
-    the Ammatar Mandate's corporations carry the Minmatar race and the Thukkers' do too, so <b>the Ammatar
-    and the Thukkers are Minmatar here exactly as they are everywhere else</b>. Change the race rule above
-    to lift or replace it per corporation.
+    <b>This is a {{.CorpRace}} corporation and it employs {{.CorpRace}} pilots.</b> Change the race rule above to override it.
   </p>
   {{end}}
   {{if .Corp.Tribe}}
   <p style="margin-bottom:10px;padding:8px;border-left:3px solid #eab308">
-    <b>{{.Corp.Tribe}} is a tribe</b>, and a tribe is a people rather than an empire or a company, so this
-    corporation carries a door of its own on top of everything below.
+    <b>{{.Corp.Tribe}} is a tribe.</b>
     {{if .Corp.TribeBloodlineID}}
-      It recruits <b>{{.Corp.Tribe}} pilots and nobody else</b> — that tribe is a bloodline a capsuleer can
-      be born into, so the door asks which one.
+      It recruits <b>{{.Corp.Tribe}} pilots only</b>.
     {{else}}
-      No capsuleer is born {{.Corp.Tribe}}, so there is nothing finer to ask for and it takes
-      <b>any Minmatar</b>.
+      It takes <b>any Minmatar</b>.
     {{end}}
-    Read off the corporation's name and <code>chrBloodlines</code>, never stored. Setting the race rule
-    above to <i>open</i> is the one thing that switches it off.
+    Set the race rule above to <i>open</i> to switch this off.
   </p>
   {{end}}
   {{if eq .Corp.BlocLabel "empire"}}
   <p style="font-size:12px;color:#6b7280;margin-bottom:6px">
-    The old bloc arithmetic, kept because the <i>Bloc rule</i> setting above still selects it — it is no
-    longer what <i>Automatic</i> means. Read it as what would happen if you switched this corporation to it.
+    What the <i>Bloc rule</i> setting above would do.
   </p>
   <table class="tbl">
     <tr><th>Empire</th><th>{{.Corp.FactionName}} → them</th><th>Them → {{.Corp.FactionName}}</th><th>Takes their pilots</th></tr>
@@ -449,31 +429,21 @@ const tmplCorpNPC = corpTabs + `{{define "content"}}` + castTabsStyle + `
     {{end}}
   </table>
   <p style="margin-top:8px;font-size:12px;color:#6b7280">
-    Straight off <code>npcStandings</code>, the same static matrix a pilot's own starting outlook is copied
-    from. Under that rule either side negative shuts the door, whatever the pilot wants.
+    Under the bloc rule, a negative standing on either side shuts the door.
   </p>
   {{else if eq .Corp.BlocLabel "outlaw"}}
-  <p>An outlaw corporation takes <b>any race</b> — an Amarrian rides with these people exactly as readily
-     as with any other pirate, because a pirate does not check your passport. What it will not take is a
-     <b>lawful</b> pilot: above a quarter of the way down the lawfulness axis toward "lawful", a pilot
-     refuses regardless of pay.</p>
+  <p>An outlaw corporation takes <b>any race</b> but refuses <b>lawful</b> pilots.</p>
   {{else}}
-  <p>An unaligned corporation applies <b>no race rule at all</b> — it is nobody's state, so ORE, the
-     Syndicate, the Sisters, InterBus and Mordu's take anybody. Only the pilot's own standing toward
-     {{if .Corp.FactionName}}{{.Corp.FactionName}}{{else}}its faction{{end}} and this page's own settings
-     decide.</p>
+  <p>An unaligned corporation has <b>no race rule</b>. Only the pilot's standing toward
+     {{if .Corp.FactionName}}{{.Corp.FactionName}}{{else}}its faction{{end}} and this page's settings decide.</p>
   {{end}}
 </div>
 
 <div class="card">
   <h3>Who would walk in <span style="font-weight:normal;color:#6b7280">(dry run — nothing is written)</span></h3>
   <p style="font-size:12px;color:#6b7280">
-    Every <b>enabled</b> rostered pilot, priced. <b>{{.Eligible}}</b> clear the hard rules.
-    Score is fit &times; standing &times; home &times; crowd &times; weight: <b>fit</b> is this corporation's tags against
-    what the pilot actually wants to do (the same appetite numbers that pick its work), <b>standing</b> its
-    own opinion of the faction, <b>home</b> how near the corporation is to where it lives, <b>crowd</b> how many
-    rolebots already wear this badge against the average across the open catalogue &mdash; the term that stops a
-    roster of similar pilots all walking into the same lobby.
+    Every <b>enabled</b> rostered pilot. <b>{{.Eligible}}</b> would join. Score is fit &times; standing &times; home &times; crowd &times; weight.
+    <b>Crowd</b> is how full this corporation is against the average.
   </p>
   {{if .Candidates}}
   <table class="tbl">

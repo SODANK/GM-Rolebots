@@ -322,45 +322,30 @@ const tmplCorpsNPC = corpTabs + `{{define "content"}}` + castTabsStyle + rbTable
 <details class="rbfold" id="rbfold-recruit" open>
 <summary>Recruitment</summary>
   <p style="margin-top:8px">
-    Pilots leave school, sign with an employer and apply to your players' corporations.
+    Pilots leave school, sign with an employer and apply to player corporations.
   </p>
   <p style="font-size:12px" class="rbdim">
-    The catalogue below ships open — every ordinary employer in the game — bar the {{.Restricted}} shut by
-    default: the schools, the ministries and courts, the empires' armed services, the newsrooms, the tribes,
-    CONCORD and the Jove. {{.Stats.Reviewed}} pilot(s) have looked, {{.Stats.DueSoon}} due within a day,
-    {{.Stats.Moved}} have changed employer ({{.Stats.Moves}} move(s)); {{.Waiting}} application(s) are waiting
-    on a player corporation's director.
+    {{.Restricted}} corporations are shut by default (schools, ministries, armed services, CONCORD and similar).
+    {{.Stats.Reviewed}} pilot(s) have looked, {{.Stats.DueSoon}} due within a day,
+    {{.Stats.Moved}} have changed employer ({{.Stats.Moves}} move(s)); {{.Waiting}} application(s) are waiting.
   </p>
   <details style="margin-top:6px">
     <summary style="cursor:pointer;font-size:12px" class="rbdim">How a pilot picks an employer</summary>
     <div style="font-size:12px;margin-top:6px" class="rbdim">
       <p>
-        A look happens <b>docked, between jobs</b>. A pilot still at school takes its first within half a
-        day, spread across the roster; everyone else on a cadence set by <b>loyalty</b> — devoted about
-        three weeks, mercenary a couple of days. Moving needs the offer to beat the current employer by a
-        <b>margin</b> (loyalty again, 2× down to 1.05×), and a pilot that moved recently stays put.
+        Pilots look for work when docked and between jobs. A school is never a destination.
       </p>
       <p>
-        <b>A school is somewhere you leave.</b> It is refused as a destination however it is configured, so
-        leaving school cannot be satisfied by walking into the academy next door.
+        A pilot signs with one NPC corporation and stays there. Only a <b>player</b> corporation can take it away, and
+        only when a director accepts its application.
       </p>
       <p>
-        <b>One NPC employer, then the player half.</b> A pilot signs with one NPC corporation and stays
-        there: every other NPC door is refused from then on, and the only thing that can take it off that
-        employer is a <b>player</b> corporation. An NPC corporation is joined outright, a player one is
-        <b>applied to</b>: the pilot writes a real application into the corporation window's Applications
-        tab, goes on working, and moves only when one of its directors accepts.
-      </p>
-      <p>
-        <b>Kicked is going home.</b> Throw a bot out of a corporation and it goes back to the school it was
-        created in, drops its commitment, and is shopping the whole catalogue again within half a day.
+        A bot thrown out of a corporation returns to its school.
       </p>
     </div>
   </details>
   <p style="margin-top:8px;padding:8px;border-left:3px solid #64748b">
-    <b>A pilot's faction standings are its employer's.</b> Nothing is stored per pilot: signing with the
-    Guristas <i>is</i> inheriting what the Guristas think of the Serpentis, read from the corporation at the
-    moment it is asked. Change a corporation's standings, or move a pilot, and every opinion moves with it.
+    <b>A pilot's faction standings are its employer's.</b> Change the corporation's standings and its pilots follow.
   </p>
   {{if .Stats.Recent}}
   <h4>Recent employer changes</h4>
@@ -473,9 +458,8 @@ const tmplCorpsNPC = corpTabs + `{{define "content"}}` + castTabsStyle + rbTable
     </tbody>
   </table>
   <p style="margin-top:8px;font-size:12px" class="rbdim">
-    <b>Bots</b> is how many rostered pilots wear the badge now; <b>Pass</b> counts the enabled pilots that
-    clear the hard rules <i>as if the door were open</i>. The <b>Door</b> button says the current state and
-    changes it. Every heading sorts, again to reverse, and the order lives in the URL.
+    <b>Bots</b> is rostered pilots working there now. <b>Pass</b> is enabled pilots who could join if the door were open.
+    The <b>Door</b> button shows the state and toggles it. Every heading sorts.
   </p>
 </div>
 </details>

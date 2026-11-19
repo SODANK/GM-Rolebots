@@ -216,8 +216,6 @@ const tmplCEOTrade = `{{with .Trade}}
   <table class="tbl" style="font-size:12px"><tr><th>Office</th><th>Listing</th><th>Price</th><th>Resting for</th></tr>
     {{range .Orders}}<tr><td>{{.Where}}</td><td>{{.What}}</td><td>{{.Price}}</td><td>{{.Age}}</td></tr>{{end}}
   </table>{{end}}
-  <p style="font-size:12px;color:#6b7280">The corporation scans the market with its own capital, advances a member the money
-  to buy and haul the goods as corporation property, pays the member by the m³·jump on delivery, and lists the goods
-  at its own office. Fills land in the corporation wallet as sales.</p>
+  <p style="font-size:12px;color:#6b7280">Goods are bought and hauled with corporation money, then listed at its own office.</p>
 </div>
 {{end}}`

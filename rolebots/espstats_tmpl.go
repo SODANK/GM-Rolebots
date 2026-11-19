@@ -65,11 +65,8 @@ const tmplStats = `{{define "content"}}
 
 <div class="card">
   <p style="font-size:12px;color:#9ca3af;margin:0 0 6px">
-    Skill points, wallet, bounties, ships built, blueprints and kills come straight from the
-    game's own records and cover the whole life of the server.
-    <strong>Ore mined, jumps, docks and the trade columns only count from the update that added
-    them</strong>, because nothing earlier was recorded. The trade columns were filled once from the
-    last 30 days of the <a href="/rolebots/trades">Trade Feed</a>, as far back as it keeps.
+    <strong>Ore, jumps, docks and trade columns</strong> only count from when they were added. Trades were
+    backfilled from the <a href="/rolebots/trades">Trade Feed</a>.
   </p>
   <p style="font-size:12px;color:#6b7280;margin:0">
     {{.Count}} pilot{{if ne .Count 1}}s{{end}} &middot;
@@ -79,7 +76,7 @@ const tmplStats = `{{define "content"}}
       generated pilots included &middot; <a href="/rolebots/stats?gen=0">hide them</a>
     {{end}}
     &middot; updated {{.AgeSecs}}s ago &middot; <a href="/rolebots/stats?fresh=1">refresh now</a>
-    <br>Skill points, bounties and blueprints are recounted every 10 minutes (last {{.SlowAge}}s ago); a refresh recounts them straight away and takes longer.
+    <br>Skill points, bounties and blueprints recount every 10 minutes (last {{.SlowAge}}s ago). Refresh recounts now, slower.
   </p>
 </div>
 
@@ -110,7 +107,7 @@ const tmplStats = `{{define "content"}}
       <td class="n rb-num" data-v="{{.SP}}">{{.SPShort}}</td>
       <td class="n rb-num" data-v="{{.Balance}}">{{.WalletISK}}</td>
       <td class="n rb-num" data-v="{{.Bounty}}">{{.BountyISK}}</td>
-      <td class="n rb-num" data-v="{{.BountyPayouts}}" title="bounty payments received — one per fight, not one per rat">{{.BountyPayouts}}</td>
+      <td class="n rb-num" data-v="{{.BountyPayouts}}" title="bounty payments received, one per fight">{{.BountyPayouts}}</td>
       <td class="n rb-num" data-v="{{.OreM3}}">{{.OreM3Short}}</td>
       <td class="n rb-num" data-v="{{.OreUnits}}">{{.OreUnits}}</td>
       <td class="n rb-num" data-v="{{.Trades}}" title="{{.TradeSplit}}">{{.Trades}}</td>
@@ -139,8 +136,8 @@ const tmplStats = `{{define "content"}}
   </div>
   {{else}}
   <p style="color:#6b7280">
-    No characters on the roster yet &mdash; add one on the <a href="/rolebots">Roster</a> page,
-    or generate a population on <a href="/rolebots/seed">Bot Population</a>.
+    No characters yet. Add one on <a href="/rolebots">Roster</a> or generate a population on
+    <a href="/rolebots/seed">Bot Population</a>.
   </p>
   {{end}}
 </div>

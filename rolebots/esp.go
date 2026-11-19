@@ -497,8 +497,7 @@ const tmplProfile = `{{define "content"}}
     <input type="hidden" name="action" value="wipe">
     <button type="submit">Wipe memory</button>
   </form>
-  <p style="margin-top:8px;font-size:12px;color:#6b7280">Reboot clears the stored phase, the error and any halt — the next sim pass (5s) re-plans from where the character actually is. Nothing in the world is touched: ship, hangar, wallet and location stay put. It KEEPS what the pilot has learned: the belt systems it has recently worked, its appetite for each kind of work, the commodity it has been hauling.</p>
-  <p style="font-size:12px;color:#6b7280">Wipe memory goes further and forgets all of that too — for a bot wedged by something it remembers, or one being repurposed.</p>
+  <p style="margin-top:8px;font-size:12px;color:#6b7280">Reboot clears the phase and any halt. The world is untouched and learned memory is kept. Wipe memory also clears that memory.</p>
 </div>
 
 <div class="card">
@@ -511,14 +510,12 @@ const tmplProfile = `{{define "content"}}
     <input type="text" name="reason" maxlength="100" placeholder="reason (optional — it goes in the journal)" style="max-width:340px">
     <button type="submit">Apply</button>
   </form>
-  <p style="margin-top:8px;font-size:12px;color:#6b7280">This is real ISK: it lands in <code>character_.balance</code> and writes the same GM-donation journal row <code>/giveisk</code> writes, so the pilot's wallet history shows where it came from. A bot with no ship and no money cannot earn its way back to either — a fit it can only afford once is treated as out of reach, and buying nothing earns nothing — so seeding a starter wallet is how a fresh or wiped-out pilot rejoins the economy.</p>
-  <p style="font-size:12px;color:#6b7280">A withdrawal that would put the wallet below zero is refused; the deduction is applied as one guarded UPDATE, so it cannot race the sim spending at the same moment.</p>
+  <p style="margin-top:8px;font-size:12px;color:#6b7280">This is real ISK, logged in the wallet journal as a GM donation. A withdrawal that would go below zero is refused.</p>
 </div>
 
 <div class="card">
   <h3>Grievances &amp; respect</h3>
-  <p class="rb-scale">Grace: <b>{{.GraceTier}}</b>. What this pilot holds against, or owes, named pilots
-  (<code>rolebot_grievances</code>); a real player sees a band of it on their character sheet.</p>
+  <p class="rb-scale">Grace: <b>{{.GraceTier}}</b>. What this pilot holds against, or owes, named pilots.</p>
   {{if .Grace}}
   <table class="rb-table">
     <tr><th>Pilot</th><th>Grudge</th><th>Regard</th><th>Band</th><th>Last</th><th>When</th></tr>
@@ -543,7 +540,7 @@ const tmplProfile = `{{define "content"}}
           <div class="list" id="homeStationList"></div>
         </div>
         <input type="hidden" name="homeStationID" id="homeStationID" value="{{.HomeStationID}}">
-        <p class="rb-scale">Where it wakes up, parks a hull it is not flying, and comes back to. Setting it moves the clone. The pilot moves it itself when it buys a clone elsewhere, leaves the academy, or signs with a corp whose stations are far away.</p>
+        <p class="rb-scale">Where it wakes up and parks spare hulls. Setting it moves the clone.</p>
 
         <p class="rb-lbl" style="margin-top:12px">Industry base — where a supplier manufactures</p>
         <div class="rb-drop" style="max-width:420px">
@@ -553,34 +550,26 @@ const tmplProfile = `{{define "content"}}
         </div>
         <input type="hidden" name="industryStationID" id="industryStationID" value="{{.Profile.IndustryStationID}}">
         <label class="rb-check"><input type="checkbox" onchange="if(this.checked){document.getElementById('industryStationID').value='0';document.getElementById('industryBaseSearch').value='';}"> clear — the pilot chooses</label>
-        <p class="rb-scale">Blank = it picks the nearest factory it can use.</p>
+        <p class="rb-scale">Blank = nearest usable factory.</p>
       </div>
       <div>
         <p class="rb-lbl">Where it will fly</p>
-        <p class="rb-scale">Anywhere the gates go. Nothing fences a pilot out of a region — its
-        personality prices rough space instead, so a careful one takes the long way round when
-        there is one and goes anyway when there is not. See <b>Space it will fly in</b> below.</p>
+        <p class="rb-scale">Anywhere the gates go. Personality only decides how it weighs rough space. See <b>Space it will fly in</b> below.</p>
 
         <p class="rb-lbl" style="margin-top:12px">Full mining hold</p>
-        <p class="rb-scale">Not a setting — the activity decides, from what it went mining FOR:
-        stockpiled at its own factory, refined and listed at its refinery, or sold to the best
-        reachable bid. A hold nobody will bid on is stockpiled where it can dock.</p>
+        <p class="rb-scale">Not a setting. The activity decides: stockpile, refine, or sell to the best bid.</p>
 
         {{if .CEOOf}}<p class="rb-scale" style="color:#eab308"><b>CEO</b> of this corporation —
         <a href="/rolebots/corp/{{.CEOOf}}">see what it has decided &rarr;</a></p>{{end}}
         <p class="rb-lbl" style="margin-top:12px">Factions — its employer's, not its own</p>
         {{if .EmployerFaction}}
         <p class="rb-scale">Flies for <a href="/rolebots/corp/{{.EmployerCorpID}}">{{.EmployerCorpName}}</a>,
-        which answers to <b>{{.EmployerFaction}}</b> — so those are its friends and rivals, and they
-        steer where it docks and who it trades with.</p>
+        which answers to <b>{{.EmployerFaction}}</b>.</p>
         {{else}}
         <p class="rb-scale">Flies for <a href="/rolebots/corp/{{.EmployerCorpID}}">{{.EmployerCorpName}}</a>,
-        a player corporation, so it holds <b>no faction standings</b> unless that corp or its alliance
-        has set some.</p>
+        a player corporation. No faction standings unless the corp or its alliance sets some.</p>
         {{end}}
-        <p class="rb-scale">Read from the corporation when asked, never stored per pilot. Change the
-        corp's standings — or move the pilot — and this moves with it. Pilot-to-pilot starts from the
-        employers (<a href="/rolebots/corps/diplomacy">Diplomacy</a>) and adds this pilot's own grace ledger above.</p>
+        <p class="rb-scale">Follows the corporation's standings. See <a href="/rolebots/corps/diplomacy">Diplomacy</a>.</p>
       </div>
     </div>
 
@@ -597,9 +586,7 @@ const tmplProfile = `{{define "content"}}
 <div class="card">
   <h3>Personality</h3>
   <p style="font-size:12px;color:#9ca3af;max-width:860px">
-    Each dial moves real numbers the sim reads — nothing here is flavour text. The centre is
-    stock rolebot behaviour, so a pilot you never touch is unchanged. Peaceful temperaments
-    sit <span style="color:#86efac">left</span>, hostile ones <span style="color:#fca5a5">right</span>.
+    Centre is stock behaviour. Peaceful traits sit <span style="color:#86efac">left</span>, hostile ones <span style="color:#fca5a5">right</span>.
   </p>
   <form method="POST">
     <input type="hidden" name="action" value="traits">
@@ -633,9 +620,9 @@ const tmplProfile = `{{define "content"}}
 
 <div class="card">
   <h3>Ships &amp; Fits</h3>
-  <p><span style="font-size:12px;color:#6b7280">Fits are not authored any more. Each pilot builds its own from the hull's bonuses, its own skills and what the market actually stocks — so this readout is what THIS pilot would fly today, not a library entry.</span></p>
-  <p><a href="/rolebot/{{.Bot.CharacterID}}/skills">Skill training</a> <span style="font-size:12px;color:#6b7280">— {{if .Profile.AutoSkills}}this pilot buys its own skillbooks and plans its own queue, aimed at the lines below it cannot yet run. What it decided, and why, is on that page.{{else}}automation is off for this pilot: the lines it cannot run above will stay that way until somebody trains it by hand.{{end}}</span></p>
-  <p><a href="/rolebot/{{.Bot.CharacterID}}/factory">Factory &amp; shelf</a> <span style="font-size:12px;color:#6b7280">— where this pilot manufactures, the standing stock lines it holds there, and the build book: what it would make next and on what evidence.</span></p>
+  <p><span style="font-size:12px;color:#6b7280">What this pilot would fly today. It builds its own fits.</span></p>
+  <p><a href="/rolebot/{{.Bot.CharacterID}}/skills">Skill training</a> <span style="font-size:12px;color:#6b7280">— {{if .Profile.AutoSkills}}it plans its own training queue.{{else}}auto-training is off for this pilot.{{end}}</span></p>
+  <p><a href="/rolebot/{{.Bot.CharacterID}}/factory">Factory &amp; shelf</a> <span style="font-size:12px;color:#6b7280">— where it manufactures, its stock lines and build book.</span></p>
 
   <table>
     <tr><th></th><th>Role</th><th>Would fly</th><th>Score</th><th>Skills into it</th><th>Est. cost</th></tr>
@@ -650,7 +637,7 @@ const tmplProfile = `{{define "content"}}
     </tr>
     {{end}}
   </table>
-  <p style="font-size:12px;color:#6b7280">Best-scoring fit per role, resolved against this pilot's own skills and grid — lines it cannot online are left off and it buys only the rest. What it actually buys also has to clear its wallet twice over.</p>
+  <p style="font-size:12px;color:#6b7280">Best fit per role for this pilot's skills. Lines it cannot run are left off.</p>
 
   {{if .HeldShips}}
   <table>
@@ -670,7 +657,7 @@ const tmplProfile = `{{define "content"}}
 <!-- ── Implants ─────────────────────────────────────────────────────────── -->
 <div class="card">
   <h3>Implants</h3>
-  <p><span style="font-size:12px;color:#6b7280">What is in this pilot's head, and what it would put there. Implants come only from loot; a pilot plugs a looted one that gains it something and sells the rest, buys one listed at a dock it is standing in when it is worth the money, and loses every one of them with its pod. Once it holds a piece of a pirate set it collects the rest of that set, at that grade, before anything else.{{if not .Implants.On}} <strong>Switched off</strong> (rolebots.implants.enabled).{{end}}</span></p>
+  <p><span style="font-size:12px;color:#6b7280">Implants this pilot has plugged in, and what it would buy or keep.{{if not .Implants.On}} <strong>Switched off</strong> (rolebots.implants.enabled).{{end}}</span></p>
   {{if .Implants.Note}}<p style="color:#f59e0b">{{.Implants.Note}}</p>{{end}}
   {{if .Implants.Plugged}}
   <table>
@@ -693,11 +680,7 @@ const tmplProfile = `{{define "content"}}
 <div class="card">
   <h3>Inclinations</h3>
   <p style="font-size:12px;color:#6b7280">
-    There is no activity checklist. What this pilot does with its days follows from who it is:
-    the Personality dials set what pulls it, its employer's politics above set who it works
-    against and for, and the ships it can actually fly decide what is possible. Every time it goes idle it
-    weighs all of that and picks — and an out-of-character afternoon is allowed on purpose, so
-    even a die-hard hunter may mine one odd day.
+    What this pilot is drawn to, derived from Personality, employer and the ships it can fly. Read-only.
   </p>
   {{if .InclNarrative}}<p class="rb-loyal">{{.InclNarrative}}</p>{{end}}
   <table class="rb-incl" style="max-width:780px">
@@ -712,7 +695,7 @@ const tmplProfile = `{{define "content"}}
     </tr>
     {{end}}
   </table>
-  <p style="font-size:11px;color:#6b7280;margin-top:6px">Pull is personality, before the world weighs in; the draw multiplies it by what the pilot is equipped for and how fresh the work feels. To change behaviour: move the Personality dials, move the pilot to a different employer, or build fits it can fly.</p>
+  <p style="font-size:11px;color:#6b7280;margin-top:6px">Pull is raw personality. To change it, move the Personality dials or the employer.</p>
 
   <p class="rb-lbl" style="margin-top:14px">Space it will fly in</p>
   <table class="rb-incl" style="max-width:780px">
@@ -733,14 +716,11 @@ const tmplProfile = `{{define "content"}}
     Scoped to its <strong>{{.ScopeBand}}</strong>: {{.ScopeRegions}}.
   </p>
   <p style="font-size:11px;color:#6b7280;margin-top:6px">
-    That is where it sells, works belts, builds and prices its competition &mdash; it follows the home station
-    above, so moving it moves this. Buying is not scoped by it. It is not a fence either: it flies anywhere,
-    goes back for its own goods anywhere, and widens this search a band at a time when nothing here will do.
+    Where it sells, mines, builds and prices competition. Follows the home station. Not a travel limit.
   </p>
   {{else}}
   <p style="font-size:12px;color:#6b7280">
-    Unscoped &mdash; it reads the whole market and the whole map on every decision. No home region has
-    resolved for this pilot yet; it picks one up as soon as it has a medical clone station.
+    Unscoped. No home region yet. It gets one once it has a medical clone station.
   </p>
   {{end}}
 </div>
@@ -1221,13 +1201,9 @@ func spaceBandRows(tn Tuning) ([]spaceBandRow, string) {
 		band("Null-sec", -1.0, 0.0),
 	}
 
-	narrative := fmt.Sprintf("This pilot decides for itself: its personality (Caution mostly, "+
-		"nudged by Lawfulness) works out to a comfort line of %.1f security. That is a preference, "+
-		"not a wall — rougher space costs it about %.0f extra jumps' worth of reluctance per 1.0 of "+
-		"security, so it takes the long way round when there is one and goes anyway when there is not. "+
-		"No band is closed to it, and no place-based veto exists. Mining ignores this line entirely: "+
-		"a miner picks its belt on the rock's value and on measured danger (rats on the belt, its hull "+
-		"against the spawn, recent attacks, enemy corporations), not on the system's security.",
+	narrative := fmt.Sprintf("Comfort line: %.1f security, set by its Caution and Lawfulness. "+
+		"Rougher space costs it about %.0f extra jumps of reluctance per 1.0 of security. No band is closed. "+
+		"Mining ignores this line.",
 		floor, secAversionJumps)
 	return rows, narrative
 }
