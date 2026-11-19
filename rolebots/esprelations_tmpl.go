@@ -65,30 +65,19 @@ const tmplRelations = corpTabs + `{{define "content"}}` + castTabsStyle + `
 <div class="card">
   <h3 style="margin-top:0">What this page does</h3>
   <p class="muted" style="margin:0 0 8px">
-    The switches and dials of corporate politics. Everything about ONE corporation
-    &mdash; what it holds toward others and they toward it, its wars and mercenary
-    paper, its incident ledger, its letters and pacts, and the declare and hand-back
-    forms &mdash; is on that corporation's own page (<a href="/rolebots/corps">corporations</a>
-    &rarr; a corporation &rarr; Relations).
+    Switches and dials for corporate politics. Per-corporation detail is on that corporation's page
+    (<a href="/rolebots/corps">corporations</a> &rarr; a corporation &rarr; Relations).
   </p>
   <p class="muted" style="margin:0">
-    A standing of <b>&minus;2.5 or worse</b> makes a corporation an enemy: that side's
-    combat pilots hunt it, and its miners, haulers and industrialists price its systems
-    as somewhere to be avoided. Highsec stays safe between them until the two are at
-    <b>war</b>. Bot-run corporations hold a live value per pair that incidents move
-    and decay pulls back to the CEO's own leaning; what they write to the game is that
-    value, so &minus;3.2 is a grudge cooling and +7.5 an ally.
+    A standing of <b>&minus;2.5 or worse</b> makes a corporation an enemy. Highsec stays safe between them until they are at <b>war</b>.
   </p>
 </div>
 
 <div class="card">
   <h3 style="margin-top:0">CEO wars &amp; mercenaries</h3>
   <p class="muted" style="margin:0 0 8px">
-    Bot CEOs may take a quarrel to CONCORD &mdash; declare, pay the weekly bill, give
-    up &mdash; and corporations may hire a mercenary outfit to declare a war for them.
-    A merc declares a <b>real</b> war of its own (the client has no ally slot), so both
-    sides see it in their Wars tab. Every obligation is a commitment against free
-    capital: nothing here takes a wallet below its reserve.
+    Bot CEOs may declare wars, and corporations may hire a mercenary outfit to declare one for them.
+    Nothing here takes a wallet below its reserve.
   </p>
   <form method="POST" action="/rolebots/corps/diplomacy" class="rb-dial">
     <input type="hidden" name="action" value="switch">
@@ -96,7 +85,7 @@ const tmplRelations = corpTabs + `{{define "content"}}` + castTabsStyle + `
     <label>Bot CEOs make war</label>
     <button type="submit" name="on" value="{{if .CEOWars}}0{{else}}1{{end}}">
       {{if .CEOWars}}Turn off{{else}}Turn on{{end}}</button>
-    <span class="muted">Off: nothing new is declared and every bill a CEO owes lapses, ending its wars on CONCORD's timer.</span>
+    <span class="muted">Off: nothing new is declared and CEO wars lapse.</span>
   </form>
   <form method="POST" action="/rolebots/corps/diplomacy" class="rb-dial">
     <input type="hidden" name="action" value="switch">
@@ -104,7 +93,7 @@ const tmplRelations = corpTabs + `{{define "content"}}` + castTabsStyle + `
     <label>Mercenary market</label>
     <button type="submit" name="on" value="{{if .MercMarket}}0{{else}}1{{end}}">
       {{if .MercMarket}}Turn off{{else}}Turn on{{end}}</button>
-    <span class="muted">Off: open tenders are withdrawn and running contracts end at their next payday.</span>
+    <span class="muted">Off: open tenders are withdrawn and running contracts end at next payday.</span>
   </form>
   <form method="POST" action="/rolebots/corps/diplomacy" class="rb-dial">
     <input type="hidden" name="action" value="switch">
@@ -112,7 +101,7 @@ const tmplRelations = corpTabs + `{{define "content"}}` + castTabsStyle + `
     <label>Gank victims may hire</label>
     <button type="submit" name="on" value="{{if .GankHires}}0{{else}}1{{end}}">
       {{if .GankHires}}Turn off{{else}}Turn on{{end}}</button>
-    <span class="muted">With the market shut, a corporation suicide-ganked in highsec may still put out a tender for war on the gankers, and a mercenary may take it. A gank also weighs four kills on the ledger and scores its own war term past the grievance cap.</span>
+    <span class="muted">With the market shut, a corporation suicide-ganked in highsec may still tender for war on the gankers.</span>
   </form>
   <form method="POST" action="/rolebots/corps/diplomacy" class="rb-dial">
     <input type="hidden" name="action" value="switch">
@@ -120,7 +109,7 @@ const tmplRelations = corpTabs + `{{define "content"}}` + castTabsStyle + `
     <label>Mutual wars</label>
     <button type="submit" name="on" value="{{if .MutualWars}}0{{else}}1{{end}}">
       {{if .MutualWars}}Turn off{{else}}Turn on{{end}}</button>
-    <span class="muted">A war both sides are fighting and want to keep fighting turns mutual &mdash; only when both consent &mdash; and stops costing a bill. Either side withdrawing (cooled, quiet, or losing) hands it back to the bill, and it dies when that goes unpaid. Off: every mutual war a bot consented to is handed back.</span>
+    <span class="muted">A war both sides want turns mutual and stops costing a bill. Off: every mutual war a bot consented to goes back to the bill.</span>
   </form>
   <form method="POST" action="/rolebots/corps/diplomacy" class="rb-dial">
     <input type="hidden" name="action" value="dial">
@@ -199,8 +188,7 @@ const tmplRelations = corpTabs + `{{define "content"}}` + castTabsStyle + `
 <div class="card">
   <h3 style="margin-top:0">The snapshot</h3>
   <p class="muted" style="margin:0 0 8px">
-    The resolved view every pilot reads: after precedence, alliance expansion, the
-    mutual floor and the wars. Per corporation, on its own page.
+    The resolved standings every pilot reads. Per corporation, on its own page.
   </p>
   <form method="POST" action="/rolebots/corps/diplomacy" style="margin-top:10px">
     <input type="hidden" name="action" value="rebuild">
@@ -217,7 +205,7 @@ const tmplRelations = corpTabs + `{{define "content"}}` + castTabsStyle + `
     <label>Corporate politics</label>
     <button type="submit" name="on" value="{{if .Enabled}}0{{else}}1{{end}}">
       {{if .Enabled}}Turn off{{else}}Turn on{{end}}</button>
-    <span class="muted">Off restores the behaviour that shipped before this feature.</span>
+    <span class="muted">Off disables corporate politics.</span>
   </form>
   <form method="POST" action="/rolebots/corps/diplomacy" class="rb-dial">
     <input type="hidden" name="action" value="switch">
@@ -241,7 +229,7 @@ const tmplRelations = corpTabs + `{{define "content"}}` + castTabsStyle + `
     <label>Bot CEOs choose sides</label>
     <button type="submit" name="on" value="{{if .CEODiplomacy}}0{{else}}1{{end}}">
       {{if .CEODiplomacy}}Turn off{{else}}Turn on{{end}}</button>
-    <span class="muted">A bot CEO declares its corporation's friends, allies and rivals. Off leaves what it declared in place; declaring here for a CEO's corporation takes that pair out of its hands.</span>
+    <span class="muted">A bot CEO declares its corporation's friends, allies and rivals. Off leaves existing declarations in place.</span>
   </form>
 </div>
 
@@ -253,7 +241,7 @@ const tmplRelations = corpTabs + `{{define "content"}}` + castTabsStyle + `
     <label>Enemy belt cost (jumps)</label>
     <input type="number" name="value" step="0.5" min="0" value="{{.EnemyCost}}">
     <button type="submit">Save</button>
-    <span class="muted">What a system an enemy works is worth flying past. 0 turns belt avoidance off.</span>
+    <span class="muted">Cost of flying past a system an enemy works. 0 turns belt avoidance off.</span>
   </form>
   <form method="POST" action="/rolebots/corps/diplomacy" class="rb-dial">
     <input type="hidden" name="action" value="dial">
@@ -261,7 +249,7 @@ const tmplRelations = corpTabs + `{{define "content"}}` + castTabsStyle + `
     <label>Enemy route cost (jumps)</label>
     <input type="number" name="value" step="1" min="0" value="{{.EnemyHop}}">
     <button type="submit">Save</button>
-    <span class="muted">What passing through one adds to a leg. Small: this is every trip, not one destination.</span>
+    <span class="muted">Cost added per enemy system passed through.</span>
   </form>
   <form method="POST" action="/rolebots/corps/diplomacy" class="rb-dial">
     <input type="hidden" name="action" value="dial">
@@ -277,17 +265,14 @@ const tmplRelations = corpTabs + `{{define "content"}}` + castTabsStyle + `
     <label>Snapshot period (seconds)</label>
     <input type="number" name="value" step="10" min="30" value="{{.RefreshSec}}">
     <button type="submit">Save</button>
-    <span class="muted">The arming boundary stays exact whatever this is &mdash; it is re-tested on every read.</span>
+    <span class="muted">How often the snapshot rebuilds.</span>
   </form>
 </div>
 
 <div class="card">
   <h3 style="margin-top:0">The ledger</h3>
   <p class="muted" style="margin:0 0 8px">
-    The dynamic layer: incidents between corporations (kills, hold-ups, bounties,
-    sieges, wars, crowded belts, letters) move a live value per pair, decay pulls it
-    back toward the CEO's own leaning, and the value is what gets written. Folded every
-    few minutes; written on a tier crossing, or at the Director of Diplomacy's pass.
+    Incidents between corporations move a live value per pair, which drifts back toward the CEO's leaning.
   </p>
   <form method="POST" action="/rolebots/corps/diplomacy" class="rb-dial">
     <input type="hidden" name="action" value="switch">
@@ -295,7 +280,7 @@ const tmplRelations = corpTabs + `{{define "content"}}` + castTabsStyle + `
     <label>Ledger</label>
     <button type="submit" name="on" value="{{if .Ledger}}0{{else}}1{{end}}">
       {{if .Ledger}}Turn off{{else}}Turn on{{end}}</button>
-    <span class="muted">Off, values freeze, nothing is written and no letter goes out; standings already written stay.</span>
+    <span class="muted">Off: values freeze and no letters go out.</span>
   </form>
   <form method="POST" action="/rolebots/corps/diplomacy" class="rb-dial">
     <input type="hidden" name="action" value="switch">
@@ -303,7 +288,7 @@ const tmplRelations = corpTabs + `{{define "content"}}` + castTabsStyle + `
     <label>Letters</label>
     <button type="submit" name="on" value="{{if .Letters}}0{{else}}1{{end}}">
       {{if .Letters}}Turn off{{else}}Turn on{{end}}</button>
-    <span class="muted">Pacts, alliances of friendship, reparations and peace, proposed by the Director of Diplomacy (or the CEO).</span>
+    <span class="muted">Pacts, reparations and peace proposals.</span>
   </form>
   <form method="POST" action="/rolebots/corps/diplomacy" class="rb-dial">
     <input type="hidden" name="action" value="switch">
@@ -311,7 +296,7 @@ const tmplRelations = corpTabs + `{{define "content"}}` + castTabsStyle + `
     <label>Envoys</label>
     <button type="submit" name="on" value="{{if .Envoys}}0{{else}}1{{end}}">
       {{if .Envoys}}Turn off{{else}}Turn on{{end}}</button>
-    <span class="muted">An idle member carries each letter to the other corporation's headquarters. Off, letters go by mail.</span>
+    <span class="muted">A member delivers each letter in person. Off: letters go by mail.</span>
   </form>
   {{range .LedgerDials}}
   <form method="POST" action="/rolebots/corps/diplomacy" class="rb-dial">
@@ -328,9 +313,7 @@ const tmplRelations = corpTabs + `{{define "content"}}` + castTabsStyle + `
 <div class="card">
   <h3 style="margin-top:0">Grace</h3>
   <p class="muted" style="margin:0 0 8px">
-    What a bot holds against, or owes, a named pilot: kills, hold-ups, ransoms, fair fights,
-    favours from its own leadership. Each bot keeps its own ledger, decayed on the grace trait's
-    clock; a real player sees it on their character sheet only when a band is crossed.
+    What a bot holds against, or owes, a named pilot. Each bot keeps its own ledger.
   </p>
   <p class="muted" style="margin:0 0 8px">The ledger is always on.</p>
   {{range .GraceDials}}

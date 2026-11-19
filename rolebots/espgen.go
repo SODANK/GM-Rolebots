@@ -343,7 +343,7 @@ func (m *Mod) handleSeedPost(w http.ResponseWriter, r *http.Request, ctx context
 		}
 		setPreloadDocked(on)
 		if !on {
-			redirect(w, r, "/rolebots/seed", "docked pin off — a system is torn down when its last pilot docks, and rebuilt from parked rows on undock", "")
+			redirect(w, r, "/rolebots/seed", "docked pin off", "")
 			return
 		}
 		redirect(w, r, "/rolebots/seed", "docked pin on — the system a pilot is docked in keeps flying its bots", "")
@@ -392,7 +392,7 @@ func (m *Mod) handleSeedPost(w http.ResponseWriter, r *http.Request, ctx context
 			return
 		}
 		redirect(w, r, "/rolebots/seed", fmt.Sprintf(
-			"repaired %d character(s): %s — the client caches portraits it has already drawn, so drop the stored render on each character page to see the change",
+			"repaired %d character(s): %s. Drop the stored render on each character page to see the change",
 			len(fixed), strings.Join(fixed, ", ")), "")
 
 	case "migrate":

@@ -84,9 +84,9 @@ func (m *Mod) handleCorpsMorale(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			if on {
-				redirect(w, r, self, "attrition ON — pilots that roll an exit leave at their next review, ramping in over 14 days", "")
+				redirect(w, r, self, "attrition ON, ramping in over 14 days", "")
 			} else {
-				redirect(w, r, self, "attrition OFF — the ledger keeps running in shadow", "")
+				redirect(w, r, self, "attrition OFF, the ledger keeps counting", "")
 			}
 			return
 		}

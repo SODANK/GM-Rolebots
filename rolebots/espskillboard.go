@@ -1193,7 +1193,7 @@ func (m *Mod) handleSkillBoardPost(w http.ResponseWriter, r *http.Request, ctx c
 		clearSkillBoardMemo()
 		// The confirmation is costed from the census and the lane's two numbers, not by
 		// rebuilding the board, which would pay for the grouped scans twice.
-		msg := "every pilot will reconsider its training — the lane takes them in batches"
+		msg := "every pilot will reconsider its training in batches"
 		var c skillBoard
 		if err := m.skillBoardCensus(ctx, &c); err == nil {
 			per, pace := m.skillPlansPerPass(ctx), m.skillPaceSec()
@@ -1206,10 +1206,8 @@ func (m *Mod) handleSkillBoardPost(w http.ResponseWriter, r *http.Request, ctx c
 					eta = fmt.Sprintf("%.1f days", h/24)
 				}
 			}
-			msg = fmt.Sprintf("%d pilot(s) queued to reconsider — the lane takes them "+
-				"about %d at a time and needs roughly %s to get round them all. "+
-				"Nothing is interrupted meanwhile: each pilot keeps training what it "+
-				"has until its own turn comes.", left, per, eta)
+			msg = fmt.Sprintf("%d pilot(s) queued to reconsider, %d at a time, roughly %s in all. "+
+				"Training is not interrupted.", left, per, eta)
 		}
 		redirect(w, r, self, msg, "")
 	case "replan-stop":
@@ -1218,8 +1216,7 @@ func (m *Mod) handleSkillBoardPost(w http.ResponseWriter, r *http.Request, ctx c
 			return
 		}
 		clearSkillBoardMemo()
-		redirect(w, r, self, "sweep cleared — pilots already round keep their new plans, "+
-			"and the rest go back to the ordinary hourly cadence", "")
+		redirect(w, r, self, "sweep cleared. Pilots already replanned keep their new plans", "")
 	case "horizon":
 		hours, err := strconv.ParseFloat(strings.TrimSpace(r.FormValue("hours")), 64)
 		if err != nil || hours <= 0 {
@@ -1232,9 +1229,8 @@ func (m *Mod) handleSkillBoardPost(w http.ResponseWriter, r *http.Request, ctx c
 			return
 		}
 		clearSkillBoardMemo()
-		msg := fmt.Sprintf("plans now cover about %s of training, spread by patience "+
-			"from %s to %s. Plans already written keep the length they were built with — "+
-			"press Reconsider to rebuild them now.",
+		msg := fmt.Sprintf("plans now cover about %s of training, from %s to %s by patience. "+
+			"Existing plans keep their length until Reconsider.",
 			durationText(want), durationText(want*skillHorizonHurriedMul),
 			durationText(want*skillHorizonPatientMul))
 		if want != hours*60 {
@@ -1255,12 +1251,10 @@ func (m *Mod) handleSkillBoardPost(w http.ResponseWriter, r *http.Request, ctx c
 		}
 		clearSkillBoardMemo()
 		// The dial changes what the next plan contains, not what is queued, so the message says which.
-		msg := "refining floor cleared — nobody is forced to train Refining any more, " +
-			"though the ordinary ranking still offers it"
+		msg := "refining floor cleared"
 		if want > 0 {
 			msg = fmt.Sprintf("every pilot will train Refining to level %d. "+
-				"It is a rank 1 skill, so this is hours rather than days — but plans "+
-				"already written do not carry it: press Reconsider to rebuild them now.",
+				"Existing plans do not carry it until Reconsider.",
 				want)
 		}
 		if want != level {

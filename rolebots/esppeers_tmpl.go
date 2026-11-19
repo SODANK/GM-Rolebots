@@ -68,12 +68,8 @@ const tmplPeers = tradeTabs + `{{define "content"}}
 
 <div class="card">
   <p style="margin:0 0 10px;color:#9ca3af;font-size:12px">
-    Every trade where both sides were rolebots — one bought, one sold, through the real matching
-    engine. Recorded from the side that walked the order book, which is the only side that sees who
-    it traded with; the other one's order was already resting. A bot's order taken by a
-    <b>player</b> is deliberately not here, because that is not a trade between bots — the
-    <a href="/rolebots/trades" style="color:#e0a94a">Feed</a> has it. Kept {{.Retention}} days;
-    the figures and tables above the ledger cover the last week and are refreshed every minute.
+    Trades where both sides were rolebots. Trades with a <b>player</b> are on the
+    <a href="/rolebots/trades" style="color:#e0a94a">Feed</a>. Kept {{.Retention}} days. Figures above the ledger cover the last week.
   </p>
   <div class="rb-tot">
     <div><div class="k">trades (24h)</div><div class="v">{{.Summary.Totals.Day}}</div></div>
@@ -158,10 +154,7 @@ const tmplPeers = tradeTabs + `{{define "content"}}
 
   {{if not .Rows}}
     <p style="color:#9ca3af;font-size:12px">
-      {{if .Paged}}Nothing further this way.{{else}}No bot has traded with another bot yet. That is the expected reading on a fresh roster: it
-      needs an industrialist to have finished something and listed it, and a second pilot to want
-      that thing at that station. The <a href="/rolebots/wants" style="color:#e0a94a">Wants List</a>
-      is where the first half of that gets started.{{end}}
+      {{if .Paged}}Nothing further this way.{{else}}No bot has traded with another bot yet. See the <a href="/rolebots/wants" style="color:#e0a94a">Wants List</a>.{{end}}
     </p>
   {{else}}
   <div class="rb-p rb-head">

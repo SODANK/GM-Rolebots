@@ -255,7 +255,7 @@ func (m *Mod) handleFactoryPost(w http.ResponseWriter, r *http.Request, ctx cont
 			redirect(w, r, self, "stock line removed", "")
 			return
 		}
-		redirect(w, r, self, fmt.Sprintf("%s pinned at %d units — the pruner will not touch it", name, target), "")
+		redirect(w, r, self, fmt.Sprintf("%s pinned at %d units", name, target), "")
 	default:
 		http.Redirect(w, r, self, http.StatusSeeOther)
 	}

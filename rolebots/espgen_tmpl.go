@@ -25,13 +25,8 @@ const tmplSeed = castTabs + `{{define "content"}}` + castTabsStyle + `
 <div class="card" id="rb-migrate" style="border-left:3px solid #6d28d9">
   <h3>Hand a Capsuleer to a player account</h3>
   <p style="font-size:12px;color:#9ca3af;margin-top:-4px">
-    Takes one generated Capsuleer off its {{.Prefix}} account and puts it on a player account, in a
-    free character slot. It stops being a rolebot entirely — roster row, personality, state, ledgers
-    and claims all go — and comes out an ordinary character somebody can log in on, docked at its own
-    medical clone station. Its corporation, career and skills are untouched; its ships and modules stay
-    at whatever station it left them.
-    A replacement is rolled into the slot it vacates, so the population and every wipe range stay
-    exactly as they are.
+    Moves one generated Capsuleer onto a player account with a free slot. It stops being a rolebot and
+    becomes an ordinary character, docked at its medical clone station. A replacement is rolled into the vacated slot.
   </p>
   <form method="POST" action="/rolebots/seed"
         onsubmit="return confirm('Hand this Capsuleer over? It stops being a rolebot, and a replacement is rolled onto its old account.');">
@@ -56,11 +51,8 @@ const tmplSeed = castTabs + `{{define "content"}}` + castTabsStyle + `
   </p>
   {{end}}
   <p style="margin-top:8px;font-size:12px;color:#6b7280">
-    The Capsuleer must be deactivated first, and no generation or wipe run may be in flight — the
-    replacement is rolled on the same run gate. The replacement is drawn from
-    <strong>{{.MixSource}}</strong>; change it on the form below and generate once to make a new one
-    stick. Every Capsuleer on
-    <a href="/rolebots/generated">Generated Characters</a> carries a Migrate link that fills this box in.
+    The Capsuleer must be deactivated first, and no run may be in flight. The replacement is drawn from
+    <strong>{{.MixSource}}</strong>. Generated Characters has a Migrate link per row that fills this box in.
   </p>
 </div>
 
@@ -147,7 +139,7 @@ const tmplSeed = castTabs + `{{define "content"}}` + castTabsStyle + `
       <p style="margin:4px 0;font-size:12px;color:#9ca3af">
         {{if .Proj.Cap}}{{if .Proj.Shed}}<strong style="color:#eab308">{{.Proj.Shed}}</strong>{{else}}0{{end}}
         withdrawn by the cap since boot &middot; {{end}}
-        a grid a player is standing on is never shed &mdash; the ring gives up its seats first.
+        a grid a player is standing on is never shed.
       </p>
       <form method="POST" action="/rolebots/seed" style="margin-top:6px">
         <input type="hidden" name="action" value="projcap">
@@ -170,8 +162,7 @@ const tmplSeed = castTabs + `{{define "content"}}` + castTabsStyle + `
         {{end}}
       </p>
       <p style="margin:4px 0;font-size:12px;color:#9ca3af">
-        Systems one gate jump from a player load and fill before they get there, so a grid is
-        already alive on arrival and gate traffic is flown rather than snapped into place.
+        Loads systems one gate jump from a player so grids are already alive on arrival.
         {{if .Preload.Available}}{{if or .Preload.Loads .Preload.Unloads}}
         <br>{{.Preload.Loads}} loaded, {{.Preload.Unloads}} released since boot.{{end}}{{end}}
       </p>
@@ -197,8 +188,7 @@ const tmplSeed = castTabs + `{{define "content"}}` + castTabsStyle + `
         {{end}}
       </p>
       <p style="margin:4px 0;font-size:12px;color:#9ca3af">
-        The system a player is docked in stays loaded and its bots keep flying, so undocking shows
-        traffic where it really is &mdash; not every bot rebuilt on the station's parking lane at once.
+        Keeps a player's docked system loaded so undocking shows real traffic.
       </p>
       {{if .Preload.Available}}
       <form method="POST" action="/rolebots/seed" style="margin-top:6px">
@@ -215,7 +205,7 @@ const tmplSeed = castTabs + `{{define "content"}}` + castTabsStyle + `
         <strong style="font-size:20px">{{.MaxBatch}}</strong> Capsuleers per run.
       </p>
       <p style="margin:4px 0;font-size:12px;color:#9ca3af">
-        A guard against a mistyped number, not a technical limit — ceiling {{.MaxLimit}}.
+        Guards against a mistyped number. Ceiling {{.MaxLimit}}.
       </p>
       <form method="POST" action="/rolebots/seed" style="margin-top:6px">
         <input type="hidden" name="action" value="runlimit">
@@ -255,46 +245,24 @@ const tmplSeed = castTabs + `{{define "content"}}` + castTabsStyle + `
     {{end}}
     <div style="margin-top:8px;font-size:12px;color:#9ca3af">
       Purge reaches <strong>{{.Prefix}}&lt;number&gt; accounts only</strong>. Your
-      <a href="/rolebots">Main Cast</a> — every character you made yourself and adopted — sits on an
-      ordinary account and <strong>is never deleted from here</strong>.
+      <a href="/rolebots">Main Cast</a> is never deleted from here.
     </div>
   </div>
   <div style="margin-top:8px;font-size:12px;color:#6b7280">
     <details>
       <summary style="cursor:pointer">What each of these does</summary>
       <p style="margin:6px 0">
-        <strong>Repair portraits</strong> — a few appearance options are offered by the database but ship
-        broken in the client: the bookmark names a texture by a malformed path, so that piece silently
-        does not draw. New Capsuleers already avoid them; this re-rolls only the affected slot on ones
-        generated before the fix. The client caches a portrait it has already drawn, so drop the stored
-        render on the character page afterwards.
+        <strong>Repair portraits</strong> — re-rolls appearance slots that ship broken in the client, on Capsuleers
+        generated before the fix. Drop the stored render on the character page afterwards.
       </p>
       <p style="margin:6px 0">
-        <strong>Purge everything</strong> — deletes every {{.Prefix}} account and everything on it: all
-        its Capsuleers, their ships and modules, skills, wallet journals, market orders, standings,
-        bills, industry jobs, chat channels, mail, roster rows and activity log. Irreversible, and it
-        needs <code>{{.WipeConfirm}}</code> typed into the box first.
-        <strong>The whole population must be deactivated first</strong> — an active bot is taking sim
-        turns while the delete runs, and anything it writes back mid-purge is an orphan the wipe has
-        already walked past. Press Deactivate all, then purge.
-        <strong>Your Main Cast is not reachable from here</strong> — the purge resolves accounts named
-        {{.Prefix}} followed by digits and nothing else, so a cast member on an account with any other
-        name is untouched by construction rather than by a filter. It is not a checkbox that could be
-        left unticked: there is no code path from this button to a character on a player account.
+        <strong>Purge everything</strong> — deletes every {{.Prefix}} account and everything on it. Irreversible.
+        Needs <code>{{.WipeConfirm}}</code> typed first, and the whole population deactivated.
       </p>
       <p style="margin:6px 0">
-        <strong>The online cap</strong> counts <strong>every</strong> Capsuleer, not just bots: the seats
-        a roster may take are <code>cap &minus; players connected</code>, so a player logging in pushes a
-        bot off the server and a player logging out lets one back on. One number that means "Capsuleers
-        on this server" — the figure the star map, the dashboard and Local all report.
-        A Capsuleer over the cap is <strong>logged off, not disabled</strong>: roster row, profile,
-        traits, state machine, market orders and skill training all carry on exactly as they do for a
-        player who closed the client. It takes no sim turn, holds no presence and projects no ship, and
-        it resumes where it stopped when a seat frees. Who goes is picked idlest-first — halted, then
-        idle in a hangar, then docked, then flying alone, longest-idle breaking ties — and a gang goes
-        whole, because its members share one op. A Capsuleer anyone can currently see (a player in its
-        station's guest list, or in its system) is never taken, so the cap can sit a little over while
-        somebody is watching. Changes are spread over passes rather than emptying Local in one frame.
+        <strong>The online cap</strong> counts every Capsuleer, players included. A player logging in
+        logs a bot off. A capped bot is logged off, not disabled, and resumes when a seat frees. A Capsuleer
+        someone can currently see is never taken.
       </p>
     </details>
   </div>
@@ -312,17 +280,11 @@ const tmplSeed = castTabs + `{{define "content"}}` + castTabsStyle + `
     <span id="gen-acct-note" style="margin-left:10px;color:#9ca3af"></span>
   </p>
   <p style="font-size:12px;color:#6b7280">
-    Each one is created through the server's own creation path — starting corporation,
-    character-creation skills, capsule and racial standing included. Name pools currently make
-    {{.Combos}} distinct names, and the portrait pose is taken whole from a curated library of
-    {{.PoseCount}} camera/eye/head combinations (docs/portrait-poses.json). Every mix below is a
-    <strong>percentage</strong>; the head count beside each row is what it works out to at this size.
+    {{.Combos}} distinct names and {{.PoseCount}} portrait poses are available. Every mix below is a
+    <strong>percentage</strong>, with the head count it works out to beside each row.
   </p>
   <p style="font-size:12px;color:#6b7280">
-    Each mix always adds up to 100%. Drag a slider and the others give up or take on the difference,
-    in proportion to what they hold now &mdash; a share at 0 stays at 0 until you raise it yourself.
-    <strong>Lock</strong> a row to pin it: while it is locked, moving another slider only trades with the
-    rows that are still unlocked. You can also type an exact figure into the box and press Tab.
+    Each mix adds up to 100%. Moving a slider adjusts the others. <strong>Lock</strong> a row to pin it. You can also type an exact figure.
   </p>
 </div>
 
@@ -366,8 +328,7 @@ const tmplSeed = castTabs + `{{define "content"}}` + castTabsStyle + `
     <button type="button" class="rb-even" data-g="arch" style="font-size:11px;padding:1px 6px">Even split</button>
   </h3>
   <p style="font-size:12px;color:#6b7280">
-    The archetype sets the character-creation career package <em>and</em> the personality traits, so a
-    Capsuleer trained on guns is also willing to use them. Set a share to 0 to exclude it.
+    Sets the starting career and the personality traits. Set a share to 0 to exclude it.
   </p>
   <div class="rb-mix">
     {{range .Archetypes}}
@@ -386,11 +347,7 @@ const tmplSeed = castTabs + `{{define "content"}}` + castTabsStyle + `
 <div class="card">
   <h3>3. Inside the law, or outside it <span class="rb-tot" id="tot-law"></span></h3>
   <p style="font-size:12px;color:#6b7280">
-    Criminality is a disposition, not a job. A criminal Miner is a rock thief working lowsec belts, a
-    criminal Trader smuggles, a criminal Combat pilot is a pirate — so this axis crosses the one above
-    rather than replacing a slot in it. It is where the roughness of the universe comes from, and it
-    should stay heavily lawful: a population that is a quarter criminal is not a universe with crime in
-    it, it is a war zone.
+    Criminality applies on top of the archetype above. Keep it mostly lawful.
   </p>
   <div class="rb-mix">
     {{range .Dispositions}}
@@ -405,9 +362,7 @@ const tmplSeed = castTabs + `{{define "content"}}` + castTabsStyle + `
     {{end}}
   </div>
   <p style="font-size:12px;color:#6b7280">
-    Where a Capsuleer actually flies is not set here and is not set anywhere: it falls out of this
-    disposition, its archetype and its employer, through its own comfort line. Fencing a pilot to a
-    security band is what used to stop it moving out to the nullsec corporation it had just signed with.
+    Where a Capsuleer flies is not set here. It follows disposition, archetype and employer.
   </p>
 </div>
 
@@ -416,13 +371,9 @@ const tmplSeed = castTabs + `{{define "content"}}` + castTabsStyle + `
     <button type="button" class="rb-even" data-g="bl" style="font-size:11px;padding:1px 6px">Even split</button>
   </h3>
   <p style="font-size:12px;color:#6b7280">
-    Bloodline, not empire — it sets the name pool, the appearance options, the starting school and the
-    starting faction standings. Hover a bloodline for the size of its name pool. Jove Modifier is
-    offered at 0% and stays out of the even split: it is the one Jove combination the client can draw,
-    it is men only whatever the female share below says, it is named with a single name and no surname,
-    borrowed from every other pool,
-    and two of its three schools sit inside Jove space, which has no gates to anywhere else. Jove
-    Static is not offered at all — there is no face for it.
+    Sets the name pool, appearance, starting school and standings. Hover a bloodline for its name count.
+    Jove Modifier is off by default and excluded from the even split. It is men only, has a single name, and
+    two of its schools sit in gateless Jove space.
   </p>
   <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(270px,1fr));gap:14px">
     {{range $race := .RaceOrder}}
@@ -460,9 +411,7 @@ const tmplSeed = castTabs + `{{define "content"}}` + castTabsStyle + `
 <div class="card">
   <h3>5. Starting skills and ISK <span class="rb-tot" id="tot-mat"></span></h3>
   <p style="font-size:12px;color:#6b7280">
-    A tier is a real skill sheet, written per archetype and per race — the racial hulls, the weapon
-    sizes and the support skills that go with them. Keep it mostly green: a population of veterans is a
-    universe with no room to grow into, and the module trains everyone from wherever they start.
+    Each tier is a skill sheet per archetype and race. Keep it mostly green.
   </p>
   <div class="rb-mix">
     {{range .Maturities}}
@@ -477,10 +426,7 @@ const tmplSeed = castTabs + `{{define "content"}}` + castTabsStyle + `
     {{end}}
   </div>
   <p style="font-size:12px;color:#6b7280">
-    Seasoned and veteran Capsuleers also arrive with a <strong>past</strong>: a career that started
-    months or years ago, the NPC corporations they worked for in order, and a home at the last of them.
-    They are docked at their employer's headquarters rather than at the academy, and Show Info reads
-    the same history any player's would.
+    Seasoned and veteran Capsuleers start with a <strong>past</strong>: an employment history, docked at their employer's headquarters.
   </p>
   <p style="margin-top:10px">
     Starting wallet, ISK:
@@ -488,9 +434,7 @@ const tmplSeed = castTabs + `{{define "content"}}` + castTabsStyle + `
     <input type="number" name="walletMax" value="30000000" min="0" step="100000" style="width:150px">
   </p>
   <p style="font-size:12px;color:#6b7280">
-    Each Capsuleer draws inside the band, leaning by tier — green near the floor, veterans near the
-    ceiling, seasoned spread across the middle. A flat draw would hand a rookie a veteran's purse, and
-    the wallet is what decides what it can buy on its first sim pass.
+    Each draw leans by tier: green near the floor, veterans near the ceiling.
   </p>
 </div>
 
@@ -499,12 +443,9 @@ const tmplSeed = castTabs + `{{define "content"}}` + castTabsStyle + `
     <button type="button" class="rb-even" data-g="tz" style="font-size:11px;padding:1px 6px">Even split</button>
   </h3>
   <p style="font-size:12px;color:#6b7280">
-    Every time here is the <strong>server's clock</strong> &mdash; it reads <strong>{{.TZClock}}</strong> now.
-    Each Capsuleer logs in at a time inside its window, plays 3&ndash;6 hours and logs off. Day to day the
-    login moves up to {{.TZ.BleedMin}} minutes either way, weekends run an hour longer, and about
-    {{.TZ.SkipDayPct}}% of days it does not log in at all. Logged off it is out of the game, like a player
-    who closed the client. Every Capsuleer is activated as it is created; these hours and the online cap
-    decide who is actually in space. The defaults are the spread the module draws on its own.
+    Times are the <strong>server's clock</strong> (now <strong>{{.TZClock}}</strong>). Each Capsuleer plays 3&ndash;6 hours inside its window.
+    Login drifts up to {{.TZ.BleedMin}} minutes daily and about {{.TZ.SkipDayPct}}% of days are skipped.
+    Hours and the online cap decide who is in space.
   </p>
   <div class="rb-mix">
     {{range .TZWindows}}
@@ -524,8 +465,7 @@ const tmplSeed = castTabs + `{{define "content"}}` + castTabsStyle + `
     {{range .TZHourLabels}}<div style="flex:1;text-align:center">{{.}}</div>{{end}}
   </div>
   <p style="font-size:12px;color:#6b7280;margin-top:6px">
-    Expected Capsuleers of this batch logged in at each hour, averaged over two weeks. Hover a bar for the
-    number. It counts only the Capsuleers created here; the Timezones page shows the whole roster.
+    Expected Capsuleers of this batch online each hour. Hover a bar for the number. The Timezones page shows the whole roster.
   </p>
 </div>
 <script>

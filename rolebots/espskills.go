@@ -177,9 +177,9 @@ func (m *Mod) handleSkillsPost(w http.ResponseWriter, r *http.Request, ctx conte
 			return
 		}
 		if on {
-			redirect(w, r, self, "this pilot now decides its own training — it re-plans within the hour", "")
+			redirect(w, r, self, "this pilot now plans its own training within the hour", "")
 		} else {
-			redirect(w, r, self, "automation off — the queue it has now runs to the end and nothing replaces it", "")
+			redirect(w, r, self, "automation off. The current queue runs out and is not replaced", "")
 		}
 	case "replan":
 		if err := m.planSkillsFor(ctx, charID); err != nil {
@@ -210,9 +210,9 @@ func (m *Mod) handleSkillsPost(w http.ResponseWriter, r *http.Request, ctx conte
 		case "":
 			redirect(w, r, self, "override removed — the pilot decides for itself again", "")
 		case "ban":
-			redirect(w, r, self, "skill banned — it will never be trained, and neither will anything behind it", "")
+			redirect(w, r, self, "skill banned, along with anything needing it", "")
 		default:
-			redirect(w, r, self, "skill pinned — the next plan trains it to V before anything else", "")
+			redirect(w, r, self, "skill pinned, trained to V first from the next plan", "")
 		}
 	default:
 		http.Redirect(w, r, self, http.StatusSeeOther)

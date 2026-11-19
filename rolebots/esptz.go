@@ -98,9 +98,9 @@ func (m *Mod) handleTimezones(w http.ResponseWriter, r *http.Request) {
 			redirect(w, r, self, "", err.Error())
 			return
 		}
-		msg := "timezones on — pilots log in and off by their hours"
+		msg := "timezones on"
 		if !c.On {
-			msg = "timezones off — every pilot comes back on over the next passes"
+			msg = "timezones off, pilots return over the next passes"
 		}
 		redirect(w, r, self, msg, "")
 		return

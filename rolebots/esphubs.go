@@ -358,7 +358,7 @@ func (m *Mod) handleTradeMap(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	swept := "never — the first sweep runs within five minutes of boot"
+	swept := "not yet"
 	if updated > 0 {
 		swept = agoString(clock.Unix()-updated) + " ago"
 	}
