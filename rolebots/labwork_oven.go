@@ -53,8 +53,13 @@ func (m *Mod) labOvenSweepBefore(ctx context.Context, b *botRun, cut int64) int 
 	if len(ids) == 0 {
 		return 0
 	}
+	// Nothing on the list can have rung, or outlived its row, since the last read
+	// (ovengate.go). An adoption still has to be saved, so it reads as before.
+	if cut == 0 && !adopted && ovenGateShut(ovenKindLab, b.CharID, ids, clock.Unix()) {
+		return 0
+	}
 	place := make([]string, len(ids))
-	args := make([]any, 0, len(ids)+2)
+	args := make([]any, 0, len(ids))
 	for i, id := range ids {
 		place[i] = "?"
 		args = append(args, id)
@@ -66,13 +71,9 @@ func (m *Mod) labOvenSweepBefore(ctx context.Context, b *botRun, cut int64) int 
 	if cut > 0 {
 		now, readyCut = cut, cut
 	}
-	args = append(args, readyCut, now)
 	rows, err := m.db.QueryContext(ctx, `
-		SELECT jobID, completedStatusID FROM ramJobs
-		 WHERE jobID IN (`+strings.Join(place, ",")+`)
-		   AND ((completedStatusID = 1 AND endProductionTime <= ?)
-		     OR completedStatusID >= 100
-		     OR (completedStatusID = 0 AND endProductionTime > 0 AND endProductionTime <= ?))`, args...)
+		SELECT jobID, completedStatusID, COALESCE(endProductionTime, 0) FROM ramJobs
+		 WHERE jobID IN (`+strings.Join(place, ",")+`)`, args...)
 	if err != nil {
 		if adopted {
 			_ = saveState(ctx, m.db, st)
@@ -80,16 +81,28 @@ func (m *Mod) labOvenSweepBefore(ctx context.Context, b *botRun, cut int64) int 
 		return 0
 	}
 	rung := make(map[int64]int64, len(ids))
+	// nextEnd is the earliest end time still to come, from the rows and from the list's
+	// own EndsAt (which is when an entry with no row is dropped below).
+	var nextEnd int64
+	scanned := true
 	for rows.Next() {
-		var jobID, status int64
-		if err := rows.Scan(&jobID, &status); err != nil {
+		var jobID, status, end int64
+		if err := rows.Scan(&jobID, &status, &end); err != nil {
+			scanned = false
 			break
 		}
-		rung[jobID] = status
+		if ovenRung(status, end, readyCut, now) {
+			rung[jobID] = status
+		} else if end > 0 && (nextEnd == 0 || end < nextEnd) {
+			nextEnd = end
+		}
+	}
+	if rows.Err() != nil {
+		scanned = false
 	}
 	rows.Close()
 	// No early return on an empty answer: an entry whose ramJobs row was deleted
-	// matches no arm of the query, and only the loop below removes it.
+	// is not rung, and only the loop below removes it.
 
 	kept := d.LabCooking[:0:0]
 	changed, stray, delivered := false, false, 0
@@ -128,6 +141,16 @@ func (m *Mod) labOvenSweepBefore(ctx context.Context, b *botRun, cut int64) int 
 		}
 	}
 	if !changed {
+		// Only a fully quiet read: a rung job the status ticker is still racing is
+		// retried next pass, not after the gate.
+		if cut == 0 && scanned && len(rung) == 0 {
+			for _, j := range kept {
+				if j.EndsAt > 0 && (nextEnd == 0 || j.EndsAt < nextEnd) {
+					nextEnd = j.EndsAt
+				}
+			}
+			ovenGateNote(ovenKindLab, b.CharID, ids, nextEnd, clock.Unix())
+		}
 		if adopted {
 			_ = saveState(ctx, m.db, st)
 		}

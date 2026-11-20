@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	evedb "gurimoon/db"
@@ -55,9 +56,16 @@ const (
 	// clone-and-hull reserve) as a share of what the pilot has: three quarters.
 	skillHoldbackMaxShare = 0.75
 
-	// skillReplanSec is how often a pilot rethinks: hourly notices a new fit, a fresh
-	// wallet or a finished book, and is cheap enough to run one pilot per sim pass.
+	// skillReplanSec is how often a pilot whose plan is still waiting on something rethinks:
+	// a step held back for want of a book or wallet. Hourly notices the fresh wallet or the
+	// finished book that frees it.
 	skillReplanSec = 3600
+	// skillSettledReplanSec is how often a settled pilot rethinks: one whose whole plan went
+	// into the queue, or whose last plan found nothing worth training. Nothing it waits on
+	// moves by the hour, and an emptied queue replans on its own (skillIdleReplanSec), so the
+	// longer interval loses no training. It is what keeps the lane inside its four workers on
+	// a large roster: an hourly circuit of every pilot outruns them.
+	skillSettledReplanSec = 6 * 3600
 	// skillMaxPlanSteps bounds one plan; the next replan extends it with better
 	// information.
 	skillMaxPlanSteps = 24
@@ -1831,10 +1839,23 @@ func bookWaitsOnPrereq(err error) bool {
 // does (simpool.go), since the pilots are independent character rows. Throughput is
 // workers / plan cost, and a pilot training nothing should not wait behind full queues.
 func (m *Mod) skillPass(ctx context.Context) {
-	due, err := m.duePlanners(ctx, m.skillPlansPerPass(ctx))
+	// A pass that last drained everything due waits skillDueQuietSec before asking again,
+	// unless the operator has stamped a sweep since (skillsweep.go).
+	now, epoch := clock.Unix(), replanEpoch()
+	if now < skillDueQuietUntil.Load() && epoch == skillDueEpoch.Load() {
+		return
+	}
+	limit := m.skillPlansPerPass(ctx)
+	due, err := m.duePlanners(ctx, limit)
 	if err != nil {
 		rlogf("rolebots: skill pass: %v", err)
 		return
+	}
+	skillDueEpoch.Store(epoch)
+	if len(due) < limit {
+		skillDueQuietUntil.Store(now + skillDueQuietSec)
+	} else {
+		skillDueQuietUntil.Store(0) // a backlog: ask again next pass
 	}
 	if len(due) == 0 {
 		return
@@ -1946,6 +1967,18 @@ var (
 	skillPlanCountAt time.Time
 )
 
+// skillDueQuietSec is how long the lane rests after a duePlanners read that came back
+// short of its limit: nothing else was due, and the GROUP BY over every pilot's plan rows
+// is not worth repeating every five seconds to find the next one a few seconds sooner.
+const skillDueQuietSec = 30
+
+var (
+	// skillDueQuietUntil is the clock second before which skillPass skips duePlanners.
+	skillDueQuietUntil atomic.Int64
+	// skillDueEpoch is the reconsider stamp the last read saw; a new stamp ends the rest.
+	skillDueEpoch atomic.Int64
+)
+
 // plansPerPass is that arithmetic on its own: how many of n pilots have to rethink each
 // pass for all of them to come round inside one replan interval. paceSec is how often a
 // pass actually comes round, not the tick the lane is registered at; sizing against the
@@ -1973,30 +2006,35 @@ func (m *Mod) duePlanners(ctx context.Context, limit int) ([]int64, error) {
 		limit = 1
 	}
 	now := clock.Unix()
+	// settled: every recorded row went into the queue (applied = 1), or the only row is the
+	// empty-plan stamp (typeID 0). A plan holding a step back for a book is not settled.
 	rows, err := m.db.QueryContext(ctx, `
 		SELECT c.characterID,
 		       (MIN(t.characterID) IS NULL
 		        AND NOT EXISTS (SELECT 1 FROM chrSkillQueue q WHERE q.characterID = c.characterID)
 		        AND (MAX(p.plannedAt) IS NULL OR MAX(p.applied) = 1)) AS idle,
-		       COALESCE(MAX(p.plannedAt), 0) AS pa
+		       COALESCE(MAX(p.plannedAt), 0) AS pa,
+		       (COUNT(p.characterID) > 0 AND MIN(p.applied = 1 OR p.typeID = 0) = 1) AS settled
 		FROM rolebot_characters c
 		LEFT JOIN rolebot_profiles pr ON pr.characterID = c.characterID
 		LEFT JOIN rolebot_skill_plan p ON p.characterID = c.characterID
 		LEFT JOIN chrSkillTraining t ON t.characterID = c.characterID
 		WHERE c.enabled = 1 AND COALESCE(pr.autoSkills, 1) = 1
 		GROUP BY c.characterID
-		HAVING (idle = 1 AND ? - pa >= ?) OR ? - pa >= ? OR pa < ?
+		HAVING (idle = 1 AND ? - pa >= ?)
+		    OR ? - pa >= IF(settled = 1, ?, ?)
+		    OR pa < ?
 		ORDER BY idle DESC, pa ASC, c.characterID ASC
 		LIMIT ?`,
-		now, skillIdleReplanSec, now, skillReplanSec, replanEpoch(), limit)
+		now, skillIdleReplanSec, now, skillSettledReplanSec, skillReplanSec, replanEpoch(), limit)
 	if err != nil {
 		return nil, fmt.Errorf("duePlanners: %w", err)
 	}
 	defer rows.Close()
 	var out []int64
 	for rows.Next() {
-		var charID, idle, plannedAt int64
-		if err := rows.Scan(&charID, &idle, &plannedAt); err != nil {
+		var charID, idle, plannedAt, settled int64
+		if err := rows.Scan(&charID, &idle, &plannedAt, &settled); err != nil {
 			return nil, fmt.Errorf("duePlanners scan: %w", err)
 		}
 		out = append(out, charID)

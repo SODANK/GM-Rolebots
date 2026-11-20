@@ -111,7 +111,8 @@ const tmplSkillBoard = castTabs + `{{define "content"}}
   <div class="rb-bar blue"><i style="width:{{.B.SweepPc}}%"></i></div>
   {{else}}
   <p class="muted" style="margin:10px 0 0">
-    No sweep running. Plans rebuild about every {{.ReplanMin}} minutes per pilot, and when a queue empties.
+    No sweep running. Plans rebuild about every {{.ReplanMin}} minutes for a pilot waiting on a book,
+    every {{.SettledReplanH}} hours once a whole plan is in the queue, and when a queue empties.
   </p>
   {{end}}
 </div>

@@ -3,6 +3,7 @@ package rolebots
 import (
 	"context"
 	"fmt"
+	"sync"
 	"sync/atomic"
 
 	evedb "gurimoon/db"
@@ -24,6 +25,13 @@ const (
 	// skillFloorPerPass is how many idle pilots the floor picks up in one pass; the
 	// cursor below keeps it from picking the same pilots twice while others wait.
 	skillFloorPerPass = 24
+	// skillFloorNothingSec is how long a pilot the floor found nothing for is left out of
+	// it. Its owned skills are all at V or banned, which does not change by the second; the
+	// planner is what moves it on, by buying a book.
+	skillFloorNothingSec = 600
+	// skillFloorQuietSec is how long the floor rests after a sweep reached the end of the
+	// roster with nobody to queue for.
+	skillFloorQuietSec = 30
 )
 
 // floorCursor is where the last sweep stopped. Ordering by characterID alone
@@ -31,8 +39,41 @@ const (
 // in every pass. The cursor wraps when a sweep comes back short.
 var floorCursor atomic.Int64
 
+// floorQuietUntil is the clock second before which the floor does not look.
+var floorQuietUntil atomic.Int64
+
+var (
+	floorNothingMu sync.Mutex
+	// floorNothing maps charID to the clock second until which the floor skips that pilot.
+	floorNothing = map[int64]int64{}
+)
+
+func init() {
+	registerCharForget("floorNothing", func(id int64) {
+		floorNothingMu.Lock()
+		delete(floorNothing, id)
+		floorNothingMu.Unlock()
+	})
+}
+
+// floorSkips reports whether the floor found nothing for this pilot recently.
+func floorSkips(charID, now int64) bool {
+	floorNothingMu.Lock()
+	defer floorNothingMu.Unlock()
+	until, ok := floorNothing[charID]
+	if ok && now >= until {
+		delete(floorNothing, charID)
+		return false
+	}
+	return ok
+}
+
 // skillFloorPass gives the next batch of idle pilots something to train.
 func (m *Mod) skillFloorPass(ctx context.Context) {
+	now := clock.Unix()
+	if now < floorQuietUntil.Load() {
+		return
+	}
 	ids, err := m.idleUnqueued(ctx, floorCursor.Load(), skillFloorPerPass)
 	if err != nil {
 		rlogf("rolebots: skill floor: %v", err)
@@ -43,11 +84,15 @@ func (m *Mod) skillFloorPass(ctx context.Context) {
 	} else {
 		floorCursor.Store(ids[len(ids)-1])
 	}
+	queued := 0
 	for _, charID := range ids {
 		// The floor is the less important half of the pass. Stopping here leaves the
 		// rest for the next pass instead of eating the planning budget.
 		if ctx.Err() != nil {
 			return
+		}
+		if floorSkips(charID, now) {
+			continue
 		}
 		n, err := m.floorQueueFor(ctx, charID)
 		if err != nil {
@@ -57,10 +102,19 @@ func (m *Mod) skillFloorPass(ctx context.Context) {
 		if n == 0 {
 			// Nothing to train that it already owns. An all-V pilot is finished, and one
 			// waiting on a book it cannot afford is the planner's problem.
+			floorNothingMu.Lock()
+			floorNothing[charID] = now + skillFloorNothingSec
+			floorNothingMu.Unlock()
 			continue
 		}
+		queued++
 		m.logBot(charID, logInfo, "skills",
 			"queued %d level(s) of skills it already owns so it is not standing idle — its own plan replaces this when the planner reaches it", n)
+	}
+	if len(ids) < skillFloorPerPass && queued == 0 {
+		// A lap that reached the end of the roster found nobody to queue for: rest
+		// before the next one.
+		floorQuietUntil.Store(now + skillFloorQuietSec)
 	}
 }
 

@@ -106,8 +106,20 @@ func (m *Mod) startSim() {
 // bot that overruns loses only its own turn. Bots run in a sharded worker pool
 // (simpool.go); the once-per-pass upkeep sweeps follow, serially.
 func (m *Mod) simPass(ctx context.Context) {
+	// The roster rows for everyone, but the full load (state, profile, traits, ship) only
+	// for pilots on the server: one logged off by the cap or its hours takes no turn, so
+	// its load waits until something needs it (hydrateMissing).
 	loadCtx, loadCancel := context.WithTimeout(ctx, simBotBudget)
-	bots, err := m.loadRuns(loadCtx)
+	bots, err := m.loadRosterWhere(loadCtx, "", nil)
+	if err == nil {
+		online := make([]*botRun, 0, len(bots))
+		for _, b := range bots {
+			if !popIsOffline(b.CharID) {
+				online = append(online, b)
+			}
+		}
+		err = m.hydrateMissing(loadCtx, online)
+	}
 	loadCancel()
 	if err != nil {
 		rlogf("rolebots: sim: %v", err)
@@ -115,7 +127,7 @@ func (m *Mod) simPass(ctx context.Context) {
 	}
 	// The online cap decides who is on the server this pass (popcap.go). A benched
 	// pilot takes no turn, holds no presence and projects no ball.
-	m.runBotPass(ctx, m.applyPopCap(bots))
+	m.runBotPass(ctx, m.applyPopCap(ctx, bots))
 	// Pilots off for their hours took no turn; one whose job has sat finished too long
 	// logs in briefly to take it off the line (tzclaim.go).
 	m.tzClaimPass(ctx, bots)
@@ -198,6 +210,9 @@ type botRun struct {
 	// a pilot reset since then is not stepped from this copy. 0 = built by
 	// hand, never stale.
 	loadedSeq uint64
+	// shipCand is the entity the character sits inside, when that is not its station:
+	// the ship hydrateRuns confirms. 0 = none.
+	shipCand int64
 }
 
 func (m *Mod) loadRuns(ctx context.Context) ([]*botRun, error) {
@@ -219,6 +234,54 @@ func (m *Mod) loadRun(ctx context.Context, charID int64) (*botRun, error) {
 }
 
 func (m *Mod) loadRunsWhere(ctx context.Context, where string, args []any) ([]*botRun, error) {
+	out, err := m.loadRosterWhere(ctx, where, args)
+	if err != nil {
+		return nil, err
+	}
+	if err := m.hydrateMissing(ctx, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// hydrateMissing completes the load of every run the roster query built but
+// hydrateRuns has not filled yet (State is nil). A run it has filled is left alone.
+func (m *Mod) hydrateMissing(ctx context.Context, runs []*botRun) error {
+	var need []*botRun
+	shipCand := map[int64]int64{}
+	for _, b := range runs {
+		if b.State != nil {
+			continue
+		}
+		need = append(need, b)
+		if b.shipCand != 0 {
+			shipCand[b.CharID] = b.shipCand
+		}
+	}
+	return m.hydrateRuns(ctx, need, shipCand)
+}
+
+// hydratedOnly is hydrateMissing for a list about to take turns: on a failed load
+// it logs and returns only the runs that were already filled, since a turn needs
+// the state. The rest are back next pass.
+func (m *Mod) hydratedOnly(ctx context.Context, runs []*botRun) []*botRun {
+	err := m.hydrateMissing(ctx, runs)
+	if err == nil {
+		return runs
+	}
+	rlogf("rolebots: sim: loading returning pilots: %v", err)
+	out := runs[:0:0]
+	for _, b := range runs {
+		if b.State != nil {
+			out = append(out, b)
+		}
+	}
+	return out
+}
+
+// loadRosterWhere is the roster query alone: one botRun per enabled pilot with the
+// character row's fields, State nil until hydrateMissing fills it.
+func (m *Mod) loadRosterWhere(ctx context.Context, where string, args []any) ([]*botRun, error) {
 	// The gang column is a correlated subquery, not a join: a character may sit in
 	// several gang rows and a join would give two botRuns for one pilot. MIN() matches gangForChar (gangs.go).
 	seq := rosterLoadSeq() // before the read: stateepoch.go
@@ -248,7 +311,6 @@ func (m *Mod) loadRunsWhere(ctx context.Context, where string, args []any) ([]*b
 	var out []*botRun
 	// The character entity sits inside its boarded ship; a station location means the
 	// char is unboarded in a hangar. Ship ownership is confirmed in one query afterwards (bulkload.go).
-	shipCand := map[int64]int64{}
 	for rows.Next() {
 		b := &botRun{loadedSeq: seq}
 		var charLoc int64
@@ -257,15 +319,12 @@ func (m *Mod) loadRunsWhere(ctx context.Context, where string, args []any) ([]*b
 			return nil, err
 		}
 		if charLoc != 0 && charLoc != b.StationID {
-			shipCand[b.CharID] = charLoc
+			b.shipCand = charLoc
 		}
 		rosterCorpOf.Store(b.CharID, b.CorpID)
 		out = append(out, b)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	if err := m.hydrateRuns(ctx, out, shipCand); err != nil {
 		return nil, err
 	}
 	return out, nil

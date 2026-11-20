@@ -202,7 +202,10 @@ func popScore(b *botRun, now int64) int {
 // turn. Pilots outside their hours are logged off first (applyTimezones), then the cap
 // applies to the rest. Benches and restores go in the module's offline set, which
 // presence.go and embody.go read.
-func (m *Mod) applyPopCap(bots []*botRun) []*botRun {
+//
+// A pilot that was offline when the pass loaded may come in unhydrated (sim.go simPass).
+// Whatever this returns is hydrated, and so is anything ranked by popScore.
+func (m *Mod) applyPopCap(ctx context.Context, bots []*botRun) []*botRun {
 	// The sim's clock, not the wall's: benching cadence must follow the
 	// same time the rest of the pass runs on, and the harness fakes it.
 	now := clock.Unix()
@@ -233,12 +236,12 @@ func (m *Mod) applyPopCap(bots []*botRun) []*botRun {
 
 	// Hours first (timezone.go): a pilot outside them is logged off whatever
 	// the cap says, and the cap divides its seats among the rest.
-	bots = m.applyTimezones(bots, now, false)
+	bots = m.applyTimezones(ctx, bots, now, false)
 
 	limit := MaxOnline()
 	if limit <= 0 {
 		m.popRestoreAll(bots, now)
-		return bots
+		return m.hydratedOnly(ctx, bots)
 	}
 
 	budget := limit - m.realSessionCount()
@@ -265,12 +268,14 @@ func (m *Mod) applyPopCap(bots []*botRun) []*botRun {
 		online = append(online, b)
 	}
 	popMu.Unlock()
+	// A pilot the loop above called back in was loaded as offline; popBench ranks by state.
+	online = m.hydratedOnly(ctx, online)
 
 	switch {
 	case len(online) > budget:
 		online = m.popBench(online, len(online)-budget, budget, limit, now)
 	case len(online) < budget && len(benched) > 0:
-		online = append(online, m.popRestore(benched, budget-len(online), limit, now)...)
+		online = append(online, m.hydratedOnly(ctx, m.popRestore(benched, budget-len(online), limit, now))...)
 	}
 	return online
 }

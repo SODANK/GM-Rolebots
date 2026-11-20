@@ -646,7 +646,7 @@ func tzUnits(bots []*botRun) [][]*botRun {
 // applyTimezones logs pilots in and off by their hours and returns the ones
 // in their hours, for the cap to divide up. boot lifts the churn limit and
 // the dwells: before the first presence sync nobody has seen anyone yet.
-func (m *Mod) applyTimezones(bots []*botRun, now int64, boot bool) []*botRun {
+func (m *Mod) applyTimezones(ctx context.Context, bots []*botRun, now int64, boot bool) []*botRun {
 	c := tzSettings()
 	day, minute := tzLocal(clock.Now())
 	churn := tzMaxChurnPerPass
@@ -664,6 +664,23 @@ func (m *Mod) applyTimezones(bots []*botRun, now int64, boot bool) []*botRun {
 		onAt[b.CharID] = popOnlineAt[b.CharID]
 	}
 	popMu.Unlock()
+
+	// tzReady reads the state of a pilot whose hours ended inside the grace. A pilot loaded
+	// as offline (sim.go simPass) is not hydrated yet, so that narrow set is loaded first.
+	if c.On {
+		var grace []*botRun
+		for _, b := range bots {
+			if b.State != nil {
+				continue
+			}
+			if st := tzStateAt(b.CharID, tzSlotOf(b.CharID), day, minute, c); !st.In && st.SinceEndMin < c.GraceMin {
+				grace = append(grace, b)
+			}
+		}
+		if err := m.hydrateMissing(ctx, grace); err != nil {
+			rlogf("rolebots: timezones: loading pilots in their grace: %v", err)
+		}
+	}
 
 	out := make([]*botRun, 0, len(bots))
 	var bench, back []*botRun
@@ -709,6 +726,29 @@ func (m *Mod) applyTimezones(bots []*botRun, now int64, boot bool) []*botRun {
 	}
 	if len(bench) == 0 && len(back) == 0 {
 		return out
+	}
+	// A returning pilot was loaded as offline and may be unhydrated, and tzResume moves
+	// clocks in its state. One that cannot be loaded stays off for this pass.
+	if len(back) > 0 {
+		if err := m.hydrateMissing(ctx, back); err != nil {
+			rlogf("rolebots: timezones: loading returning pilots: %v (they log in next pass)", err)
+			skip := make(map[int64]bool, len(back))
+			for _, b := range back {
+				if b.State == nil {
+					skip[b.CharID] = true
+				}
+			}
+			keep := func(list []*botRun) []*botRun {
+				kept := list[:0:0]
+				for _, b := range list {
+					if !skip[b.CharID] {
+						kept = append(kept, b)
+					}
+				}
+				return kept
+			}
+			back, out = keep(back), keep(out)
+		}
 	}
 
 	popMu.Lock()
@@ -766,7 +806,7 @@ func (m *Mod) tzBootGate(ctx context.Context) {
 		rlogf("rolebots: timezones: boot gate: %v", err)
 		return
 	}
-	m.applyTimezones(bots, clock.Unix(), true)
+	m.applyTimezones(ctx, bots, clock.Unix(), true)
 }
 
 // tzResume moves a returning pilot's running clocks forward by the time it was

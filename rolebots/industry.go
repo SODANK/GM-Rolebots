@@ -1706,10 +1706,14 @@ func (m *Mod) industryOvenSweepBefore(ctx context.Context, b *botRun, cut int64)
 	if len(ids) == 0 {
 		return 0
 	}
-	// One query for the whole list, returning rows only for jobs that need something done. A job the 30s server ticker has not flagged
-	// counts as rung on its own end time, as CompleteJob does.
+	// Nothing on the list can have rung since the last read (ovengate.go).
+	if cut == 0 && ovenGateShut(ovenKindIndustry, b.CharID, ids, clock.Unix()) {
+		return 0
+	}
+	// One query for the whole list. A job the 30s server ticker has not flagged counts as rung on its own end time, as CompleteJob
+	// does (ovenRung); the earliest end time still to come is what the gate waits for.
 	place := make([]string, len(ids))
-	args := make([]any, 0, len(ids)+2)
+	args := make([]any, 0, len(ids))
 	for i, id := range ids {
 		place[i] = "?"
 		args = append(args, id)
@@ -1718,26 +1722,35 @@ func (m *Mod) industryOvenSweepBefore(ctx context.Context, b *botRun, cut int64)
 	if cut > 0 {
 		readyCut, dueCut = cut, cut
 	}
-	args = append(args, readyCut, dueCut)
 	rows, err := m.db.QueryContext(ctx, `
-		SELECT jobID, completedStatusID FROM ramJobs
-		 WHERE jobID IN (`+strings.Join(place, ",")+`)
-		   AND ((completedStatusID = 1 AND endProductionTime <= ?)
-		     OR completedStatusID >= 100
-		     OR (completedStatusID = 0 AND endProductionTime > 0 AND endProductionTime <= ?))`, args...)
+		SELECT jobID, completedStatusID, COALESCE(endProductionTime, 0) FROM ramJobs
+		 WHERE jobID IN (`+strings.Join(place, ",")+`)`, args...)
 	if err != nil {
 		return 0
 	}
 	rung := make(map[int64]int64, len(ids))
+	var nextEnd int64
+	scanned := true
 	for rows.Next() {
-		var jobID, status int64
-		if err := rows.Scan(&jobID, &status); err != nil {
+		var jobID, status, end int64
+		if err := rows.Scan(&jobID, &status, &end); err != nil {
+			scanned = false
 			break
 		}
-		rung[jobID] = status
+		if ovenRung(status, end, readyCut, dueCut) {
+			rung[jobID] = status
+		} else if end > 0 && (nextEnd == 0 || end < nextEnd) {
+			nextEnd = end
+		}
+	}
+	if rows.Err() != nil {
+		scanned = false
 	}
 	rows.Close()
 	if len(rung) == 0 {
+		if cut == 0 && scanned {
+			ovenGateNote(ovenKindIndustry, b.CharID, ids, nextEnd, clock.Unix())
+		}
 		return 0
 	}
 
