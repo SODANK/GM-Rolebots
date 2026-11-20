@@ -574,6 +574,7 @@ func addGangRider(ctx context.Context, db *sql.DB, gangID, charID int64, role st
 		gangID, charID, role, clock.Unix()); err != nil {
 		return fmt.Errorf("addGangRider: %w", err)
 	}
+	rosterCacheInvalidate() // rostercache.go
 	return nil
 }
 
@@ -582,6 +583,7 @@ func addGangRider(ctx context.Context, db *sql.DB, gangID, charID int64, role st
 // would hold a seat (and a share of the haul) for somebody who is not there.
 func (m *Mod) purgeFleetRiders(ctx context.Context) {
 	res, err := m.db.ExecContext(ctx, `DELETE FROM rolebot_gang_members WHERE rider = 1`)
+	rosterCacheInvalidate() // rostercache.go
 	if err != nil {
 		rlogf("rolebots: boot rider purge: %v", err)
 		return

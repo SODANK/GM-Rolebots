@@ -14,6 +14,7 @@ package rolebots
 import (
 	"context"
 	"math"
+	"sync"
 
 	evedb "gurimoon/db"
 	"gurimoon/destiny"
@@ -177,6 +178,86 @@ func samePile(ax, ay, az, bx, by, bz float64) bool {
 
 // ── repair for ships parked inside station hulls ────────────────────────────
 
+// stationHull is one station's static geometry: where it is, which way its door faces and how
+// far its model reaches.
+type stationHull struct {
+	stationID int64
+	pos       destiny.Vec3
+	orient    destiny.Vec3
+	radius    float64
+}
+
+var (
+	stationHullsMu sync.Mutex
+	stationHullsBy map[int64][]stationHull // solarSystemID -> stations, stationID ascending
+)
+
+// stationHulls is every station with a model radius, by solar system, read once: staStations,
+// staStationTypes and mapDenormalize never change while the server runs. A failed read is not
+// kept, so the next call tries again. The map is shared and read-only.
+func (m *Mod) stationHulls(ctx context.Context) (map[int64][]stationHull, error) {
+	stationHullsMu.Lock()
+	defer stationHullsMu.Unlock()
+	if stationHullsBy != nil {
+		return stationHullsBy, nil
+	}
+	rows, err := m.db.QueryContext(ctx, `
+		SELECT s.solarSystemID, s.stationID, s.x, s.y, s.z,
+		       t.dockOrientationX, t.dockOrientationY, t.dockOrientationZ, d.radius
+		  FROM staStations s
+		  JOIN staStationTypes t ON t.stationTypeID = s.stationTypeID
+		  JOIN mapDenormalize  d ON d.itemID = s.stationID
+		 WHERE d.radius > 0
+		 ORDER BY s.solarSystemID, s.stationID`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	by := map[int64][]stationHull{}
+	for rows.Next() {
+		var sysID int64
+		var h stationHull
+		if err := rows.Scan(&sysID, &h.stationID, &h.pos.X, &h.pos.Y, &h.pos.Z,
+			&h.orient.X, &h.orient.Y, &h.orient.Z, &h.radius); err != nil {
+			return nil, err
+		}
+		by[sysID] = append(by[sysID], h)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	stationHullsBy = by
+	return by, nil
+}
+
+// undockRunsLive reports, for the given pilots, which still have an undock burn running (their
+// state's undockRunUntil is in the future). A pilot with no state row has none.
+func (m *Mod) undockRunsLive(ctx context.Context, charIDs []int64) (map[int64]bool, error) {
+	now := clock.Unix()
+	live := map[int64]bool{}
+	err := forEachChunk(charIDs, func(where string, args []any) error {
+		rows, err := m.db.QueryContext(ctx, `
+			SELECT characterID, COALESCE(JSON_EXTRACT(data, '$.undockRunUntil'), 0) + 0
+			  FROM rolebot_state WHERE characterID IN `+where, args...)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var id int64
+			var until float64
+			if err := rows.Scan(&id, &until); err != nil {
+				return err
+			}
+			if until > float64(now) {
+				live[id] = true
+			}
+		}
+		return rows.Err()
+	})
+	return live, err
+}
+
 // resettleStationHullShips moves bot ships parked inside a station's model out
 // to the door standoff. Runs at boot and on a timer, ungated on the master
 // switch, and is idempotent.
@@ -189,54 +270,72 @@ func (m *Mod) resettleStationHullShips(ctx context.Context) {
 	}
 
 	// Read the whole worklist and close the cursor before writing, as in destackParkedShips.
-	// A ship whose launch burn is still live is left alone: it is meant to be in the bay.
+	// Only the ships are read from the database: the stations are static (stationHullsIn), and
+	// the inside-the-hull test runs here with the same arithmetic the query used (squared
+	// distance against the squared radius), so the database no longer pairs every ship in
+	// space with every station in its system every sweep.
+	stationsBySys, err := m.stationHulls(ctx)
+	if err != nil {
+		rlogf("rolebots: resettle station hull ships: %v", err)
+		return
+	}
 	rows, err := m.db.QueryContext(ctx, `
-		SELECT e.itemID, b.characterID, s.stationID,
-		       s.x, s.y, s.z,
-		       t.dockOrientationX, t.dockOrientationY, t.dockOrientationZ,
-		       COALESCE(d.radius, 0)
+		SELECT e.itemID, b.characterID, c.solarSystemID, e.x, e.y, e.z
 		  FROM rolebot_characters b
 		  JOIN character_        c  ON c.characterID = b.characterID
 		  JOIN entity            ce ON ce.itemID = c.characterID
 		  JOIN entity            e  ON e.itemID = ce.locationID
-		  JOIN staStations       s  ON s.solarSystemID = c.solarSystemID
-		  JOIN staStationTypes   t  ON t.stationTypeID = s.stationTypeID
-		  JOIN mapDenormalize    d  ON d.itemID = s.stationID
-		  LEFT JOIN rolebot_state st ON st.characterID = b.characterID
 		 WHERE (c.stationID IS NULL OR c.stationID = 0)
 		   AND e.x IS NOT NULL AND e.y IS NOT NULL AND e.z IS NOT NULL
-		   AND d.radius > 0
-		   AND POW(e.x - s.x, 2) + POW(e.y - s.y, 2) + POW(e.z - s.z, 2)
-		       < POW(d.radius, 2)
-		   AND COALESCE(JSON_EXTRACT(st.data, '$.undockRunUntil'), 0) + 0 <= ?
-		 ORDER BY e.itemID`, clock.Unix())
+		 ORDER BY e.itemID`)
 	if err != nil {
 		rlogf("rolebots: resettle station hull ships: %v", err)
 		return
 	}
 	var list []stranded
-	seen := map[int64]bool{}
 	for rows.Next() {
-		var p stranded
-		if err := rows.Scan(&p.shipID, &p.charID, &p.stationID,
-			&p.station.X, &p.station.Y, &p.station.Z,
-			&p.orient.X, &p.orient.Y, &p.orient.Z, &p.radius); err != nil {
+		var shipID, charID, sysID int64
+		var x, y, z float64
+		if err := rows.Scan(&shipID, &charID, &sysID, &x, &y, &z); err != nil {
 			rows.Close()
 			rlogf("rolebots: resettle station hull ships: %v", err)
 			return
 		}
 		// Station radii reach 56 km, so two stations can both claim a ship. The first
 		// answer will do: it must end up outside one and be moved once.
-		if seen[p.shipID] {
-			continue
+		for _, s := range stationsBySys[sysID] {
+			dx, dy, dz := x-s.pos.X, y-s.pos.Y, z-s.pos.Z
+			if dx*dx+dy*dy+dz*dz < s.radius*s.radius {
+				list = append(list, stranded{shipID: shipID, charID: charID, stationID: s.stationID,
+					station: s.pos, orient: s.orient, radius: s.radius})
+				break
+			}
 		}
-		seen[p.shipID] = true
-		list = append(list, p)
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
 		rlogf("rolebots: resettle station hull ships: %v", err)
 		return
+	}
+	// A ship whose launch burn is still live is left alone: it is meant to be in the bay. Read
+	// for the handful inside a hull only, not for every ship in space.
+	if len(list) > 0 {
+		ids := make([]int64, len(list))
+		for i, p := range list {
+			ids[i] = p.charID
+		}
+		live, err := m.undockRunsLive(ctx, ids)
+		if err != nil {
+			rlogf("rolebots: resettle station hull ships: %v", err)
+			return
+		}
+		kept := list[:0]
+		for _, p := range list {
+			if !live[p.charID] {
+				kept = append(kept, p)
+			}
+		}
+		list = kept
 	}
 
 	var moved int

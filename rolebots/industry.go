@@ -1697,12 +1697,7 @@ func (m *Mod) industryOvenSweepBefore(ctx context.Context, b *botRun, cut int64)
 		return 0
 	}
 	d := &st.Data
-	ids := make([]int64, 0, len(d.IndCooking))
-	for _, j := range d.IndCooking {
-		if !j.Delivered && j.JobID != 0 {
-			ids = append(ids, j.JobID)
-		}
-	}
+	ids := indOvenIDs(d)
 	if len(ids) == 0 {
 		return 0
 	}

@@ -302,8 +302,10 @@ func resolveCharter(p pilotIdentity) Charter {
 	// The bar is on corpTagFit's scale: neutral pilots score about 0.9, applicants about 1.4.
 	ch.HRBar = bend(p.trait(TraitLoyalty), 1.4, 0.85, 0.5)
 	why("Applicant bar", fmt.Sprintf("fit ≥ %.2f", ch.HRBar), "loyalty — a devoted CEO is picky about who wears the badge, a mercenary takes anyone")
-	ch.HRDelaySec = int64(bend(p.trait(TraitPatience), 24*3600, 6*3600, 3600))
-	why("Answers applications after", fmtDuration(ch.HRDelaySec), "patience — Personnel Managers read the desk within the hour whatever the CEO's habit")
+	// 30–60 minutes whatever the CEO's habit: no applicant waits a day for an answer, whether the
+	// CEO, an officer, or the offline fallback (staffDesks) reads the desk.
+	ch.HRDelaySec = int64(bend(p.trait(TraitPatience), 3600, 2700, 1800))
+	why("Answers applications after", fmtDuration(ch.HRDelaySec), "patience — between half an hour and an hour; nobody waits a day on an application")
 	// Held + delay stays under corpApplyExpirySec, so a full corporation answers
 	// a waiting applicant before it gives up.
 	ch.HRHoldSec = int64(bend(p.trait(TraitPatience), 4*86400, 2*86400, 12*3600))

@@ -320,6 +320,7 @@ func (m *Mod) migrateCorpAllegiance(ctx context.Context) error {
 	// The first deployment wrote an 18-character marker into the 16-wide column; the
 	// truncated row never matched a probe and is swept here.
 	m.db.ExecContext(ctx, `DELETE FROM rolebot_traits WHERE characterID = 0 AND trait = 'corpAllegianceSe'`)
+	invalidateTraits(0) // a marker row in rolebot_traits (roster.go traits cache)
 	return setTraitMarker(ctx, m.db, allegianceSeedMarker)
 }
 

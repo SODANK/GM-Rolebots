@@ -35,6 +35,11 @@ type wingCensus struct {
 var (
 	wingMu     sync.Mutex
 	wingCached *wingCensus
+	// wingFlight is closed when the census being read finishes; nil when none is in flight. The
+	// sim pass runs eight pilots at once and they all find the census expired in the same second,
+	// so one reads it and the rest take its answer instead of each grouping the whole roster.
+	wingFlight  chan struct{}
+	wingFlightC *wingCensus
 )
 
 // wingCensusNow returns the current census, refreshing it at most once per wingCensusSec.
@@ -46,8 +51,37 @@ func (m *Mod) wingCensusNow(ctx context.Context) *wingCensus {
 		wingMu.Unlock()
 		return c
 	}
+	if ch := wingFlight; ch != nil {
+		wingMu.Unlock()
+		select {
+		case <-ch:
+			wingMu.Lock()
+			c := wingFlightC
+			wingMu.Unlock()
+			if c != nil {
+				return c
+			}
+		case <-ctx.Done():
+		}
+		return &wingCensus{at: now, underArms: map[int64]int{}, roster: map[int64]int{}}
+	}
+	ch := make(chan struct{})
+	wingFlight = ch
 	wingMu.Unlock()
+	var c *wingCensus
+	// Released whatever happens, so a panic in the read cannot leave the others waiting.
+	defer func() {
+		wingMu.Lock()
+		wingFlight, wingFlightC = nil, c
+		wingMu.Unlock()
+		close(ch)
+	}()
+	c = m.readWingCensus(ctx, now)
+	return c
+}
 
+// readWingCensus is one census read. A failed read gives an empty census, which is not cached.
+func (m *Mod) readWingCensus(ctx context.Context, now int64) *wingCensus {
 	c := &wingCensus{at: now, underArms: map[int64]int{}, roster: map[int64]int{}}
 	rows, err := m.db.QueryContext(ctx, `
 		SELECT c.corporationID, COALESCE(s.activity, ''), COUNT(*)

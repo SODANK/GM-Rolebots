@@ -33,6 +33,7 @@ func init() {
 // noteStateReset records that charID's state row was just rewritten from
 // outside its own turn's copy.
 func noteStateReset(charID int64) {
+	rosterWakeClear(charID) // the new state is stepped next pass (rosterwake.go)
 	n := stateSeq.Add(1)
 	stateResetMu.Lock()
 	stateResetSeq[charID] = n

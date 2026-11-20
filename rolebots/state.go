@@ -23,6 +23,10 @@ type SimState struct {
 	LastError   string
 	LastErrorAt int64
 	Halted      bool
+
+	// catchUp is the leg catch-up armed for the turn in progress (legcatchup.go). It lives
+	// for one turn and is never stored.
+	catchUp legCatchUp
 }
 
 // StateData is the JSON blob column: everything a phase needs to resume.
@@ -168,6 +172,9 @@ func loadState(ctx context.Context, db *sql.DB, charID int64) (*SimState, error)
 }
 
 func saveState(ctx context.Context, db *sql.DB, st *SimState) error {
+	// A leg this turn started is timed from when the last one ended, not from when the
+	// late turn came round (legcatchup.go).
+	st.applyLegCatchUp()
 	blob, err := json.Marshal(&st.Data)
 	if err != nil {
 		return fmt.Errorf("saveState marshal: %w", err)
@@ -196,6 +203,9 @@ func saveState(ctx context.Context, db *sql.DB, st *SimState) error {
 	noteStateSaved(st.CharID, sum)
 	noteClaim(st.CharID, claimFromState(st.Activity, st.Halted, &st.Data)) // claims.go
 	noteGridDue(st.CharID, st.Data.LegEndsAt, st.Halted)                   // griddue.go
+	// A write from outside the pilot's roster turn (another lane, the panel) changes what
+	// it waits on; the turn's own writes are followed by a fresh record (rosterwake.go).
+	rosterWakeClear(st.CharID)
 	return nil
 }
 

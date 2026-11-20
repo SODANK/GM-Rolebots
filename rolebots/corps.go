@@ -447,6 +447,33 @@ const corpFactsQuery = `
 	       ON rb.corporationID = n.corporationID
 	LEFT JOIN rolebot_corps p ON p.corporationID = n.corporationID`
 
+// corpFactsOneQuery is corpFactsQuery for one corporation (the argument): the same columns and
+// values, with each count a subquery on that corporation alone. One scan of character_ is the
+// right trade for the whole catalogue, but asked for one corporation the derived tables still
+// group every character on the server first (playerCorpFactsOneQuery says the same).
+const corpFactsOneQuery = `
+	SELECT n.corporationID, c.corporationName, c.tickerName,
+	       COALESCE(n.factionID, 0), COALESCE(f.factionName, ''),
+	       COALESCE(c.raceID, 0), COALESCE(n.mainActivityID, 0), COALESCE(n.secondaryActivityID, 0),
+	       COALESCE(n.size, ''), COALESCE(n.extent, ''),
+	       c.stationID, COALESCE(sta.stationName, ''),
+	       COALESCE(sta.solarSystemID, 0), COALESCE(ms.solarSystemName, ''), COALESCE(mr.regionName, ''),
+	       (SELECT COUNT(*) FROM staStations s2 WHERE s2.corporationID = n.corporationID),
+	       (SELECT COUNT(*) FROM character_ m WHERE m.corporationID = n.corporationID AND m.accountID > 0),
+	       (SELECT COUNT(*) FROM rolebot_characters r JOIN character_ ch ON ch.characterID = r.characterID
+	         WHERE ch.corporationID = n.corporationID),
+	       COALESCE(p.joinable, 0), COALESCE(p.restricted, 0), COALESCE(p.tags, ''),
+	       COALESCE(p.raceRule, ''), COALESCE(p.minStanding, 0), COALESCE(p.weight, 1),
+	       COALESCE(p.notes, ''), COALESCE(p.allegiance, 0), COALESCE(p.updatedAt, 0)
+	FROM crpNPCCorporations n
+	JOIN corporation c ON c.corporationID = n.corporationID
+	LEFT JOIN chrFactions f ON f.factionID = n.factionID
+	LEFT JOIN staStations sta ON sta.stationID = c.stationID
+	LEFT JOIN mapSolarSystems ms ON ms.solarSystemID = sta.solarSystemID
+	LEFT JOIN mapRegions mr ON mr.regionID = ms.regionID
+	LEFT JOIN rolebot_corps p ON p.corporationID = n.corporationID
+	WHERE n.corporationID = ?`
+
 func scanCorpFacts(rows *sql.Rows) ([]CorpFacts, error) {
 	var out []CorpFacts
 	for rows.Next() {
@@ -493,8 +520,7 @@ func listCorpFacts(ctx context.Context, db *sql.DB) ([]CorpFacts, error) {
 }
 
 func getCorpFacts(ctx context.Context, db *sql.DB, corpID int64) (*CorpFacts, error) {
-	rows, err := db.QueryContext(ctx, corpFactsQuery+`
-		WHERE n.corporationID = ?`, corpID)
+	rows, err := db.QueryContext(ctx, corpFactsOneQuery, corpID)
 	if err != nil {
 		return nil, fmt.Errorf("getCorpFacts: %w", err)
 	}

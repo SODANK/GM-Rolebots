@@ -350,16 +350,8 @@ func (m *Mod) gateBetween(ctx context.Context, inSys, toSys int64) int64 {
 	if inSys == 0 || toSys == 0 || inSys == toSys {
 		return 0
 	}
-	var gateID int64
-	if err := m.db.QueryRowContext(ctx, `
-		SELECT d.itemID
-		  FROM mapDenormalize d
-		  JOIN mapJumps mj ON mj.stargateID = d.itemID
-		  JOIN mapDenormalize src ON src.itemID = mj.celestialID
-		 WHERE d.solarSystemID = ? AND src.solarSystemID = ?
-		 LIMIT 1`, inSys, toSys).Scan(&gateID); err != nil {
-		return 0
-	}
+	// Static map data, read once per pair (staticgates.go).
+	gateID, _ := cachedGateBetween(ctx, m.db, inSys, toSys)
 	return gateID
 }
 
@@ -370,19 +362,13 @@ func (m *Mod) gateBetween(ctx context.Context, inSys, toSys int64) int64 {
 // which is the axis the core scatters arrivals around (destiny/gatearrival.go).
 // ok=false when the gate is not in the map or has no pair.
 func (m *Mod) gateArrivalGeom(ctx context.Context, gateID int64) (gate, dir destiny.Vec3, radius float64, ok bool) {
-	var x, y, z, sx, sy, sz float64
-	if err := m.db.QueryRowContext(ctx, `
-		SELECT COALESCE(d.x,0), COALESCE(d.y,0), COALESCE(d.z,0), COALESCE(d.radius,1),
-		       COALESCE(src.x,0), COALESCE(src.y,0), COALESCE(src.z,0)
-		  FROM mapDenormalize d
-		  JOIN mapJumps mj ON mj.stargateID = d.itemID
-		  JOIN mapDenormalize src ON src.itemID = mj.celestialID
-		 WHERE d.itemID = ?
-		 LIMIT 1`, gateID).Scan(&x, &y, &z, &radius, &sx, &sy, &sz); err != nil {
+	// Static map data, read once per gate (staticgates.go).
+	g, err := cachedGateArrivalGeom(ctx, m.db, gateID)
+	if err != nil || !g.ok {
 		return destiny.Vec3{}, destiny.Vec3{}, 0, false
 	}
-	gate = destiny.Vec3{X: x, Y: y, Z: z}
-	dir = gate.Sub(destiny.Vec3{X: sx, Y: sy, Z: sz})
+	gate, radius = g.gate, g.radius
+	dir = gate.Sub(g.src)
 	if dir.IsZero() {
 		dir = destiny.Vec3{X: 1}
 	}

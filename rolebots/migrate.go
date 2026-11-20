@@ -267,7 +267,7 @@ func (m *Mod) dockCharacterAt(ctx context.Context, charID, stationID int64) erro
 			return err
 		}
 	}
-	return evedb.UpdateCharacterStation(ctx, m.db, charID, stationID,
+	return updateCharacterStation(ctx, m.db, charID, stationID,
 		loc.SolarSystemID, loc.ConstellationID, loc.RegionID)
 }
 

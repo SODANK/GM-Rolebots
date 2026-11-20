@@ -5,7 +5,6 @@ import (
 	"log"
 	"runtime/debug"
 	"sync"
-	"sync/atomic"
 	"time"
 )
 
@@ -215,26 +214,19 @@ func (m *Mod) stepProjectedBots(ctx context.Context, ids, conscripts []int64) {
 
 	// One unit per pilot: every pilot here is solo, so no blackboard needs one
 	// worker, and lockBotStep already serialises a pilot across lanes.
-	var moved atomic.Bool
 	step := func(b *botRun) {
-		wasSys, wasStation := b.SystemID, b.StationID
 		m.stepBot(ctx, b)
 		if eb := liveProjection(b.CharID); eb != nil {
 			eb.mu.Lock()
 			eb.lastGridStepAt = now
 			eb.mu.Unlock()
 		}
-		if b.SystemID != wasSys || b.StationID != wasStation {
-			moved.Store(true)
-		}
 	}
 	runUnits(turn, m.simWorkers(), step)
 
-	// Local and station guest lists follow the database, not what a step said it did.
-	// Only when something moved: syncPresence reads the whole roster in one query.
-	if moved.Load() {
-		m.syncPresence()
-	}
+	// Local and station guest lists follow the database, not what a step said it did:
+	// the pilots whose location was written (markPresenceDirty) are synced, one row each.
+	m.syncPresenceDirty()
 	st.took = clock.Now().Sub(start)
 	m.logGridPass(st, clock.Now())
 }

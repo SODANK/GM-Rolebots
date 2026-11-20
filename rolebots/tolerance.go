@@ -81,6 +81,7 @@ var toleranceSeedQuery = fmt.Sprintf(`
 // migrateToleranceSeed gives every rostered pilot without a tolerance value
 // one, once (marker row at characterID 0). Cursor-walked, never OFFSET.
 func migrateToleranceSeed(ctx context.Context, db *sql.DB) error {
+	defer invalidateAllTraits() // writes rolebot_traits (roster.go traits cache)
 	var done int
 	if err := db.QueryRowContext(ctx, `
 		SELECT COUNT(*) FROM rolebot_traits
@@ -225,7 +226,7 @@ type raceView struct {
 	unallied map[int64][]int64
 	// alliedMask is raceID to the race bits it counts as allied (its own included).
 	alliedMask map[int64]int64
-	empires  map[int64]bool       // the empire factions themselves
+	empires    map[int64]bool // the empire factions themselves
 }
 
 var raceViewCur atomic.Pointer[raceView]

@@ -7,6 +7,7 @@ import (
 	"math"
 	"math/rand"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -634,6 +635,24 @@ func (m *Mod) desiredProjections(ctx context.Context, charID int64) (map[int64]e
 	where, args := "", []any(nil)
 	if charID != 0 {
 		where, args = " AND b.characterID = ?", []any{charID}
+	} else {
+		if m.systems == nil {
+			return desired, nil // nothing is loaded, so nothing is projected
+		}
+		// The roster-wide reconcile reads only the systems that carry projections (the same
+		// systemProjected test each row passes below). On a large roster nearly every bot is
+		// elsewhere, and reading its state blob every pass only to drop it is the cost.
+		var sys []string
+		for _, ss := range m.systems.All() {
+			if ss != nil && m.systemProjected(ss.ID) {
+				sys = append(sys, "?")
+				args = append(args, ss.ID)
+			}
+		}
+		if len(sys) == 0 {
+			return desired, nil
+		}
+		where = " AND c.solarSystemID IN (" + strings.Join(sys, ",") + ")"
 	}
 	rows, err := m.db.QueryContext(ctx, `
 		SELECT c.characterID, c.characterName, c.corporationID, c.solarSystemID,
@@ -674,6 +693,13 @@ func (m *Mod) desiredProjections(ctx context.Context, charID int64) (map[int64]e
 		// Logged off by the online cap (popcap.go): nobody is flying that ship. This fires when a player
 		// warps in on a bot the cap benched a moment earlier.
 		if popIsOffline(w.charID) {
+			continue
+		}
+		// Systems that should carry projections: one a real player is in, or one the ring loaded a jump
+		// ahead (preload.go). Never a system this module conjured: a bare GetOrCreate registers an empty shell.
+		// Checked first: it needs only the system, and it rules out nearly every bot on a large roster
+		// before the state blob is decoded and the hull is confirmed with a query of its own.
+		if !m.systemProjected(w.systemID) {
 			continue
 		}
 		// What this projection does comes from the task registry (task.go), not phase strings. The
@@ -761,12 +787,6 @@ func (m *Mod) desiredProjections(ctx context.Context, charID int64) (map[int64]e
 			continue
 		}
 		w.shipID = shipCandidate
-
-		// Systems that should carry projections: one a real player is in, or one the ring loaded a jump
-		// ahead (preload.go). Never a system this module conjured: a bare GetOrCreate registers an empty shell.
-		if !m.systemProjected(w.systemID) {
-			continue
-		}
 
 		// Resolved last, so the query is paid only for bots about to be projected.
 		if traits, err := getTraits(ctx, m.db, w.charID); err != nil {

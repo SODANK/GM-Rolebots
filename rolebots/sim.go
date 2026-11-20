@@ -10,6 +10,7 @@ import (
 	"math/rand"
 	"runtime/debug"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	evedb "gurimoon/db"
@@ -86,8 +87,11 @@ func (m *Mod) stationDwell(b *botRun) int64 {
 func (m *Mod) startSim() {
 	m.registerPeriodic("rolebots-sim", simEveryTicks, func(tickNum uint64) bool {
 		if !Master() {
+			// Time with the sim switched off is not lateness to repay (legcatchup.go).
+			legCatchUpSince.Store(0)
 			return true
 		}
+		legCatchUpSince.CompareAndSwap(0, clock.Unix())
 		// The tick manager runs everything on one goroutine: do the DB work off it and
 		// let ticks overlap-guard themselves.
 		if !m.simBusy.CompareAndSwap(false, true) {
@@ -106,36 +110,55 @@ func (m *Mod) startSim() {
 // bot that overruns loses only its own turn. Bots run in a sharded worker pool
 // (simpool.go); the once-per-pass upkeep sweeps follow, serially.
 func (m *Mod) simPass(ctx context.Context) {
-	// The roster rows for everyone, but the full load (state, profile, traits, ship) only
-	// for pilots on the server: one logged off by the cap or its hours takes no turn, so
-	// its load waits until something needs it (hydrateMissing).
+	// The roster, possibly from the copy (rostercache.go), for choosing who acts; a fresh
+	// row and the full load (state, profile, traits, ship) only for the pilots that take a
+	// turn this pass and for what the cap and the hours decide on (readyRuns).
 	loadCtx, loadCancel := context.WithTimeout(ctx, simBotBudget)
-	bots, err := m.loadRosterWhere(loadCtx, "", nil)
-	if err == nil {
-		online := make([]*botRun, 0, len(bots))
-		for _, b := range bots {
-			if !popIsOffline(b.CharID) {
-				online = append(online, b)
-			}
-		}
-		err = m.hydrateMissing(loadCtx, online)
-	}
-	loadCancel()
+	defer loadCancel()
+	bots, err := m.rosterForPass(loadCtx)
 	if err != nil {
 		rlogf("rolebots: sim: %v", err)
 		return
 	}
 	// The online cap decides who is on the server this pass (popcap.go). A benched
 	// pilot takes no turn, holds no presence and projects no ball.
-	m.runBotPass(ctx, m.applyPopCap(ctx, bots))
+	offlineWas := popOfflineSig()
+	online := m.applyPopCap(loadCtx, bots)
+	// Of those, the ones with something to do (rosterwake.go). A pilot with a ball on grid
+	// belongs to the grid lane, which stepBot would skip after the load anyway.
+	now := clock.Unix()
+	turn := make([]*botRun, 0, len(online))
+	for _, b := range online {
+		if gridLaneOwns(b, m.isEmbodied(b.CharID)) {
+			continue
+		}
+		if rosterDue(b, now) {
+			turn = append(turn, b)
+		}
+	}
+	turn = m.hydratedOnly(loadCtx, turn)
+	m.runBotPass(ctx, turn)
 	// Pilots off for their hours took no turn; one whose job has sat finished too long
 	// logs in briefly to take it off the line (tzclaim.go).
 	m.tzClaimPass(ctx, bots)
-	// Presence follows the location in the database, not what the step claimed;
-	// syncPresence is a diff, so a pass with nothing to do costs one query.
-	m.syncPresence()
+	// Presence follows the location in the database, not what the step claimed. Pilots
+	// whose location was written are synced on their own (markPresenceDirty, whoever wrote
+	// it); a login or logoff, and every presenceSyncSec as a catch-all for writes the module
+	// did not make, run the full roster sync.
+	if popOfflineSig() != offlineWas || clock.Unix()-presenceSyncAt.Load() >= presenceSyncSec {
+		presenceSyncAt.Store(clock.Unix())
+		m.syncPresence()
+	} else {
+		m.syncPresenceDirty()
+	}
 	m.upkeepPass(ctx)
 }
+
+// presenceSyncSec is the longest the roster pass goes without a full presence sync.
+const presenceSyncSec = 60
+
+// presenceSyncAt is the clock second of the roster pass's last presence sync.
+var presenceSyncAt atomic.Int64
 
 // upkeepPass runs the once-per-pass sweeps that belong to the roster as a whole.
 // Reconciling projections and expiring jetcans mutate the same SolarSystems and push
@@ -213,6 +236,9 @@ type botRun struct {
 	// shipCand is the entity the character sits inside, when that is not its station:
 	// the ship hydrateRuns confirms. 0 = none.
 	shipCand int64
+	// rowFresh marks a run whose roster fields were read this pass, not copied from the
+	// roster cache (rostercache.go). Only a fresh run is loaded and acted on.
+	rowFresh bool
 }
 
 func (m *Mod) loadRuns(ctx context.Context) ([]*botRun, error) {
@@ -261,22 +287,14 @@ func (m *Mod) hydrateMissing(ctx context.Context, runs []*botRun) error {
 	return m.hydrateRuns(ctx, need, shipCand)
 }
 
-// hydratedOnly is hydrateMissing for a list about to take turns: on a failed load
-// it logs and returns only the runs that were already filled, since a turn needs
-// the state. The rest are back next pass.
+// hydratedOnly is readyRuns for a list about to take turns: it returns only the runs
+// that came out loaded, since a turn needs a fresh row and the state. A pilot no
+// longer enabled is dropped; on a failed read the rest are back next pass.
 func (m *Mod) hydratedOnly(ctx context.Context, runs []*botRun) []*botRun {
-	err := m.hydrateMissing(ctx, runs)
-	if err == nil {
-		return runs
+	if err := m.readyRuns(ctx, runs); err != nil {
+		rlogf("rolebots: sim: loading pilots for their turn: %v", err)
 	}
-	rlogf("rolebots: sim: loading returning pilots: %v", err)
-	out := runs[:0:0]
-	for _, b := range runs {
-		if b.State != nil {
-			out = append(out, b)
-		}
-	}
-	return out
+	return loadedOnly(runs)
 }
 
 // loadRosterWhere is the roster query alone: one botRun per enabled pilot with the
@@ -312,7 +330,7 @@ func (m *Mod) loadRosterWhere(ctx context.Context, where string, args []any) ([]
 	// The character entity sits inside its boarded ship; a station location means the
 	// char is unboarded in a hangar. Ship ownership is confirmed in one query afterwards (bulkload.go).
 	for rows.Next() {
-		b := &botRun{loadedSeq: seq}
+		b := &botRun{loadedSeq: seq, rowFresh: true}
 		var charLoc int64
 		if err := rows.Scan(&b.CharID, &b.Name, &b.CorpID, &b.SystemID, &b.StationID,
 			&charLoc, &b.GangID, &b.BossID, &b.SecStatus, &b.FactionID); err != nil {
@@ -390,6 +408,9 @@ func (m *Mod) advance(ctx context.Context, b *botRun) (bool, error) {
 		st.Activity, st.Phase, st.Data = "", string(TaskIdle), idleData(st.Data)
 		return false, saveState(ctx, m.db, st)
 	}
+	// A leg this step starts is timed from when the last one ended (legcatchup.go).
+	armLegCatchUp(b, clock.Unix())
+	defer st.disarmLegCatchUp()
 	return def.Step(m, ctx, b)
 }
 
@@ -1019,11 +1040,11 @@ func (m *Mod) travelStep(ctx context.Context, b *botRun) (bool, error) {
 // materialises it where a jump would actually put it.
 func (m *Mod) setSystem(ctx context.Context, b *botRun, sysID int64) error {
 	fromSys := b.SystemID
-	constID, regID, err := evedb.GetSolarSystemLocation(ctx, m.db, sysID)
+	constID, regID, err := cachedSolarSystemLocation(ctx, m.db, sysID)
 	if err != nil {
 		return err
 	}
-	if err := evedb.UpdateCharacterStation(ctx, m.db, b.CharID, 0, sysID, constID, regID); err != nil {
+	if err := updateCharacterStation(ctx, m.db, b.CharID, 0, sysID, constID, regID); err != nil {
 		return err
 	}
 	if b.ShipID != 0 {
@@ -1134,15 +1155,13 @@ const parkStandoff = 15_000.0 // metres off the object's surface
 func (m *Mod) parkAtGate(ctx context.Context, b *botRun, sysID, fromSys int64) int64 {
 	gateID := m.gateBetween(ctx, sysID, fromSys)
 	if gateID == 0 {
-		var x, y, z, radius float64
-		if qerr := m.db.QueryRowContext(ctx, `
-			SELECT itemID, COALESCE(x,0), COALESCE(y,0), COALESCE(z,0), COALESCE(radius,1)
-			FROM mapDenormalize WHERE solarSystemID = ? AND groupID = 10 LIMIT 1`,
-			sysID).Scan(&gateID, &x, &y, &z, &radius); qerr != nil {
+		// Any stargate in the system; static, read once per system (staticgates.go).
+		g, err := cachedAnyGate(ctx, m.db, sysID)
+		if err != nil || !g.ok {
 			return 0
 		}
-		m.persistPosition(ctx, b.ShipID, gateID, x, y, z, radius)
-		return gateID
+		m.persistPosition(ctx, b.ShipID, g.itemID, g.x, g.y, g.z, g.radius)
+		return g.itemID
 	}
 	// The jump line through the arrival gate (lane.go gateArrivalGeom, the geometry a
 	// camp covering this gate parks on).
@@ -1361,7 +1380,7 @@ func (m *Mod) dockAt(ctx context.Context, b *botRun, stationID int64) error {
 	if err != nil {
 		return err
 	}
-	if err := evedb.UpdateCharacterStation(ctx, m.db, b.CharID, stationID,
+	if err := updateCharacterStation(ctx, m.db, b.CharID, stationID,
 		loc.SolarSystemID, loc.ConstellationID, loc.RegionID); err != nil {
 		return err
 	}

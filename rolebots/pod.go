@@ -416,7 +416,7 @@ func (m *Mod) respawnAtHome(ctx context.Context, charID int64, charName string, 
 	if err := evedb.MoveCharacterIntoShip(ctx, m.db, charID, capsuleID); err != nil {
 		rlogf("rolebots: respawn board %d: %v", capsuleID, err)
 	}
-	if err := evedb.UpdateCharacterStation(ctx, m.db, charID, homeStationID,
+	if err := updateCharacterStation(ctx, m.db, charID, homeStationID,
 		loc.SolarSystemID, loc.ConstellationID, loc.RegionID); err != nil {
 		rlogf("rolebots: respawn location %d: %v", charID, err)
 	}

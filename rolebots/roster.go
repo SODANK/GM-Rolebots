@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -98,6 +100,8 @@ func removeRolebot(ctx context.Context, db *sql.DB, charID int64) error {
 			return fmt.Errorf("removeRolebot: %w", err)
 		}
 	}
+	// forgetCharacter above ran before the rows went; a read in between may have cached them.
+	invalidateTraits(charID)
 	// Off the roster is back to being a person: their mail must be written again.
 	invalidateBotMailboxes()
 	return nil
@@ -131,6 +135,7 @@ func setRolebotEnabled(ctx context.Context, db *sql.DB, charID int64, enabled bo
 	if err != nil {
 		return fmt.Errorf("setRolebotEnabled: %w", err)
 	}
+	rosterCacheInvalidate() // the roster's membership changed (rostercache.go)
 	if n, _ := res.RowsAffected(); n == 0 {
 		var one int64
 		if err := db.QueryRowContext(ctx,
@@ -244,6 +249,12 @@ func getTraits(ctx context.Context, db *sql.DB, charID int64) (map[string]int, e
 			return t, nil
 		}
 	}
+	// Then the traits cache: every write to rolebot_traits drops what it covers (invalidateTraits),
+	// so a cached copy is what the table holds.
+	if v, ok := traitsCache.Load(charID); ok {
+		return copyTraits(v.(map[string]int)), nil
+	}
+	gen := traitsGen.Load()
 	rows, err := db.QueryContext(ctx,
 		`SELECT trait, value FROM rolebot_traits WHERE characterID = ?`, charID)
 	if err != nil {
@@ -259,13 +270,58 @@ func getTraits(ctx context.Context, db *sql.DB, charID int64) (map[string]int, e
 		}
 		out[k] = v
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	// Kept only if no write landed while this read was in flight: a write bumps the generation,
+	// and a copy read before it could be older than the table.
+	if traitsGen.Load() == gen {
+		traitsCache.Store(charID, copyTraits(out))
+	}
+	return out, nil
+}
+
+var (
+	// traitsCache holds each pilot's traits as rolebot_traits last returned them; callers get a copy.
+	traitsCache sync.Map // charID -> map[string]int
+	// traitsGen counts writes to rolebot_traits, so a read that raced one is not cached.
+	traitsGen atomic.Uint64
+)
+
+func init() {
+	registerCharForget("traitsCache", func(id int64) { invalidateTraits(id) })
+}
+
+func copyTraits(t map[string]int) map[string]int {
+	out := make(map[string]int, len(t))
+	for k, v := range t {
+		out[k] = v
+	}
+	return out
+}
+
+// invalidateTraits drops one pilot's cached traits. Every statement that writes rolebot_traits for
+// one pilot calls it.
+func invalidateTraits(charID int64) {
+	traitsGen.Add(1)
+	traitsCache.Delete(charID)
+}
+
+// invalidateAllTraits drops every cached pilot. The bulk writers (seeds, migrations, upsertTraits)
+// call it; they are rare and touch many pilots.
+func invalidateAllTraits() {
+	traitsGen.Add(1)
+	traitsCache.Range(func(k, _ any) bool { traitsCache.Delete(k); return true })
 }
 
 // saveTraits replaces a character's traits. Values are clamped and zeroes
 // are deleted rather than stored, so "no opinion" and "explicitly average"
 // are the same thing in the database as they are in the sim.
 func saveTraits(ctx context.Context, db *sql.DB, charID int64, traits map[string]int) error {
+	// Before and after: the generation bump in the first stops a read in flight from caching the
+	// old values; the second drops anything cached while the transaction ran.
+	invalidateTraits(charID)
+	defer invalidateTraits(charID)
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("saveTraits begin: %w", err)

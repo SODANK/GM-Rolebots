@@ -665,20 +665,31 @@ func (m *Mod) applyTimezones(ctx context.Context, bots []*botRun, now int64, boo
 	}
 	popMu.Unlock()
 
-	// tzReady reads the state of a pilot whose hours ended inside the grace. A pilot loaded
-	// as offline (sim.go simPass) is not hydrated yet, so that narrow set is loaded first.
+	// The pilots past their hours are the ones this may log off, and that decision reads
+	// their state (tzReady, inside the grace) and where they are (popProtected). The pass
+	// chose from the roster cache and loaded only who is due (sim.go simPass), so that set
+	// gets fresh rows and its load first (readyRuns): the whole unit (a gang logs off
+	// together) of every pilot past its hours and still on, or inside its grace.
 	if c.On {
-		var grace []*botRun
-		for _, b := range bots {
-			if b.State != nil {
-				continue
+		var past []*botRun
+		for _, u := range tzUnits(bots) {
+			decides := false
+			for _, b := range u {
+				st := tzStateAt(b.CharID, tzSlotOf(b.CharID), day, minute, c)
+				if st.In {
+					continue
+				}
+				if _, off := offAt[b.CharID]; !off || st.SinceEndMin < c.GraceMin {
+					decides = true
+					break
+				}
 			}
-			if st := tzStateAt(b.CharID, tzSlotOf(b.CharID), day, minute, c); !st.In && st.SinceEndMin < c.GraceMin {
-				grace = append(grace, b)
+			if decides {
+				past = append(past, u...)
 			}
 		}
-		if err := m.hydrateMissing(ctx, grace); err != nil {
-			rlogf("rolebots: timezones: loading pilots in their grace: %v", err)
+		if err := m.readyRuns(ctx, past); err != nil {
+			rlogf("rolebots: timezones: loading pilots past their hours: %v", err)
 		}
 	}
 
@@ -727,11 +738,14 @@ func (m *Mod) applyTimezones(ctx context.Context, bots []*botRun, now int64, boo
 	if len(bench) == 0 && len(back) == 0 {
 		return out
 	}
-	// A returning pilot was loaded as offline and may be unhydrated, and tzResume moves
-	// clocks in its state. One that cannot be loaded stays off for this pass.
+	// A returning pilot was chosen from the roster cache and is not loaded, and tzResume
+	// moves clocks in its state. One that cannot be loaded (a failed read, or no longer
+	// enabled) stays off for this pass.
 	if len(back) > 0 {
-		if err := m.hydrateMissing(ctx, back); err != nil {
+		if err := m.readyRuns(ctx, back); err != nil {
 			rlogf("rolebots: timezones: loading returning pilots: %v (they log in next pass)", err)
+		}
+		if len(loadedOnly(back)) < len(back) {
 			skip := make(map[int64]bool, len(back))
 			for _, b := range back {
 				if b.State == nil {

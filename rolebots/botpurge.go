@@ -83,6 +83,7 @@ var moduleCharacterSteps = []purgeStep{
 	{"rolebot_corp_assignments", `DELETE FROM rolebot_corp_assignments WHERE characterID = ?`},
 	{"rolebot_human_offers", `DELETE FROM rolebot_human_offers WHERE characterID = ?`},
 	{"rolebot_skill_plan", `DELETE FROM rolebot_skill_plan WHERE characterID = ?`},
+	{"rolebot_skill_due", `DELETE FROM rolebot_skill_due WHERE characterID = ?`},
 	{"rolebot_skill_prefs", `DELETE FROM rolebot_skill_prefs WHERE characterID = ?`},
 	{"rolebot_log", `DELETE FROM rolebot_log WHERE characterID = ?`},
 	{"rolebot_stats", `DELETE FROM rolebot_stats WHERE characterID = ?`},

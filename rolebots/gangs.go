@@ -289,6 +289,7 @@ func deleteGang(ctx context.Context, db *sql.DB, gangID int64) error {
 		}
 	}
 	forgetGangBelts(gangID)
+	rosterCacheInvalidate() // its members' gang column (rostercache.go)
 	return nil
 }
 
@@ -411,6 +412,7 @@ func addGangMemberWithSpec(ctx context.Context, db *sql.DB, gangID, charID int64
 		return fmt.Errorf("addGangMember: %w", err)
 	}
 	forgetSeatSpec(charID)
+	rosterCacheInvalidate() // rostercache.go
 	return nil
 }
 
@@ -421,6 +423,7 @@ func removeGangMember(ctx context.Context, db *sql.DB, gangID, charID int64) err
 		return fmt.Errorf("removeGangMember: %w", err)
 	}
 	forgetSeatSpec(charID)
+	rosterCacheInvalidate() // rostercache.go
 	return nil
 }
 

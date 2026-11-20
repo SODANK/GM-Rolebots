@@ -89,6 +89,7 @@ var leadershipSeedQuery = fmt.Sprintf(`
 // records it. It walks a characterID cursor, never LIMIT/OFFSET, which re-scans
 // every row it skips.
 func migrateLeadershipSeed(ctx context.Context, db *sql.DB) error {
+	defer invalidateAllTraits() // writes rolebot_traits (roster.go traits cache)
 	var done int
 	if err := db.QueryRowContext(ctx, `
 		SELECT COUNT(*) FROM rolebot_traits

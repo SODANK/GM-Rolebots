@@ -86,6 +86,7 @@ func traitMarkerSet(ctx context.Context, db *sql.DB, marker string) (bool, error
 }
 
 func setTraitMarker(ctx context.Context, db *sql.DB, marker string) error {
+	defer invalidateTraits(0) // a marker row in rolebot_traits (roster.go traits cache)
 	_, err := db.ExecContext(ctx, `
 		INSERT IGNORE INTO rolebot_traits (characterID, trait, value) VALUES (0, ?, 1)`, marker)
 	return err
@@ -93,6 +94,9 @@ func setTraitMarker(ctx context.Context, db *sql.DB, marker string) error {
 
 // upsertTraits writes (charID, trait, value) rows in one statement.
 func upsertTraits(ctx context.Context, db *sql.DB, rows [][3]any) error {
+	// A bulk trait write: the traits cache is dropped before and after (roster.go).
+	invalidateAllTraits()
+	defer invalidateAllTraits()
 	if len(rows) == 0 {
 		return nil
 	}
@@ -251,6 +255,7 @@ func migrateHaulerConversion(ctx context.Context, db *sql.DB) error {
 // seed centred industrialists mid-axis, where trading out-pulled mining as filler. A shift rather than a re-draw
 // keeps each pilot's place in the spread; CEOs are left alone, their identity is the CEO pass's.
 func migrateIndustrialistToilShift(ctx context.Context, db *sql.DB) error {
+	defer invalidateAllTraits() // writes rolebot_traits (roster.go traits cache)
 	if done, err := traitMarkerSet(ctx, db, toilIndShiftMarker); err != nil {
 		return fmt.Errorf("migrateIndustrialistToilShift probe: %w", err)
 	} else if done {

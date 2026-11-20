@@ -106,6 +106,44 @@ const playerCorpFactsQuery = `
 	LEFT JOIN rolebot_corps p ON p.corporationID = c.corporationID
 	WHERE n.corporationID IS NULL AND c.deleted = 0`
 
+// playerCorpFactsOneQuery is playerCorpFactsQuery for one corporation (the argument): the same
+// columns and values, with each count a subquery on that corporation alone. The derived tables
+// group every character and office on the server before the join keeps one row, which is right
+// for the catalogue and is most of the database's time when a pass asks about corporations one
+// by one. Each subquery here is an index lookup (idx_char_corp, crpoffices' key, idx_rbapp_corp,
+// idx_entity_owner_type).
+const playerCorpFactsOneQuery = `
+	SELECT c.corporationID, c.corporationName, c.tickerName,
+	       COALESCE(c.raceID, 0), COALESCE(c.ceoID, 0), COALESCE(ceo.characterName, ''),
+	       COALESCE(c.allianceID, 0), COALESCE(al.allianceName, ''),
+	       COALESCE(c.memberLimit, 0), COALESCE(c.taxRate, 0),
+	       COALESCE(c.allowedMemberRaceIDs, 0),
+	       COALESCE((SELECT MAX(COALESCE(a.valueInt, 0))
+	                   FROM entity e
+	                   LEFT JOIN entity_attributes a
+	                          ON a.itemID = e.itemID AND a.attributeID = 280
+	                  WHERE e.ownerID = c.ceoID AND e.typeID = 3368 AND e.flag IN (7, 61)), 0),
+	       COALESCE(c.stationID, 0), COALESCE(sta.stationName, ''),
+	       COALESCE(sta.solarSystemID, 0), COALESCE(ms.solarSystemName, ''), COALESCE(mr.regionName, ''),
+	       (SELECT COUNT(*) FROM crpoffices o WHERE o.corporationID = c.corporationID),
+	       (SELECT COUNT(*) FROM character_ m WHERE m.corporationID = c.corporationID AND m.accountID > 0),
+	       (SELECT COUNT(*) FROM rolebot_characters r JOIN character_ ch ON ch.characterID = r.characterID
+	         WHERE ch.corporationID = c.corporationID),
+	       (SELECT COUNT(*) FROM rolebot_corp_applications ap
+	         WHERE ap.corporationID = c.corporationID AND ap.state = 'pending'),
+	       COALESCE(p.joinable, 0), COALESCE(p.restricted, 0), COALESCE(p.tags, ''),
+	       COALESCE(p.raceRule, ''), COALESCE(p.minStanding, 0), COALESCE(p.weight, 1),
+	       COALESCE(p.notes, ''), COALESCE(p.allegiance, 0), COALESCE(p.updatedAt, 0)
+	FROM corporation c
+	LEFT JOIN crpNPCCorporations n ON n.corporationID = c.corporationID
+	LEFT JOIN character_ ceo ON ceo.characterID = c.ceoID
+	LEFT JOIN alliances al ON al.allianceID = c.allianceID
+	LEFT JOIN staStations sta ON sta.stationID = c.stationID
+	LEFT JOIN mapSolarSystems ms ON ms.solarSystemID = sta.solarSystemID
+	LEFT JOIN mapRegions mr ON mr.regionID = ms.regionID
+	LEFT JOIN rolebot_corps p ON p.corporationID = c.corporationID
+	WHERE n.corporationID IS NULL AND c.deleted = 0 AND c.corporationID = ?`
+
 func scanPlayerCorpFacts(rows *sql.Rows) ([]CorpFacts, error) {
 	var out []CorpFacts
 	for rows.Next() {
@@ -164,8 +202,7 @@ func listOpenPlayerCorpFacts(ctx context.Context, db *sql.DB) ([]CorpFacts, erro
 }
 
 func getPlayerCorpFacts(ctx context.Context, db *sql.DB, corpID int64) (*CorpFacts, error) {
-	rows, err := db.QueryContext(ctx, playerCorpFactsQuery+`
-		  AND c.corporationID = ?`, corpID)
+	rows, err := db.QueryContext(ctx, playerCorpFactsOneQuery, corpID)
 	if err != nil {
 		return nil, fmt.Errorf("getPlayerCorpFacts: %w", err)
 	}

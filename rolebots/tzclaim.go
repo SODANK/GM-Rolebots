@@ -40,8 +40,9 @@ func (m *Mod) tzClaimPass(ctx context.Context, bots []*botRun) {
 	ctx, cancel := context.WithTimeout(ctx, simBotBudget)
 	defer cancel()
 	cut := tzClaimCut(win32Now(), c.ClaimAfterH)
-	// The pilots off for their hours were loaded unhydrated (sim.go simPass); the
-	// cooking lists live in their state, so the ones the claim may reach are loaded here.
+	// The pilots off for their hours are not loaded (sim.go simPass); the cooking lists
+	// live in their state, so the ones the claim may reach get a fresh row and their load
+	// here (readyRuns). One no longer enabled stays unloaded and tzClaimWants skips it.
 	var cand []*botRun
 	var stOf = map[int64]tzState{}
 	for _, b := range bots {
@@ -55,7 +56,7 @@ func (m *Mod) tzClaimPass(ctx context.Context, bots []*botRun) {
 		cand = append(cand, b)
 		stOf[b.CharID] = st
 	}
-	if err := m.hydrateMissing(ctx, cand); err != nil {
+	if err := m.readyRuns(ctx, cand); err != nil {
 		rlogf("rolebots: timezones: off-hours claim: %v", err)
 		return
 	}

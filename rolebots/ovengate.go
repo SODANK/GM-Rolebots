@@ -82,6 +82,40 @@ func ovenGateNote(kind uint8, charID int64, ids []int64, nextEndWin32, now int64
 	ovenGateMu.Unlock()
 }
 
+// ovenGateWake is the clock second a pilot's sweep of this kind next has to read: the
+// gate's time while it is shut for this job list, else now.
+func ovenGateWake(kind uint8, charID int64, ids []int64, now int64) int64 {
+	ovenGateMu.Lock()
+	r, ok := ovenGate[ovenGateKey{kind, charID}]
+	ovenGateMu.Unlock()
+	if ok && now < r.nextAt && r.sig == ovenSig(ids) {
+		return r.nextAt
+	}
+	return now
+}
+
+// indOvenIDs is the job list industryOvenSweep asks about: installed and not yet delivered.
+func indOvenIDs(d *StateData) []int64 {
+	var ids []int64
+	for _, j := range d.IndCooking {
+		if !j.Delivered && j.JobID != 0 {
+			ids = append(ids, j.JobID)
+		}
+	}
+	return ids
+}
+
+// labOvenIDs is the job list labOvenSweep asks about.
+func labOvenIDs(d *StateData) []int64 {
+	var ids []int64
+	for _, j := range d.LabCooking {
+		if j.JobID != 0 {
+			ids = append(ids, j.JobID)
+		}
+	}
+	return ids
+}
+
 // ovenRung is the ring test both sweeps apply to a ramJobs row: delivered by the server's
 // status ticker (by readyCut), taken off the line from outside, or past its end time (by
 // dueCut) before the ticker flagged it.

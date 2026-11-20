@@ -379,9 +379,10 @@ func (m *Mod) ComputeFitStats(ctx context.Context, fit *Fit) (*FitStats, error) 
 	if err != nil {
 		return nil, err
 	}
-	var hullMass float64
-	_ = m.db.QueryRowContext(ctx,
-		`SELECT COALESCE(mass, 1000000) FROM invTypes WHERE typeID = ?`, fit.HullTypeID).Scan(&hullMass)
+	// invTypes.mass from the static cache (statics.go): it was a query per fit costed, a few
+	// percent of the database's time. invTypes carries no NULL mass, so the query's 1e6
+	// fallback never applied to a real hull.
+	hullMass := m.typeMassOf(ctx, fit.HullTypeID)
 
 	s := &FitStats{
 		HiTotal:      int(hull.Attrs[attrHiSlots]),
@@ -404,8 +405,8 @@ func (m *Mod) ComputeFitStats(ctx context.Context, fit *Fit) (*FitStats, error) 
 		capCapMults, capRechMults      []float64
 		velPcts, agiPcts               []float64
 		props                          []propSpec
-		trackRangeMults                []float64 // tracking enhancers / computers on turret optimal
-		massAdd                        float64 // plates: what a prop module has to push
+		trackRangeMults                []float64       // tracking enhancers / computers on turret optimal
+		massAdd                        float64         // plates: what a prop module has to push
 		resistPct                      [3][4][]float64 // shield/armor layers via effects; damage control direct below
 		// The damage control's own resonances, one row per layer in the shield/armour/hull order resistPct
 		// uses. Direct multipliers outside the stacking penalty (see the effDamageControl branch).

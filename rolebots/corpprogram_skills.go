@@ -2,7 +2,9 @@ package rolebots
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
+	"sync"
 
 	evedb "gurimoon/db"
 )
@@ -24,13 +26,32 @@ const (
 	programGoalWhy   = "its corporation's capital program"
 )
 
-// skillPrereqs is the catalogue's prerequisite map, shared and refreshed
-// with the market snapshots.
+// skillPrereqs is the catalogue's prerequisite map (skillPrereqStatic), nil when it cannot be read.
 func (m *Mod) skillPrereqs(ctx context.Context) map[int64][]evedb.SkillReq {
-	out, _ := snapshot(snapKey("skill-prereqs"), func() (map[int64][]evedb.SkillReq, error) {
-		return evedb.GetSkillPrereqMap(ctx, m.db)
-	})
+	out, _ := skillPrereqStatic(ctx, m.db)
 	return out
+}
+
+var (
+	skillPrereqMu  sync.Mutex
+	skillPrereqMap map[int64][]evedb.SkillReq
+)
+
+// skillPrereqStatic is evedb.GetSkillPrereqMap read once: dgmTypeAttributes is static, so the
+// skill planner, which read the whole catalogue's prerequisites for every plan, and the program
+// pass share one copy. A failed read is not kept. The map is shared: callers only read it.
+func skillPrereqStatic(ctx context.Context, db *sql.DB) (map[int64][]evedb.SkillReq, error) {
+	skillPrereqMu.Lock()
+	defer skillPrereqMu.Unlock()
+	if skillPrereqMap != nil {
+		return skillPrereqMap, nil
+	}
+	mp, err := evedb.GetSkillPrereqMap(ctx, db)
+	if err != nil {
+		return nil, err
+	}
+	skillPrereqMap = mp
+	return mp, nil
 }
 
 // skillTree walks a set of requirements to every skill they rest on,

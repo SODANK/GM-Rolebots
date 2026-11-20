@@ -83,6 +83,21 @@ func (m *Mod) loadMaxOnline(ctx context.Context) {
 	setMaxOnline(n)
 }
 
+// popOfflineSig is an order-free signature of who is logged off: it changes when anybody
+// logs in or off, which is when presence has to be synced (sim.go simPass).
+func popOfflineSig() uint64 {
+	popMu.Lock()
+	defer popMu.Unlock()
+	var sum, x uint64
+	for id := range popOffline {
+		h := uint64(id) * 0x9E3779B97F4A7C15
+		h ^= h >> 31
+		sum += h
+		x ^= h
+	}
+	return sum ^ (x << 1) ^ uint64(len(popOffline))
+}
+
 // popIsOffline reports whether a pilot is currently benched by the cap.
 func popIsOffline(charID int64) bool {
 	popMu.Lock()
@@ -241,7 +256,7 @@ func (m *Mod) applyPopCap(ctx context.Context, bots []*botRun) []*botRun {
 	limit := MaxOnline()
 	if limit <= 0 {
 		m.popRestoreAll(bots, now)
-		return m.hydratedOnly(ctx, bots)
+		return bots
 	}
 
 	budget := limit - m.realSessionCount()
@@ -257,6 +272,7 @@ func (m *Mod) applyPopCap(ctx context.Context, bots []*botRun) []*botRun {
 			// takes a seat ahead of any idle bot.
 			delete(popOffline, b.CharID)
 			popOnlineAt[b.CharID] = now
+			rosterWakeClear(b.CharID) // answers this pass (rosterwake.go)
 		}
 		if _, off := popOffline[b.CharID]; off {
 			benched = append(benched, b)
@@ -268,14 +284,26 @@ func (m *Mod) applyPopCap(ctx context.Context, bots []*botRun) []*botRun {
 		online = append(online, b)
 	}
 	popMu.Unlock()
-	// A pilot the loop above called back in was loaded as offline; popBench ranks by state.
-	online = m.hydratedOnly(ctx, online)
 
+	// What this returns is not loaded: the sim pass loads only the pilots due a turn
+	// (rosterwake.go). Benching is the one step here that reads state (popScore) and
+	// where a pilot is (popProtected), so it decides on fresh rows (readyRuns).
 	switch {
 	case len(online) > budget:
-		online = m.popBench(online, len(online)-budget, budget, limit, now)
+		if err := m.readyRuns(ctx, online); err != nil {
+			rlogf("rolebots: online cap: loading pilots to rank: %v (benching next pass)", err)
+			break
+		}
+		// A pilot disabled since the copy was read has dropped out of the count.
+		if online = loadedOnly(online); len(online) > budget {
+			online = m.popBench(online, len(online)-budget, budget, limit, now)
+		}
 	case len(online) < budget && len(benched) > 0:
-		online = append(online, m.hydratedOnly(ctx, m.popRestore(benched, budget-len(online), limit, now))...)
+		back := m.popRestore(benched, budget-len(online), limit, now)
+		for _, b := range back {
+			rosterWakeClear(b.CharID) // takes its turn this pass
+		}
+		online = append(online, back...)
 	}
 	return online
 }
@@ -298,6 +326,7 @@ func (m *Mod) popRestoreAll(bots []*botRun, now int64) {
 	}
 	popMu.Unlock()
 	for _, id := range back {
+		rosterWakeClear(id) // takes its turn this pass (rosterwake.go)
 		m.logBot(id, logInfo, "presence", "logged back in — the online cap is off")
 	}
 }

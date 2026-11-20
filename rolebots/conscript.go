@@ -615,6 +615,7 @@ func (m *Mod) release(ctx context.Context, botCharID int64, why string) {
 		`DELETE FROM rolebot_conscripts WHERE characterID = ?`, botCharID); err != nil {
 		rlogf("rolebots: release %d: %v", botCharID, err)
 	}
+	rosterCacheInvalidate() // rostercache.go
 	// resetBot clears the phase and halt flag but idleData carries the standing order, so the
 	// order must be wiped explicitly afterwards or a freed pilot acts on it for a stranger.
 	if err := resetBot(ctx, m.db, botCharID); err != nil {
@@ -634,6 +635,7 @@ func (m *Mod) release(ctx context.Context, botCharID int64, why string) {
 
 // refreshConscripts reloads the cache from the table.
 func (m *Mod) refreshConscripts(ctx context.Context) {
+	rosterCacheInvalidate() // the roster's commander column moved (rostercache.go)
 	list, err := loadConscripts(ctx, m.db)
 	if err != nil {
 		rlogf("rolebots: refresh conscripts: %v", err)
@@ -665,6 +667,7 @@ func (m *Mod) releaseAllConscripts(ctx context.Context) {
 	if _, err := m.db.ExecContext(ctx, `DELETE FROM rolebot_conscripts`); err != nil {
 		rlogf("rolebots: boot conscript sweep delete: %v", err)
 	}
+	rosterCacheInvalidate() // rostercache.go
 	// Anything left mid-order, with or without a row: a phase nothing advances is a wedged pilot.
 	stranded, err := m.db.QueryContext(ctx,
 		`SELECT characterID FROM rolebot_state WHERE phase LIKE 'conscript.%'`)

@@ -44,12 +44,7 @@ func (m *Mod) labOvenSweepBefore(ctx context.Context, b *botRun, cut int64) int 
 		}
 		return 0
 	}
-	ids := make([]int64, 0, len(d.LabCooking))
-	for _, j := range d.LabCooking {
-		if j.JobID != 0 {
-			ids = append(ids, j.JobID)
-		}
-	}
+	ids := labOvenIDs(d)
 	if len(ids) == 0 {
 		return 0
 	}

@@ -38,6 +38,7 @@ func (m *Mod) startRehomeSpread(ctx context.Context) {
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
 		until = now + rehomeSpreadSec
+		defer invalidateTraits(0) // a marker row in rolebot_traits (roster.go traits cache)
 		if _, err := m.db.ExecContext(ctx, `
 			INSERT IGNORE INTO rolebot_traits (characterID, trait, value) VALUES (0, ?, ?)`,
 			rehomeSpreadMarker, until); err != nil {

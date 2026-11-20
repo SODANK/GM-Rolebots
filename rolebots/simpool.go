@@ -98,6 +98,7 @@ func runUnits(bots []*botRun, workers int, step func(*botRun)) {
 	}
 	wg.Wait()
 }
+
 // runBotPass gives every enabled bot one turn, up to simWorkers() of them
 // at a time.
 func (m *Mod) runBotPass(ctx context.Context, bots []*botRun) {
@@ -121,7 +122,10 @@ func (m *Mod) stepBot(ctx context.Context, b *botRun) {
 	// A halted bot is frozen until haltRetrySec passes, then its trip is dropped and
 	// it plans fresh; the state row stays as it wedged for diagnosis and the panel.
 	if b.State.Halted {
-		if clock.Unix()-b.State.LastErrorAt < haltRetrySec {
+		if now := clock.Unix(); now-b.State.LastErrorAt < haltRetrySec {
+			if !b.fastLane {
+				noteRosterWake(b.CharID, m.rosterWakeAt(b, now), now) // rosterwake.go
+			}
 			return
 		}
 		last := b.State.LastError
@@ -166,6 +170,21 @@ func (m *Mod) stepBot(ctx context.Context, b *botRun) {
 	}()
 
 	_, err := m.advance(botCtx, b)
+	// When the roster pass next needs this pilot (rosterwake.go). Recorded on the way
+	// out, after the exposure roll below moves one of the clocks it reads. Anything but
+	// a clean finish (a failed turn, a stale copy, a panic) is due again next pass, as
+	// every pilot was before.
+	clean := false
+	if !b.fastLane {
+		defer func() {
+			now := clock.Unix()
+			at := now
+			if clean {
+				at = m.rosterWakeAt(b, now)
+			}
+			noteRosterWake(b.CharID, at, now)
+		}()
+	}
 	switch {
 	case err != nil:
 		m.logBot(b.CharID, logError, "sim", "%s failed: %v", phaseLabel(b.State), err)
@@ -184,4 +203,5 @@ func (m *Mod) stepBot(ctx context.Context, b *botRun) {
 		return
 	}
 	m.abstractCombatPass(botCtx, b)
+	clean = err == nil
 }

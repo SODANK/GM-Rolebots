@@ -235,6 +235,19 @@ func ensureTables(ctx context.Context, db *sql.DB) error {
 			plannedAt   BIGINT NOT NULL DEFAULT 0,
 			PRIMARY KEY (characterID, position)
 		)`,
+		// One row per planned pilot summarising rolebot_skill_plan for the skill lane's due query
+		// (duePlanners): when the plan was built, whether any step went into the queue, and whether the
+		// plan is settled (every step applied, or the empty-plan stamp). Written in the same
+		// transaction as the plan (storeSkillPlanOnce) and rebuilt from the plan rows at boot
+		// (rebuildSkillDue), so it never disagrees with them; the due query then reads one row per
+		// pilot instead of grouping every plan step on the server.
+		`CREATE TABLE IF NOT EXISTS rolebot_skill_due (
+			characterID BIGINT NOT NULL,
+			plannedAt   BIGINT NOT NULL DEFAULT 0,
+			anyApplied  TINYINT NOT NULL DEFAULT 0,
+			settled     TINYINT NOT NULL DEFAULT 0,
+			PRIMARY KEY (characterID)
+		)`,
 		// Operator overrides on the planner: force = train whether or not the arithmetic asks, ban = never train.
 		// Kept sparse, since every row is an argument with the planner.
 		`CREATE TABLE IF NOT EXISTS rolebot_skill_prefs (
@@ -2346,6 +2359,10 @@ func ensureTables(ctx context.Context, db *sql.DB) error {
 	if err := ensureRelationTables(ctx, db); err != nil {
 		return err
 	}
+	// The skill lane's per-pilot plan summary (skills.go): rebuilt from the plan rows every boot.
+	if err := rebuildSkillDue(ctx, db); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -2569,6 +2586,7 @@ func migrateGangEscortColumn(ctx context.Context, db *sql.DB) error {
 // migrateTraitPolarity negates the stored values of caution, patience and loyalty, whose axes flipped when "hostile end is +100" became the convention;
 // resolveTuning flipped with them, so saved pilots behave as authored. One-shot: a marker row at characterID 0 (no bot has ID 0) records that it ran.
 func migrateTraitPolarity(ctx context.Context, db *sql.DB) error {
+	defer invalidateAllTraits() // writes rolebot_traits (roster.go traits cache)
 	var done int
 	if err := db.QueryRowContext(ctx, `
 		SELECT COUNT(*) FROM rolebot_traits

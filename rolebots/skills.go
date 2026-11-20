@@ -358,7 +358,7 @@ func (m *Mod) newSkillPlanner(ctx context.Context, charID int64, tn Tuning) (*sk
 	if err != nil {
 		return nil, err
 	}
-	if p.prereqs, err = evedb.GetSkillPrereqMap(ctx, m.db); err != nil {
+	if p.prereqs, err = skillPrereqStatic(ctx, m.db); err != nil {
 		return nil, err
 	}
 	if p.learn, err = m.learningSkills(ctx); err != nil {
@@ -516,8 +516,11 @@ func (p *skillPlanner) loadIndustry() error {
 					err = sql.ErrNoRows
 				}
 			} else {
-				err = p.m.db.QueryRowContext(p.ctx,
-					`SELECT groupID FROM invTypes WHERE typeName = ?`, c.Name).Scan(&groupID)
+				// invTypes is static: the name's group is read once (staticgates.go).
+				var found bool
+				if groupID, found, err = cachedGroupIDByTypeName(p.ctx, p.m.db, c.Name); err == nil && !found {
+					err = sql.ErrNoRows
+				}
 			}
 			if err != nil {
 				continue
@@ -2008,19 +2011,21 @@ func (m *Mod) duePlanners(ctx context.Context, limit int) ([]int64, error) {
 	now := clock.Unix()
 	// settled: every recorded row went into the queue (applied = 1), or the only row is the
 	// empty-plan stamp (typeID 0). A plan holding a step back for a book is not settled.
+	// The plan facts come from rolebot_skill_due, one row per planned pilot kept in step with
+	// rolebot_skill_plan (storeSkillPlanOnce, rebuildSkillDue): the same MAX(plannedAt),
+	// MAX(applied) and settled the plan rows give, without grouping every step of every plan.
 	rows, err := m.db.QueryContext(ctx, `
 		SELECT c.characterID,
-		       (MIN(t.characterID) IS NULL
+		       (t.characterID IS NULL
 		        AND NOT EXISTS (SELECT 1 FROM chrSkillQueue q WHERE q.characterID = c.characterID)
-		        AND (MAX(p.plannedAt) IS NULL OR MAX(p.applied) = 1)) AS idle,
-		       COALESCE(MAX(p.plannedAt), 0) AS pa,
-		       (COUNT(p.characterID) > 0 AND MIN(p.applied = 1 OR p.typeID = 0) = 1) AS settled
+		        AND (d.characterID IS NULL OR d.anyApplied = 1)) AS idle,
+		       COALESCE(d.plannedAt, 0) AS pa,
+		       COALESCE(d.settled, 0) AS settled
 		FROM rolebot_characters c
 		LEFT JOIN rolebot_profiles pr ON pr.characterID = c.characterID
-		LEFT JOIN rolebot_skill_plan p ON p.characterID = c.characterID
+		LEFT JOIN rolebot_skill_due d ON d.characterID = c.characterID
 		LEFT JOIN chrSkillTraining t ON t.characterID = c.characterID
 		WHERE c.enabled = 1 AND COALESCE(pr.autoSkills, 1) = 1
-		GROUP BY c.characterID
 		HAVING (idle = 1 AND ? - pa >= ?)
 		    OR ? - pa >= IF(settled = 1, ?, ?)
 		    OR pa < ?
@@ -2181,10 +2186,50 @@ func storeSkillPlanOnce(ctx context.Context, db *sql.DB, charID int64, plan, app
 			return fmt.Errorf("storeSkillPlan stamp: %w", err)
 		}
 	}
+	// The pilot's summary row for duePlanners, in the same transaction so the two never disagree:
+	// what MAX(plannedAt), MAX(applied) and "every row applied or the stamp" read over the rows above.
+	anyApplied, settled := 0, 0
+	if appliedCount > 0 {
+		anyApplied = 1
+	}
+	if len(plan) == 0 || appliedCount >= len(plan) {
+		settled = 1
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO rolebot_skill_due (characterID, plannedAt, anyApplied, settled)
+		VALUES (?, ?, ?, ?)
+		ON DUPLICATE KEY UPDATE plannedAt = VALUES(plannedAt), anyApplied = VALUES(anyApplied),
+		                        settled = VALUES(settled)`,
+		charID, now, anyApplied, settled); err != nil {
+		return fmt.Errorf("storeSkillPlan due: %w", err)
+	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("storeSkillPlan commit: %w", err)
 	}
 	return nil
+}
+
+// rebuildSkillDue rewrites rolebot_skill_due from rolebot_skill_plan at boot, before the skill
+// lane starts. storeSkillPlanOnce keeps the two in step while the server runs; the rebuild means
+// a summary can never outlive a restart wrong (an older build that wrote plans without it, a
+// plan row removed by hand).
+func rebuildSkillDue(ctx context.Context, db *sql.DB) error {
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("rebuildSkillDue begin: %w", err)
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `DELETE FROM rolebot_skill_due`); err != nil {
+		return fmt.Errorf("rebuildSkillDue clear: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO rolebot_skill_due (characterID, plannedAt, anyApplied, settled)
+		SELECT characterID, MAX(plannedAt), MAX(applied), MIN(applied = 1 OR typeID = 0)
+		  FROM rolebot_skill_plan
+		 GROUP BY characterID`); err != nil {
+		return fmt.Errorf("rebuildSkillDue fill: %w", err)
+	}
+	return tx.Commit()
 }
 
 // loadSkillPlan reads the recorded plan back for the panel.

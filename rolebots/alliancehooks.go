@@ -30,6 +30,9 @@ func (m *Mod) allianceMembership(corpID, oldAllianceID, newAllianceID int64) {
 	if oldAllianceID == newAllianceID {
 		return
 	}
+	// The corporation's bots change alliance channel. Their location did not move, so the scoped
+	// sync would not see it; the full sync reads every pilot's alliance (presence.go).
+	defer m.syncPresence()
 	if h := modapi.Corp().AllianceMembership; h != nil {
 		h(corpID, oldAllianceID, newAllianceID)
 		return

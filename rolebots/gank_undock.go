@@ -646,12 +646,12 @@ func (m *Mod) gankStrikerToCall(ctx context.Context, s *pvpCombatant, sysID int6
 		return
 	}
 	if s.SystemID != sysID {
-		constID, regID, err := evedb.GetSolarSystemLocation(ctx, m.db, sysID)
+		constID, regID, err := cachedSolarSystemLocation(ctx, m.db, sysID)
 		if err != nil {
 			rlogf("rolebots: striker %d to call system %d: %v", s.CharID, sysID, err)
 			return
 		}
-		if err := evedb.UpdateCharacterStation(ctx, m.db, s.CharID, 0, sysID, constID, regID); err != nil {
+		if err := updateCharacterStation(ctx, m.db, s.CharID, 0, sysID, constID, regID); err != nil {
 			rlogf("rolebots: striker %d character to %d: %v", s.CharID, sysID, err)
 			return
 		}
