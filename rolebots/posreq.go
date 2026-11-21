@@ -882,6 +882,21 @@ func init() {
 			}
 			return true
 		})
+		// One stamp per requisition ever routed (corprequest.go); past reqRouteCheckSec it no
+		// longer holds a route check back.
+		reqRouteChecked.Range(func(k, v any) bool {
+			if now-v.(int64) >= reqRouteCheckSec {
+				reqRouteChecked.Delete(k)
+			}
+			return true
+		})
+		// A void snub stops steering the line after reqVoidSnubSec.
+		reqVoidSnubs.Range(func(k, v any) bool {
+			if now-v.(reqVoidSnub).At >= reqVoidSnubSec {
+				reqVoidSnubs.Delete(k)
+			}
+			return true
+		})
 		if now-reqSnubsClearedAt.Load() >= 86400 {
 			reqSnubsClearedAt.Store(now)
 			reqSnubs.Range(func(k, _ any) bool { reqSnubs.Delete(k); return true })

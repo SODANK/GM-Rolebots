@@ -334,7 +334,8 @@ func (m *Mod) siegeCapacityFor(ctx context.Context, corps []int64) (siegeCapacit
 		return ps[i].CharID < ps[j].CharID
 	})
 	if len(ps) > siegeCapacityPilots {
-		ps = ps[:siegeCapacityPilots]
+		// Cloned: the cache keeps this slice, and a re-slice would pin every enabled pilot read.
+		ps = slices.Clone(ps[:siegeCapacityPilots])
 	}
 	for i := range ps {
 		ps[i].OwnedDPS = m.pilotSiegeDPS(ctx, ps[i].CharID)

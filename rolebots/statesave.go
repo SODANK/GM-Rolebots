@@ -13,8 +13,10 @@ import (
 	"time"
 )
 
-// stateRewriteAfter is the longest an unchanged state goes unwritten.
-const stateRewriteAfter = 10 * time.Minute
+// stateRewriteAfter is the longest an unchanged state goes unwritten. Every delete path forgets
+// the fingerprint (forgetSavedState via the forget registry), so this only bounds a path nobody
+// wired. At ten minutes it rewrote ~50 unchanged blobs a second on a 30k roster.
+const stateRewriteAfter = time.Hour
 
 type savedStateRec struct {
 	sum uint64
@@ -53,6 +55,22 @@ func stateUnchanged(charID int64, sum uint64) bool {
 func noteStateSaved(charID int64, sum uint64) {
 	savedStateMu.Lock()
 	savedState[charID] = savedStateRec{sum: sum, at: clock.Now()}
+	savedStateMu.Unlock()
+}
+
+// seedSavedState records the fingerprint of a row just read from the table, unless a save has
+// already recorded one: a read must not extend the rewrite window a save started. The stored blob
+// is the json.Marshal output of an earlier save, so an unchanged pilot re-marshals to the same
+// bytes and its next save is skipped; a blob written by an older struct shape differs and is
+// rewritten once.
+func seedSavedState(charID int64, sum uint64) {
+	if charID == 0 {
+		return
+	}
+	savedStateMu.Lock()
+	if _, ok := savedState[charID]; !ok {
+		savedState[charID] = savedStateRec{sum: sum, at: clock.Now()}
+	}
 	savedStateMu.Unlock()
 }
 

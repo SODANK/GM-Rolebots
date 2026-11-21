@@ -1044,13 +1044,10 @@ func (m *Mod) setSystem(ctx context.Context, b *botRun, sysID int64) error {
 	if err != nil {
 		return err
 	}
-	if err := updateCharacterStation(ctx, m.db, b.CharID, 0, sysID, constID, regID); err != nil {
+	if err := m.moveCharAndShip(ctx, b.CharID, b.ShipID, sysID, constID, regID); err != nil {
 		return err
 	}
 	if b.ShipID != 0 {
-		if err := evedb.UpdateEntityLocation(ctx, m.db, b.ShipID, sysID); err != nil {
-			return err
-		}
 		if fromSys != sysID {
 			// Remember which gate it came out of: a projection built here
 			// flashes it, the way a real jump-in does.
@@ -1061,9 +1058,8 @@ func (m *Mod) setSystem(ctx context.Context, b *botRun, sysID int64) error {
 	if fromSys != sysID && fromSys != 0 {
 		// The star map's jump overlay (map.GetHistory type 3) counts arrivals at the
 		// destination system, as the player StargateJump path does.
-		if err := evedb.RecordMapEvent(ctx, m.db, sysID, evedb.StatJump, 1); err != nil {
-			rlogf("rolebots: record map jump %d->%d: %v", fromSys, sysID, err)
-		}
+		// Buffered with the traffic ledger and flushed every 30 s (trafficbuf.go).
+		bufMapJump(sysID)
 		// The module's own ledger counts the same jump for the trade planner: which lanes
 		// the roster actually flies (traffic.go).
 		m.recordJump(ctx, fromSys, sysID)
@@ -1073,6 +1069,31 @@ func (m *Mod) setSystem(ctx context.Context, b *botRun, sysID int64) error {
 	}
 	b.SystemID, b.StationID = sysID, 0
 	return nil
+}
+
+// moveCharAndShip writes a pilot into space in a system and, when it has one, its boarded ship
+// into the same system: the character row (updateCharacterStation's write) and the ship's
+// location in one transaction, so a jump costs one commit instead of two. The pilot is marked
+// for the next presence sync whether or not the write landed, as updateCharacterStation does.
+func (m *Mod) moveCharAndShip(ctx context.Context, charID, shipID, sysID, constID, regID int64) error {
+	defer markPresenceDirty(charID)
+	tx, err := m.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("moveCharAndShip charID=%d: %w", charID, err)
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE character_ SET stationID=?, solarSystemID=?, constellationID=?, regionID=? WHERE characterID=?`,
+		0, sysID, constID, regID, charID); err != nil {
+		return fmt.Errorf("UpdateCharacterStation charID=%d: %w", charID, err)
+	}
+	if shipID != 0 {
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE entity SET locationID=? WHERE itemID=?`, sysID, shipID); err != nil {
+			return fmt.Errorf("UpdateEntityLocation entityID=%d: %w", shipID, err)
+		}
+	}
+	return tx.Commit()
 }
 
 // setInSpace undocks the bot in its current system, leaving its ship in the

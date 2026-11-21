@@ -70,71 +70,48 @@ func laneKey(a, b int64) (int64, int64) {
 	return a, b
 }
 
-// recordJump books one gate transit: an arrival in `to`, and one crossing of the lane. Best-effort: a bot's flight
-// is not failed over a ledger write, and the ledger is a measurement, not a source of truth.
-func (m *Mod) recordJump(ctx context.Context, from, to int64) {
+// recordJump books one gate transit: an arrival in `to`, and one crossing of the lane. Folded into
+// the write-behind (trafficbuf.go): the ledger is a measurement, not a source of truth.
+func (m *Mod) recordJump(_ context.Context, from, to int64) {
 	if from == 0 || to == 0 || from == to {
 		return
 	}
 	now := clock.Unix()
-	if _, err := m.db.ExecContext(ctx, `
-		INSERT INTO rolebot_traffic_systems (systemID, jumps, decayedAt, lastAt)
-		VALUES (?, 1, ?, ?)
-		ON DUPLICATE KEY UPDATE jumps = jumps + 1, lastAt = VALUES(lastAt)`,
-		to, now, now); err != nil {
-		rlogf("rolebots: traffic system %d: %v", to, err)
-		return
-	}
+	bufSystem(to, now, func(d *trafficSysDelta) { d.jumps++ })
 	lo, hi := laneKey(from, to)
-	if _, err := m.db.ExecContext(ctx, `
-		INSERT INTO rolebot_traffic_lanes (fromSystemID, toSystemID, jumps, decayedAt, lastAt)
-		VALUES (?, ?, 1, ?, ?)
-		ON DUPLICATE KEY UPDATE jumps = jumps + 1, lastAt = VALUES(lastAt)`,
-		lo, hi, now, now); err != nil {
-		rlogf("rolebots: traffic lane %d-%d: %v", lo, hi, err)
-	}
+	bufLane(lo, hi, now, func(d *trafficLaneDelta) { d.jumps++ })
 }
 
 // recordMarketFlow books money changing hands in a system: which side of
 // the book it was and what it was worth. Called from the trade book, so
 // every leg that reaches the ledger reaches the map.
-func (m *Mod) recordMarketFlow(ctx context.Context, systemID int64, buy bool, isk float64) {
+func (m *Mod) recordMarketFlow(_ context.Context, systemID int64, buy bool, isk float64) {
 	if systemID == 0 || isk <= 0 {
 		return
 	}
-	col := "sells"
-	if buy {
-		col = "buys"
-	}
-	now := clock.Unix()
-	if _, err := m.db.ExecContext(ctx, `
-		INSERT INTO rolebot_traffic_systems (systemID, `+col+`, iskMoved, decayedAt, lastAt)
-		VALUES (?, 1, ?, ?, ?)
-		ON DUPLICATE KEY UPDATE `+col+` = `+col+` + 1,
-			iskMoved = iskMoved + VALUES(iskMoved), lastAt = VALUES(lastAt)`,
-		systemID, isk, now, now); err != nil {
-		rlogf("rolebots: traffic flow %d: %v", systemID, err)
-	}
+	bufSystem(systemID, clock.Unix(), func(d *trafficSysDelta) {
+		if buy {
+			d.buys++
+		} else {
+			d.sells++
+		}
+		d.isk += isk
+	})
 }
 
 // recordHaul books a completed haul against the lane it was flown over:
 // the two ENDS of the run, not every gate between them. A run's endpoints
 // are what makes a trade route; the gates in the middle already counted
 // themselves as jumps on the way past.
-func (m *Mod) recordHaul(ctx context.Context, fromSys, toSys int64, isk float64) {
+func (m *Mod) recordHaul(_ context.Context, fromSys, toSys int64, isk float64) {
 	if fromSys == 0 || toSys == 0 || fromSys == toSys {
 		return
 	}
 	lo, hi := laneKey(fromSys, toSys)
-	now := clock.Unix()
-	if _, err := m.db.ExecContext(ctx, `
-		INSERT INTO rolebot_traffic_lanes (fromSystemID, toSystemID, hauls, iskMoved, decayedAt, lastAt)
-		VALUES (?, ?, 1, ?, ?, ?)
-		ON DUPLICATE KEY UPDATE hauls = hauls + 1,
-			iskMoved = iskMoved + VALUES(iskMoved), lastAt = VALUES(lastAt)`,
-		lo, hi, isk, now, now); err != nil {
-		rlogf("rolebots: traffic haul %d-%d: %v", lo, hi, err)
-	}
+	bufLane(lo, hi, clock.Unix(), func(d *trafficLaneDelta) {
+		d.hauls++
+		d.isk += isk
+	})
 }
 
 // ── decay ───────────────────────────────────────────────────────────────────

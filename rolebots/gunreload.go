@@ -20,11 +20,12 @@ const gunReloadDelay = 10 * time.Second
 
 // reloadShipLocks serialises reloads per ship: the combat loop, the siege guns and a loadout
 // build may all reach for the same hold, and takeFromCargo is a read then a write.
-var reloadShipLocks sync.Map // shipID → *sync.Mutex
+// Striped rather than one mutex per ship kept forever: every hull ever reloaded in left an entry.
+// No caller holds one ship's lock while taking another's, so sharing a stripe cannot deadlock.
+var reloadShipLocks [256]sync.Mutex
 
 func reloadShipLock(shipID int64) *sync.Mutex {
-	mu, _ := reloadShipLocks.LoadOrStore(shipID, &sync.Mutex{})
-	return mu.(*sync.Mutex)
+	return &reloadShipLocks[uint64(shipID)%uint64(len(reloadShipLocks))]
 }
 
 // holdCharges is the charges loose in a ship's hold, typeID to units.

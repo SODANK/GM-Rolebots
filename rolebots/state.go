@@ -27,6 +27,10 @@ type SimState struct {
 	// catchUp is the leg catch-up armed for the turn in progress (legcatchup.go). It lives
 	// for one turn and is never stored.
 	catchUp legCatchUp
+
+	// diskSum is the fingerprint of the row this state was read from (0 = none), for
+	// seedLoadedState. Never stored.
+	diskSum uint64
 }
 
 // StateData is the JSON blob column: everything a phase needs to resume.
@@ -144,17 +148,33 @@ func scanStateInto(scan func(dest ...any) error, st *SimState) error {
 	}
 	st.LastError = lastErr.String
 	st.Halted = halted != 0
+	decoded := false
 	if data.Valid && data.String != "" {
 		if err := json.Unmarshal([]byte(data.String), &st.Data); err != nil {
 			// Corrupt blob: reset rather than wedge the bot forever.
 			st.Data = StateData{}
 			st.Phase = "idle"
+		} else {
+			decoded = true
 		}
 	}
 	if st.Phase == "" {
 		st.Phase = "idle"
 	}
+	if decoded {
+		// The row as it sits on disk is what a save compares against: without this every
+		// pilot's first save after a boot rewrote an unchanged row (statesave.go). The caller
+		// seeds it once the row's characterID is known (seedLoadedState).
+		st.diskSum = stateFingerprint(st, []byte(data.String), int(halted))
+	}
 	return nil
+}
+
+// seedLoadedState hands a freshly read row's fingerprint to the save-skip cache.
+func seedLoadedState(st *SimState) {
+	if st.diskSum != 0 {
+		seedSavedState(st.CharID, st.diskSum)
+	}
 }
 
 func loadState(ctx context.Context, db *sql.DB, charID int64) (*SimState, error) {
@@ -168,6 +188,7 @@ func loadState(ctx context.Context, db *sql.DB, charID int64) (*SimState, error)
 	if err != nil {
 		return nil, fmt.Errorf("loadState: %w", err)
 	}
+	seedLoadedState(st)
 	return st, nil
 }
 

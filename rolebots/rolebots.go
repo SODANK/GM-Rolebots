@@ -358,6 +358,7 @@ func (m *Mod) Init(ctx *modapi.Context) error {
 	// The lifetime-counter flush (statcount.go). Not gated on the master switch:
 	// what accumulated before it went off really happened.
 	m.startStatsWriter()
+	m.startTrafficWriter()
 
 	// Fleet formation (gangform.go): seated fleet commanders take corp-mates out
 	// on the op their seat names. Who is seated is set in corprank.go.

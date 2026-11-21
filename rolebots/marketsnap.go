@@ -16,6 +16,7 @@ import (
 	"database/sql"
 	"fmt"
 	"hash/fnv"
+	"sort"
 	"sync"
 	"time"
 
@@ -184,46 +185,106 @@ func (m *Mod) gapTypes(ctx context.Context, margin float64, regions []int64) ([]
 	// The margin is not in the key: it is pilot tuning (Tune.TradeMinMarginFrac),
 	// and keying on it gave every trader its own copy. Each pilot applies it in Go.
 	key := snapKey("gap", regions)
-	sctx, cancel := snapContext(ctx)
-	defer cancel()
-
-	regionClause, regionArgs := "", []any(nil)
-	if len(regions) > 0 {
-		regionClause = ` AND o.regionID IN (` + placeholders(len(regions)) + `)`
-		regionArgs = int64Args(regions)
-	}
-
 	shared, err := snapshot(key, func() ([]gapRatio, error) {
-		rows, err := m.db.QueryContext(sctx, capStatement(`
-			SELECT o.typeID,
-			       -- a zero ask passed the old HAVING at any margin; keep it
-			       -- passing rather than scanning a NULL ratio
-			       COALESCE(MAX(CASE WHEN o.bid = 1 THEN o.price END)
-			              / NULLIF(MIN(CASE WHEN o.bid = 0 THEN o.price END), 0), 1e18)
-			FROM market_orders o
-			WHERE o.orderState = 1 AND o.volRemaining > 0`+regionClause+`
-			GROUP BY o.typeID
-			HAVING MAX(CASE WHEN o.bid = 1 THEN o.price END)
-			     > MIN(CASE WHEN o.bid = 0 THEN o.price END)`),
-			regionArgs...)
+		book, err := m.gapBook(ctx)
 		if err != nil {
-			return nil, fmt.Errorf("gap pass: %w", err)
+			return nil, err
 		}
-		defer rows.Close()
-		var out []gapRatio
-		for rows.Next() {
-			var g gapRatio
-			if err := rows.Scan(&g.TypeID, &g.Ratio); err != nil {
-				return nil, fmt.Errorf("gap pass row: %w", err)
-			}
-			out = append(out, g)
-		}
-		return out, rows.Err()
+		return gapFromBook(book, regions), nil
 	})
 	if err != nil {
 		return nil, err
 	}
 	return gapAbove(shared, margin), nil
+}
+
+// gapBookRow is one (type, region) cell of the live book: its best bid and best ask.
+type gapBookRow struct {
+	TypeID, RegionID int64
+	Bid, Ask         float64
+	HasBid, HasAsk   bool
+}
+
+// gapBook is the best bid and ask per type and region over every active order: one scan of
+// the book per snapshot TTL, from which every residency scope's gap pass is folded in Go
+// (gapFromBook). Scoped in SQL, each distinct scope re-read the whole book, since the
+// order-state index does not carry the region.
+func (m *Mod) gapBook(ctx context.Context) ([]gapBookRow, error) {
+	sctx, cancel := snapContext(ctx)
+	defer cancel()
+	return snapshot(snapKey("gapbook"), func() ([]gapBookRow, error) {
+		rows, err := m.db.QueryContext(sctx, capStatement(`
+			SELECT o.typeID, o.regionID,
+			       MAX(CASE WHEN o.bid = 1 THEN o.price END),
+			       MIN(CASE WHEN o.bid = 0 THEN o.price END)
+			FROM market_orders o
+			WHERE o.orderState = 1 AND o.volRemaining > 0
+			GROUP BY o.typeID, o.regionID`))
+		if err != nil {
+			return nil, fmt.Errorf("gap pass: %w", err)
+		}
+		defer rows.Close()
+		var out []gapBookRow
+		for rows.Next() {
+			var r gapBookRow
+			var bid, ask sql.NullFloat64
+			if err := rows.Scan(&r.TypeID, &r.RegionID, &bid, &ask); err != nil {
+				return nil, fmt.Errorf("gap pass row: %w", err)
+			}
+			r.Bid, r.HasBid = bid.Float64, bid.Valid
+			r.Ask, r.HasAsk = ask.Float64, ask.Valid
+			out = append(out, r)
+		}
+		return out, rows.Err()
+	})
+}
+
+// gapFromBook folds the per-region book into the gap pass for one scope (empty = every
+// region): per type, the best bid and best ask across the scope, kept when the bid beats
+// the ask. The ratio is bid/ask, or 1e18 for a zero ask (it passes any margin), as the
+// scoped SQL computed it. Sorted by typeID, as the SQL's GROUP BY returned it.
+func gapFromBook(book []gapBookRow, regions []int64) []gapRatio {
+	var in map[int64]bool
+	if len(regions) > 0 {
+		in = make(map[int64]bool, len(regions))
+		for _, r := range regions {
+			in[r] = true
+		}
+	}
+	type best struct {
+		bid, ask       float64
+		hasBid, hasAsk bool
+	}
+	byType := map[int64]*best{}
+	for _, r := range book {
+		if in != nil && !in[r.RegionID] {
+			continue
+		}
+		b := byType[r.TypeID]
+		if b == nil {
+			b = &best{}
+			byType[r.TypeID] = b
+		}
+		if r.HasBid && (!b.hasBid || r.Bid > b.bid) {
+			b.bid, b.hasBid = r.Bid, true
+		}
+		if r.HasAsk && (!b.hasAsk || r.Ask < b.ask) {
+			b.ask, b.hasAsk = r.Ask, true
+		}
+	}
+	out := make([]gapRatio, 0, len(byType)/8)
+	for id, b := range byType {
+		if !b.hasBid || !b.hasAsk || b.bid <= b.ask {
+			continue
+		}
+		ratio := 1e18
+		if b.ask != 0 {
+			ratio = b.bid / b.ask
+		}
+		out = append(out, gapRatio{TypeID: id, Ratio: ratio})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].TypeID < out[j].TypeID })
+	return out
 }
 
 // gapRatio is one type's best bid over its best ask, for every type where

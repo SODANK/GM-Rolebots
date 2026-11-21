@@ -102,18 +102,11 @@ func stationRaw(s *StationScore) {
 
 // recordStationDock books one arrival at a dock, the same way recordJump
 // books a gate transit. Best-effort; the ledger is a measurement.
-func (m *Mod) recordStationDock(ctx context.Context, stationID int64) {
+func (m *Mod) recordStationDock(_ context.Context, stationID int64) {
 	if stationID == 0 {
 		return
 	}
-	now := clock.Unix()
-	if _, err := m.db.ExecContext(ctx, `
-		INSERT INTO rolebot_traffic_stations (stationID, docks, decayedAt, lastAt)
-		VALUES (?, 1, ?, ?)
-		ON DUPLICATE KEY UPDATE docks = docks + 1, lastAt = VALUES(lastAt)`,
-		stationID, now, now); err != nil {
-		rlogf("rolebots: traffic station %d: %v", stationID, err)
-	}
+	bufDock(stationID, clock.Unix()) // trafficbuf.go
 }
 
 // computeStationScores builds the whole per-station table in memory, the

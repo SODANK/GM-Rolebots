@@ -218,6 +218,7 @@ func loadStatesBulk(ctx context.Context, db *sql.DB, ids []int64) (map[int64]*Si
 			}
 			if _, ok := out[charID]; ok {
 				st.CharID = charID
+				seedLoadedState(st)
 				out[charID] = st
 			}
 		}

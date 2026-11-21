@@ -241,10 +241,7 @@ func (m *Mod) applyPresenceLocked(ctx context.Context, charID int64, r presenceR
 				m.lsc.LeaveBot(old.CorpID, charID)
 			}
 			if r.CorpID != 0 {
-				name := evedb.ResolveChannelDisplayName(ctx, m.db, r.CorpID)
-				if err := evedb.EnsureChannel(ctx, m.db, r.CorpID, r.CorpID, name); err != nil {
-					rlogf("rolebots: EnsureChannel corp %d: %v", r.CorpID, err)
-				}
+				m.ensureChannel(ctx, r.CorpID, "corp")
 				m.lsc.JoinBot(r.CorpID, charID, 0, r.CorpID, r.CharTypeID, 0, r.CharName)
 			}
 		}
@@ -256,10 +253,7 @@ func (m *Mod) applyPresenceLocked(ctx context.Context, charID int64, r presenceR
 				m.lsc.LeaveBot(old.AllianceID, charID)
 			}
 			if r.AllianceID != 0 {
-				name := evedb.ResolveChannelDisplayName(ctx, m.db, r.AllianceID)
-				if err := evedb.EnsureChannel(ctx, m.db, r.AllianceID, r.AllianceID, name); err != nil {
-					rlogf("rolebots: EnsureChannel alliance %d: %v", r.AllianceID, err)
-				}
+				m.ensureChannel(ctx, r.AllianceID, "alliance")
 				m.lsc.JoinBot(r.AllianceID, charID, 0, r.CorpID, r.CharTypeID, 0, r.CharName)
 			}
 		}
@@ -270,10 +264,7 @@ func (m *Mod) applyPresenceLocked(ctx context.Context, charID int64, r presenceR
 				m.dropChannelChar(ctx, old.SolarSystemID, charID)
 			}
 			if r.SolarSystemID != 0 {
-				name := evedb.ResolveChannelDisplayName(ctx, m.db, r.SolarSystemID)
-				if err := evedb.EnsureChannel(ctx, m.db, r.SolarSystemID, r.SolarSystemID, name); err != nil {
-					rlogf("rolebots: EnsureChannel system %d: %v", r.SolarSystemID, err)
-				}
+				m.ensureChannel(ctx, r.SolarSystemID, "system")
 				m.lsc.JoinBot(r.SolarSystemID, charID, 0, r.CorpID, r.CharTypeID, 0, r.CharName)
 				if err := evedb.UpsertChannelChar(ctx, m.db, r.SolarSystemID, charID, r.CorpID); err != nil {
 					rlogf("rolebots: UpsertChannelChar(%d,%d): %v", r.SolarSystemID, charID, err)
@@ -354,7 +345,49 @@ func (m *Mod) dropChannelChar(ctx context.Context, systemID, charID int64) {
 	}
 }
 
+// ensuredChannelTTL is how long a channel row ensured by this process is trusted to exist.
+// Bots enter and leave Locals all day; the channels row behind a system, corporation or
+// alliance only needs ensuring once, not an upsert plus a name lookup per jump.
+const ensuredChannelTTL = time.Hour
+
+var (
+	ensuredChannelMu sync.Mutex
+	ensuredChannel   = map[int64]time.Time{}
+)
+
+// ensureChannel is evedb.EnsureChannel (with its display-name lookup) at most once per channel
+// per ensuredChannelTTL. A failed ensure is not remembered, so the next join retries it.
+func (m *Mod) ensureChannel(ctx context.Context, channelID int64, kind string) {
+	now := clock.Now()
+	ensuredChannelMu.Lock()
+	at, ok := ensuredChannel[channelID]
+	ensuredChannelMu.Unlock()
+	if ok && now.Sub(at) < ensuredChannelTTL {
+		return
+	}
+	name := evedb.ResolveChannelDisplayName(ctx, m.db, channelID)
+	if err := evedb.EnsureChannel(ctx, m.db, channelID, channelID, name); err != nil {
+		rlogf("rolebots: EnsureChannel %s %d: %v", kind, channelID, err)
+		return
+	}
+	ensuredChannelMu.Lock()
+	ensuredChannel[channelID] = now
+	ensuredChannelMu.Unlock()
+}
+
+func sweepEnsuredChannels() {
+	cut := clock.Now().Add(-ensuredChannelTTL)
+	ensuredChannelMu.Lock()
+	for id, at := range ensuredChannel {
+		if at.Before(cut) {
+			delete(ensuredChannel, id)
+		}
+	}
+	ensuredChannelMu.Unlock()
+}
+
 func init() {
+	registerSweep("ensuredChannel", sweepEnsuredChannels)
 	registerCharForget("presenceApplied", func(id int64) {
 		presenceMu.Lock()
 		delete(presenceApplied, id)

@@ -292,7 +292,7 @@ func forgetROEChar(charID int64) {
 	}
 	roeMu.Lock()
 	defer roeMu.Unlock()
-	for _, table := range []map[[2]int64]roeDecision{roeDecisions, assistDecisions} {
+	for _, table := range []map[[2]int64]roeDecision{roeDecisions, assistDecisions, transitWarDecisions} {
 		for k := range table {
 			if k[0] == charID || k[1] == charID {
 				delete(table, k)
