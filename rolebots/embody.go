@@ -1746,20 +1746,32 @@ func (m *Mod) embodyWarpTo(ctx context.Context, eb *embodiedBot, target evedb.Ce
 	m.queueForBubble(ss, ent.ID, ent.ID, warpKeyed...)
 	// Flushed so the removal window can be short: with the warp drained here (as startPlayerWarp does)
 	// the removal cannot share a tick with it, and the window is destiny.ObserverDepartSec.
+	// A forced flush mints, though, and on a hub grid a stamp per departure per witness runs the
+	// witness's sim clock ahead until the client fast-forwards. So it is forced only when the mint is
+	// free (StampLead() < 0, as the warp mirror); otherwise the warp rides the next headroom flush, at
+	// most embodyQueueHold later, and that witness's removal waits the same extra time.
+	var lateWarp map[uint32]bool
 	for _, mate := range ss.GetBubbleConnectedPlayersExcept(ent.ID) {
 		if mate.Conn == nil || !mate.KnowsBall(ent.ID) {
 			continue
 		}
-		mate.FlushQueuedActions(destiny.FlushNodeID, true)
+		if mate.StampLead() < 0 {
+			mate.FlushQueuedActions(destiny.FlushNodeID, true)
+			continue
+		}
+		if lateWarp == nil {
+			lateWarp = make(map[uint32]bool, 4)
+		}
+		lateWarp[mate.ID] = true
 	}
 	departMates := ss.RemoveFromBubble(ent.ID)
 
 	// Whoever watched the ship leave must be told the ball is gone, even if the tunnel sleep is
 	// cancelled, or a ghost ball strands in their ballpark. Queued. See docs/comment-notes-b07.md#warp-removal.
 	rmKey := "rm:" + strconv.FormatUint(uint64(ent.ID), 10)
-	removeDeparted := func() {
+	removeDeparted := func(late bool) {
 		for _, mate := range departMates {
-			if mate.Conn == nil || !mate.KnowsBall(ent.ID) {
+			if mate.Conn == nil || !mate.KnowsBall(ent.ID) || lateWarp[mate.ID] != late {
 				continue
 			}
 			// HasPendingAdd, not DropPendingAdd: DropPendingAdd purges every queued action for the ball,
@@ -1781,10 +1793,22 @@ func (m *Mod) embodyWarpTo(ctx context.Context, eb *embodiedBot, target evedb.Ce
 		observerHold = destiny.ObserverDepartSec
 	}
 	if !embodySleep(ctx, time.Duration(observerHold*float64(time.Second))) {
-		removeDeparted()
+		removeDeparted(false)
+		removeDeparted(true)
 		return
 	}
-	removeDeparted()
+	removeDeparted(false)
+	if len(lateWarp) > 0 {
+		// Not on ctx: the removal must go out even if the warp is cancelled, or a ghost ball strands.
+		time.AfterFunc(time.Duration(embodyQueueHold*float64(time.Second)), func() {
+			defer func() {
+				if r := recover(); r != nil {
+					rlogf("rolebots: PANIC in late warp removal for ball %d: %v", ent.ID, r)
+				}
+			}()
+			removeDeparted(true)
+		})
+	}
 
 	// Phase 2b: the warp mirror, destiny.WarpMirrorLeadSec before the landing. It is sent late so the
 	// witness is not buried by mirrored balls published at warp start (see destiny/warpin.go).
