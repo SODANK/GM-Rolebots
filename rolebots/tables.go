@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"regexp"
 	"strings"
 )
 
@@ -2121,7 +2122,15 @@ func ensureTables(ctx context.Context, db *sql.DB) error {
 		// Drop the retired per-belt m3 budget table (bots mine the seeded field, beltfield.go).
 		`DROP TABLE IF EXISTS rolebot_belt_state`,
 	}
+	// Skip the ones already in force: every ALTER, even one whose IF [NOT] EXISTS clause
+	// makes it a no-op, takes an exclusive metadata lock and can touch the table
+	// definition, and ~70 of them ran on every boot. One information_schema read
+	// answers them all; anything the snapshot cannot judge still runs.
+	snap := loadSchemaSnapshot(ctx, db)
 	for _, q := range alters {
+		if snap.alterApplied(q) {
+			continue
+		}
 		if _, err := db.ExecContext(ctx, q); err != nil {
 			return fmt.Errorf("ensureTables alter: %w", err)
 		}
@@ -2834,4 +2843,94 @@ func migrateWorkClaimsPerJob(ctx context.Context, db *sql.DB) error {
 		return fmt.Errorf("migrateWorkClaimsPerJob: %w", err)
 	}
 	return nil
+}
+
+// schemaSnapshot is the module's tables' columns and indexes as information_schema
+// had them at one moment, keyed "table.name" in lower case. A nil snapshot (the read
+// failed) judges nothing, so every ALTER runs as before.
+type schemaSnapshot struct {
+	cols map[string]bool
+	idx  map[string]bool
+}
+
+func loadSchemaSnapshot(ctx context.Context, db *sql.DB) *schemaSnapshot {
+	snap := &schemaSnapshot{cols: map[string]bool{}, idx: map[string]bool{}}
+	load := func(q string, into map[string]bool) bool {
+		rows, err := db.QueryContext(ctx, q)
+		if err != nil {
+			rlogf("rolebots: schema snapshot: %v (running every ALTER)", err)
+			return false
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var t, n string
+			if rows.Scan(&t, &n) == nil {
+				into[strings.ToLower(t+"."+n)] = true
+			}
+		}
+		return rows.Err() == nil
+	}
+	if !load(`SELECT TABLE_NAME, COLUMN_NAME FROM information_schema.COLUMNS
+		WHERE TABLE_SCHEMA = DATABASE()`, snap.cols) {
+		return nil
+	}
+	if !load(`SELECT DISTINCT TABLE_NAME, INDEX_NAME FROM information_schema.STATISTICS
+		WHERE TABLE_SCHEMA = DATABASE()`, snap.idx) {
+		return nil
+	}
+	return snap
+}
+
+// alterClauseRe matches a single-clause ALTER whose effect the snapshot can judge.
+var alterClauseRe = regexp.MustCompile(`(?is)^\s*ALTER\s+TABLE\s+(\w+)\s+` +
+	`(ADD\s+COLUMN\s+IF\s+NOT\s+EXISTS|DROP\s+COLUMN\s+IF\s+EXISTS|` +
+	`ADD\s+(?:UNIQUE\s+)?(?:KEY|INDEX)\s+IF\s+NOT\s+EXISTS|DROP\s+(?:KEY|INDEX)\s+IF\s+EXISTS)\s+(\w+)(.*)$`)
+
+// alterApplied reports whether q would change nothing: an ADD ... IF NOT EXISTS of
+// something present, or a DROP ... IF EXISTS of something absent. A statement with
+// more than one clause (a top-level comma) is never judged.
+func (s *schemaSnapshot) alterApplied(q string) bool {
+	if s == nil {
+		return false
+	}
+	m := alterClauseRe.FindStringSubmatch(q)
+	if m == nil || topLevelComma(m[4]) {
+		return false
+	}
+	key := strings.ToLower(m[1] + "." + m[3])
+	verb := strings.ToUpper(strings.Join(strings.Fields(m[2]), " "))
+	switch {
+	case strings.HasPrefix(verb, "ADD COLUMN"):
+		return s.cols[key]
+	case strings.HasPrefix(verb, "DROP COLUMN"):
+		return !s.cols[key]
+	case strings.HasPrefix(verb, "ADD"):
+		return s.idx[key]
+	case strings.HasPrefix(verb, "DROP"):
+		return !s.idx[key]
+	}
+	return false
+}
+
+// topLevelComma reports a comma outside parentheses and quotes.
+func topLevelComma(s string) bool {
+	depth := 0
+	var quote rune
+	for _, r := range s {
+		switch {
+		case quote != 0:
+			if r == quote {
+				quote = 0
+			}
+		case r == '\'' || r == '"' || r == '`':
+			quote = r
+		case r == '(':
+			depth++
+		case r == ')':
+			depth--
+		case r == ',' && depth == 0:
+			return true
+		}
+	}
+	return false
 }

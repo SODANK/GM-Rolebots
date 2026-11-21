@@ -171,7 +171,10 @@ func (m *Mod) pruneBPCListings(ctx context.Context) {
 	}
 	bpcPrunedAt.Store(now)
 	cut := now - bpcListingKeepDays*86400
-	for i := 0; i < 20 && ctx.Err() == nil; i++ {
+	for i := 0; i < tradePruneMaxChunks && ctx.Err() == nil; i++ {
+		if i > 0 && !prunePause(ctx) {
+			return
+		}
 		rows, err := m.db.QueryContext(ctx, capStatement(`
 			SELECT l.escrowID FROM rolebot_bpc_listings l
 			  LEFT JOIN escrows e ON e.escrowID = l.escrowID

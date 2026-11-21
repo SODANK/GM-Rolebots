@@ -564,18 +564,44 @@ func (m *Mod) moraleCorpsDue(ctx context.Context, now int64, limit int) ([]int64
 	return out, rows.Err()
 }
 
+// moraleFailBackoffSec is how long a corporation whose sample failed (an error, or
+// the pass timing out part-way) waits before it is tried again. Its cursor is saved
+// only at the end of a sample, so without this it stays first in the due list and
+// every minute's pass rewrites the morale cells of every member it reached.
+const moraleFailBackoffSec = 3600
+
+// moraleFailedUntil maps corporationID to the clock second its next try may start.
+// Only the morale lane touches it, and that lane is single-flight (moraleBusy).
+var moraleFailedUntil = map[int64]int64{}
+
 func (m *Mod) moralePass(ctx context.Context) error {
 	now := clock.Unix()
-	corps, err := m.moraleCorpsDue(ctx, now, moraleCorpsPerPass)
+	for id, until := range moraleFailedUntil {
+		if until <= now {
+			delete(moraleFailedUntil, id)
+		}
+	}
+	// Ask for enough rows that corporations in backoff cannot fill every slot.
+	due, err := m.moraleCorpsDue(ctx, now, moraleCorpsPerPass+len(moraleFailedUntil))
 	if err != nil {
 		return err
+	}
+	corps := make([]int64, 0, moraleCorpsPerPass)
+	for _, id := range due {
+		if _, held := moraleFailedUntil[id]; held {
+			continue
+		}
+		if len(corps) < moraleCorpsPerPass {
+			corps = append(corps, id)
+		}
 	}
 	for _, corpID := range corps {
 		if ctx.Err() != nil {
 			return nil
 		}
 		if err := m.moraleSampleCorp(ctx, corpID, now); err != nil {
-			rlogf("rolebots: morale %d: %v", corpID, err)
+			moraleFailedUntil[corpID] = now + moraleFailBackoffSec
+			rlogf("rolebots: morale %d: %v (retry in %ds)", corpID, err, moraleFailBackoffSec)
 		}
 	}
 	if len(corps) > 0 {

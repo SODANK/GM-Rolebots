@@ -298,13 +298,14 @@ const (
 	// starts dropping them. Sized for a full sim pass's worth of a large
 	// roster, so a slow database costs latency rather than lines.
 	logQueueDepth = 16384
-	// logBatchMax is the most rows one INSERT carries: past a couple of hundred rows
-	// there is little left to win.
-	logBatchMax = 200
+	// logBatchMax is the most rows one INSERT carries. Each INSERT is its own commit,
+	// and on a stock MariaDB every commit is a redo fsync plus page flushes, so fewer,
+	// larger batches cut the write volume far more than they cost in latency.
+	logBatchMax = 500
 	// logBatchWait is how long a partial batch waits for company. Below the
 	// live tail's own 3s poll, so the panel never shows a line late enough
 	// for anyone to notice.
-	logBatchWait = 250 * time.Millisecond
+	logBatchWait = time.Second
 )
 
 // The queue is made at package init, not in startLogWriter, because Init logs
@@ -355,6 +356,7 @@ func (m *Mod) runLogWriter() {
 			return
 		}
 		m.writeLogRows(batch)
+		logInsertedSincePrune += len(batch)
 		batch = batch[:0]
 		if n := logDropped.Load(); n > logReported.Load() {
 			logReported.Store(n)
@@ -406,19 +408,33 @@ func (m *Mod) writeLogRows(rows []logRow2) {
 	}
 }
 
-// logPruneChunk is how many expired rows one prune roll removes. The delete is
+// logPruneChunk is how many expired rows one DELETE removes. The delete is
 // chunked because an unbounded one is a long transaction that rolls back if it
 // cannot finish in its context, so the table would never shrink.
 const logPruneChunk = 2000
 
-// logPruneEvery is how many batches pass between prune rolls. One roll (2,000
-// deletable rows) per batch (up to 200 written) lets the table converge to its
-// retention window; a slower roll rate would only slow its growth.
-const logPruneEvery = 1
+// logPruneInterval is the least time between prune rolls. Pruning after every
+// flush (4+ times a second) turned a retention backlog, which every restart after
+// downtime creates because retention is wall-clock, into ~500k row deletes a minute
+// across five indexes and a TEXT column: on the order of a gigabyte of redo, undo and
+// page writes a minute. A roll every 10 s with a budget tied to the insert rate keeps
+// the table at its window without that storm.
+const logPruneInterval = 10 * time.Second
+
+// logPruneFloor is the least a roll may delete, so a quiet roster still drains a
+// backlog. logPruneCatchUp is how much faster than the insert rate a roll may delete:
+// at 1.5 the table converges while deletes stay within 1.5x the inserts.
+// logPruneMaxPerRoll caps one roll however busy the writer was.
+const (
+	logPruneFloor      = 1000
+	logPruneCatchUp    = 1.5
+	logPruneMaxPerRoll = 20000
+)
 
 var (
-	logBatchCount   int
-	logPruneBackoff time.Time
+	logPruneBackoff       time.Time
+	logPruneLastRoll      time.Time
+	logInsertedSincePrune int
 )
 
 // logPruneBackoffFor is how long the writer stops pruning after a roll fails. A
@@ -426,32 +442,57 @@ var (
 // server, so rolling again each batch would stack them and starve the INSERT.
 const logPruneBackoffFor = 2 * time.Minute
 
+// logPruneBudget is how many rows the next roll may delete given the rows written
+// since the last one.
+func logPruneBudget(inserted int) int {
+	n := int(float64(inserted) * logPruneCatchUp)
+	if n < logPruneFloor {
+		n = logPruneFloor
+	}
+	if n > logPruneMaxPerRoll {
+		n = logPruneMaxPerRoll
+	}
+	return n
+}
+
 func (m *Mod) maybePruneLog() {
-	logBatchCount++
-	if logBatchCount%logPruneEvery != 0 {
-		return
-	}
 	now := time.Now()
-	if now.Before(logPruneBackoff) {
+	if now.Before(logPruneBackoff) || now.Sub(logPruneLastRoll) < logPruneInterval {
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
+	logPruneLastRoll = now
+	budget := logPruneBudget(logInsertedSincePrune)
+	logInsertedSincePrune = 0
+
 	cutoff := now.AddDate(0, 0, -logRetentionDays()).Unix()
-	// ORDER BY ts, never logID: only ts matches the index the WHERE ranges over
-	// (idx_rblog_ts). By logID the plan sorts the whole expired range, minutes per roll.
-	res, err := m.db.ExecContext(ctx,
-		`DELETE FROM rolebot_log WHERE ts < ? ORDER BY ts LIMIT ?`,
-		cutoff, logPruneChunk)
-	if err != nil {
-		logPruneBackoff = now.Add(logPruneBackoffFor)
-		rlogf("rolebots: log prune: %v — pausing prunes for %s", err, logPruneBackoffFor)
-		return
-	}
-	// A converged table answers zero for every roll until the next row expires, so
-	// five minutes between empty rolls loses nothing.
-	if n, _ := res.RowsAffected(); n == 0 {
-		logPruneBackoff = now.Add(logPruneIdleFor)
+	for budget > 0 {
+		chunk := logPruneChunk
+		if budget < chunk {
+			chunk = budget
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		// ORDER BY ts, never logID: only ts matches the index the WHERE ranges over
+		// (idx_rblog_ts). By logID the plan sorts the whole expired range, minutes per roll.
+		res, err := m.db.ExecContext(ctx,
+			`DELETE FROM rolebot_log WHERE ts < ? ORDER BY ts LIMIT ?`,
+			cutoff, chunk)
+		cancel()
+		if err != nil {
+			logPruneBackoff = now.Add(logPruneBackoffFor)
+			rlogf("rolebots: log prune: %v — pausing prunes for %s", err, logPruneBackoffFor)
+			return
+		}
+		n, _ := res.RowsAffected()
+		// A converged table answers zero for every roll until the next row expires, so
+		// five minutes between empty rolls loses nothing.
+		if n == 0 {
+			logPruneBackoff = now.Add(logPruneIdleFor)
+			return
+		}
+		if n < int64(chunk) {
+			return
+		}
+		budget -= chunk
 	}
 }
 

@@ -174,6 +174,9 @@ func (m *Mod) pruneCorpLedger(ctx context.Context) {
 		`DELETE FROM rolebot_corp_assignments WHERE status NOT IN ('offered', 'posted', 'accepted') AND closedAt < ? LIMIT ?`,
 	} {
 		for i := 0; i < 20 && ctx.Err() == nil; i++ {
+			if i > 0 && !prunePause(ctx) {
+				break
+			}
 			res, err := m.db.ExecContext(ctx, q, cutoff, corpLedgerPruneBatch)
 			if err != nil {
 				break
@@ -184,6 +187,9 @@ func (m *Mod) pruneCorpLedger(ctx context.Context) {
 		}
 	}
 	for i := 0; i < 20 && ctx.Err() == nil; i++ {
+		if i > 0 && !prunePause(ctx) {
+			break
+		}
 		res, err := m.db.ExecContext(ctx,
 			`DELETE FROM rolebot_corp_ledger WHERE at < ? LIMIT ?`, cutoff, corpLedgerPruneBatch)
 		if err != nil {

@@ -106,6 +106,9 @@ const botJobKeepDays = 60
 func (m *Mod) pruneBotIndustryHistory(ctx context.Context) {
 	cutoff := evedb.UnixToWin32(clock.Unix() - botJobKeepDays*86400)
 	for i := 0; i < 20 && ctx.Err() == nil; i++ {
+		if i > 0 && !prunePause(ctx) {
+			break
+		}
 		rows, err := m.db.QueryContext(ctx, capStatement(`
 			SELECT j.jobID FROM ramJobs j
 			  JOIN rolebot_characters rc ON rc.characterID = j.installerID

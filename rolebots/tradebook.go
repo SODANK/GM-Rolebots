@@ -186,6 +186,9 @@ const closedOrderKeepSec = 2 * 86400
 func (m *Mod) pruneClosedBotOrders(ctx context.Context) {
 	cutoff := evedb.UnixToWin32(clock.Unix() - closedOrderKeepSec)
 	for i := 0; i < tradePruneMaxChunks && ctx.Err() == nil; i++ {
+		if i > 0 && !prunePause(ctx) {
+			return
+		}
 		rows, err := m.db.QueryContext(ctx, capStatement(`
 			SELECT mo.orderID FROM market_orders mo
 			  JOIN rolebot_characters rc ON rc.characterID = mo.charID
@@ -221,15 +224,39 @@ func (m *Mod) pruneClosedBotOrders(ctx context.Context) {
 	}
 }
 
+// The prune pace. These sweeps run every minute, so 5 x 2,000 rows per table per
+// sweep is 600k rows an hour per table, far above any steady insert rate. The old
+// 40 x 5,000 (200k rows per statement per minute, across six statements) let a
+// retention backlog, as after downtime, delete over a million indexed rows a minute
+// and drive the database to ~1 GB/min of writes until it was gone. A backlog now
+// drains over hours instead of minutes, which nobody notices.
 const (
-	tradePruneChunk     = 5000
-	tradePruneMaxChunks = 40 // per table per sweep: 200k rows, a day and a half of book
+	tradePruneChunk     = 2000
+	tradePruneMaxChunks = 5
+	// tradePruneGap is the pause between chunks, so InnoDB purge and the page
+	// cleaner keep up instead of the deletes queueing undo and dirty pages.
+	tradePruneGap = 200 * time.Millisecond
 )
+
+// prunePause waits tradePruneGap, or returns false if ctx ends first.
+func prunePause(ctx context.Context) bool {
+	t := time.NewTimer(tradePruneGap)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-t.C:
+		return true
+	}
+}
 
 // pruneChunked runs a `... < ? ORDER BY <indexed col> LIMIT ?` delete until a
 // chunk comes back short, the per-sweep cap is reached, or ctx is done.
 func (m *Mod) pruneChunked(ctx context.Context, what, q string, cutoff int64) {
 	for i := 0; i < tradePruneMaxChunks && ctx.Err() == nil; i++ {
+		if i > 0 && !prunePause(ctx) {
+			return
+		}
 		res, err := m.db.ExecContext(ctx, q, cutoff, tradePruneChunk)
 		if err != nil {
 			rlogf("rolebots: %s prune: %v", what, err)
