@@ -2,6 +2,7 @@ package rolebots
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"sync"
@@ -42,6 +43,43 @@ var (
 	seatPassMu sync.Mutex
 	seatPassAt = map[int64]int64{}
 )
+
+// rolesRecheckSec: between Corporate Reviews the roles pass re-runs when the membership has
+// changed since its last run, at most this often (rolesRecheckDue).
+const rolesRecheckSec = 2 * 3600
+
+// rolesPassMark is the membership the roles pass last dealt for, and when. In memory: the first
+// think after a restart runs the pass once.
+type rolesPassMark struct {
+	members int
+	at      int64
+}
+
+var (
+	rolesPassMu   sync.Mutex
+	rolesPassLast = map[int64]rolesPassMark{}
+)
+
+// rolesRecheckDue reports whether the roles pass should run outside the weekly review: never run
+// since boot, or the membership moved and the last run is rolesRecheckSec old.
+func rolesRecheckDue(corpID int64, members int) bool {
+	rolesPassMu.Lock()
+	defer rolesPassMu.Unlock()
+	mk, ok := rolesPassLast[corpID]
+	if !ok {
+		return true
+	}
+	return mk.members != members && clock.Unix()-mk.at >= rolesRecheckSec
+}
+
+// noteRolesPass stamps a roles pass and answers whether the membership changed since the last.
+func noteRolesPass(corpID int64, members int) (changed bool) {
+	rolesPassMu.Lock()
+	defer rolesPassMu.Unlock()
+	mk, ok := rolesPassLast[corpID]
+	rolesPassLast[corpID] = rolesPassMark{members: members, at: clock.Unix()}
+	return ok && mk.members != members
+}
 
 // roleMember is one rostered member as the roles pass ranks it.
 type roleMember struct {
@@ -104,10 +142,19 @@ func (m *Mod) ceoRoles(ctx context.Context, c *corpCEO, ch Charter) error {
 	if err != nil {
 		return fmt.Errorf("ceoRoles members: %w", err)
 	}
+	// A membership that moved since the last pass re-deals the fleet seats too (one seat per
+	// FCSeatDivisor members), held to seatRequestEverySec.
+	if noteRolesPass(c.CorpID, facts.Members) {
+		requestSeatPass(c.CorpID)
+	}
+	// Every step below is attempted: one that fails is reported, and the departments and fleet
+	// seats after it are still dealt. A single bad write must not leave the corporation with no
+	// departments and no fleets until next week's review.
+	var errs []error
 	// The weekly review first (corpstaff.go), so the trust below reads this
 	// week's verdict on every officer.
 	if err := m.reviewStaff(ctx, c, ch); err != nil {
-		return fmt.Errorf("ceoRoles review: %w", err)
+		errs = append(errs, fmt.Errorf("ceoRoles review: %w", err))
 	}
 	staffRows := m.loadStaffRows(ctx, c.CorpID)
 
@@ -169,7 +216,8 @@ func (m *Mod) ceoRoles(ctx context.Context, c *corpCEO, ch Charter) error {
 			m.cancelCorpOrdersOf(ctx, rm.CharID)
 		}
 		if err := m.setMemberRoles(ctx, rm.CharID, (rm.Roles&^ceoRoleMask)|next); err != nil {
-			return fmt.Errorf("ceoRoles write %d: %w", rm.CharID, err)
+			errs = append(errs, fmt.Errorf("ceoRoles write %d: %w", rm.CharID, err))
+			continue
 		}
 		switch {
 		case next != 0:
@@ -184,7 +232,7 @@ func (m *Mod) ceoRoles(ctx context.Context, c *corpCEO, ch Charter) error {
 	// The departments: which director runs what (corpstaff.go).
 	needed := append(armNeededPortfolios(armJust), diplomacy...)
 	if err := m.ceoPortfolios(ctx, c, needed); err != nil {
-		return fmt.Errorf("ceoRoles departments: %w", err)
+		errs = append(errs, fmt.Errorf("ceoRoles departments: %w", err))
 	}
 
 	// The fleet-seat pass, at most daily, or sooner when a department head asks
@@ -202,34 +250,35 @@ func (m *Mod) ceoRoles(ctx context.Context, c *corpCEO, ch Charter) error {
 	if due {
 		before, _ := m.listCorpRanks(ctx, c.CorpID)
 		if _, err := m.promoteCorp(ctx, c.CorpID); err != nil {
-			return fmt.Errorf("ceoRoles seats: %w", err)
+			errs = append(errs, fmt.Errorf("ceoRoles seats: %w", err))
+		} else {
+			after, _ := m.listCorpRanks(ctx, c.CorpID)
+			m.logSeatChanges(ctx, c, facts.Name, before, after)
 		}
-		after, _ := m.listCorpRanks(ctx, c.CorpID)
-		m.logSeatChanges(ctx, c, facts.Name, before, after)
 	}
 
 	// The industry staff: director, deputy, contract builders (corpdirector.go).
 	if err := m.ceoIndustryStaff(ctx, c, ch, facts); err != nil {
-		return fmt.Errorf("ceoRoles industry: %w", err)
+		errs = append(errs, fmt.Errorf("ceoRoles industry: %w", err))
 	}
 	// The starbase seats: Fueler and Procurer (posseats.go).
 	if c.powerOn(powerStarbase) {
 		if err := m.ceoStarbaseStaff(ctx, c, ch, facts); err != nil {
-			return fmt.Errorf("ceoRoles starbase: %w", err)
+			errs = append(errs, fmt.Errorf("ceoRoles starbase: %w", err))
 		}
 	}
 	// The arms last: every position above decides somebody's arm.
 	if err := m.ceoArms(ctx, c, armSig, armJust); err != nil {
-		return fmt.Errorf("ceoRoles arms: %w", err)
+		errs = append(errs, fmt.Errorf("ceoRoles arms: %w", err))
 	}
 	// The postings after the arms: a member is posted to the office its
 	// arm's job is done at (corpposting.go).
 	if err := m.ceoPostings(ctx, c); err != nil {
-		return fmt.Errorf("ceoRoles postings: %w", err)
+		errs = append(errs, fmt.Errorf("ceoRoles postings: %w", err))
 	}
 
 	m.syncCorpTitles(ctx, c.CorpID)
-	return nil
+	return errors.Join(errs...)
 }
 
 // lastSeatPassAt is when the fleet-seat pass last ran for a corporation, from
@@ -336,5 +385,8 @@ func init() {
 		seatPassMu.Lock()
 		delete(seatPassAt, id)
 		seatPassMu.Unlock()
+		rolesPassMu.Lock()
+		delete(rolesPassLast, id)
+		rolesPassMu.Unlock()
 	})
 }

@@ -1017,8 +1017,11 @@ func (m *Mod) ceoThink(ctx context.Context, c *corpCEO) error {
 	// war's commitments are booked when free capital is read.
 	run(powerWar, func() error { return m.ceoWar(ctx, c, ch) })
 	run(powerHR, func() error { return m.ceoHR(ctx, c, ch) })
+	// The roles pass deals the departments (arms, portfolios) and the fleet seats. Weekly with
+	// the review, and between reviews whenever the membership has moved (rolesRecheckDue): a
+	// corporation founded with two members must not wait a week to organise its twentieth.
 	run(powerRoles, func() error {
-		if !review {
+		if !review && !rolesRecheckDue(c.CorpID, facts.Members) {
 			return nil
 		}
 		return m.ceoRoles(ctx, c, ch)
