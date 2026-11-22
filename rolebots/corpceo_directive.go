@@ -69,6 +69,9 @@ func (m *Mod) ceoIdentity(ctx context.Context, c *corpCEO, facts *CorpFacts, ch 
 		if err := saveCorpPolicy(ctx, m.db, &p); err != nil {
 			return err
 		}
+		// facts is the think's cached row (thinkctx.go): the roles pass later in this same think
+		// reads its tags for the departments and fleet seats, so it must see the new ones.
+		facts.Policy.Tags = append([]string(nil), p.Tags...)
 		if old == "" {
 			old = "nothing"
 		}
