@@ -476,7 +476,7 @@ func (m *Mod) npcChairPass(ctx context.Context) {
 					rlogf("rolebots: NPC chair %d think: %v", r.CorpID, err)
 				}
 			}
-			if GangForm() && deskDue(r.CorpID, "npcsecurity", int64(staffDeskEveryTicks)) {
+			if deskDue(r.CorpID, "npcsecurity", int64(staffDeskEveryTicks)) {
 				if err := m.npcChairDesk(lctx, r); err != nil {
 					rlogf("rolebots: NPC chair %d desk: %v", r.CorpID, err)
 				}

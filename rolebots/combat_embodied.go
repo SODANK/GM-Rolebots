@@ -856,6 +856,29 @@ type gridHostile struct {
 	// Police marks law enforcement that has hit or locked this pilot. Only a reckless, violent outlaw
 	// (Tuning.FightsPolice) shoots back; anyone else leaves.
 	Police bool
+	// Provoked marks a ball that has hit or locked this pilot: a fight brought to it, as opposed to
+	// one it would be choosing (chosenFight).
+	Provoked bool
+}
+
+// stayOutLogEvery spaces the "staying out of it" line for a pilot that keeps declining fights.
+const stayOutLogEvery = 5 * time.Minute
+
+// chosenFight reports whether every ball fighting the pilot is one it would be picking a fight
+// with (a war target, a friend's attacker, prey, a rule-of-engagement target, rats on a patrol's
+// belt) and none has yet hit or locked it. Only a chosen fight can be declined.
+func chosenFight(hs []gridHostile) bool {
+	found := false
+	for _, h := range hs {
+		if !h.Aggro {
+			continue
+		}
+		if h.Provoked {
+			return false
+		}
+		found = true
+	}
+	return found
 }
 
 // policeEngaged reports whether law enforcement is among the balls fighting the bot.
@@ -932,8 +955,18 @@ func (m *Mod) hostilesOnGrid(eb *embodiedBot) []gridHostile {
 			}
 		}
 	}
+	// markProvoked flags a listed ball as one that brought the fight (chosenFight).
+	markProvoked := func(id uint32) {
+		for i := range out {
+			if out[i].ID == id {
+				out[i].Provoked = true
+				return
+			}
+		}
+	}
 	for _, id := range eb.underAttack() {
 		add(id, true)
+		markProvoked(id)
 		if eb.ss != nil {
 			markPolice(id)
 		}
@@ -973,6 +1006,7 @@ func (m *Mod) hostilesOnGrid(eb *embodiedBot) []gridHostile {
 	if m.npc != nil && eb.ent != nil && eb.ss != nil {
 		for _, id := range m.npc.GetTargetersOf(eb.ent.ID) {
 			add(id, true)
+			markProvoked(id)
 			markPolice(id)
 		}
 		// A patrol does not wait to be shot at: every managed NPC on its grid is a target; for everyone else they are
@@ -1241,6 +1275,30 @@ func (m *Mod) embodyCombatLoop(ctx context.Context, eb *embodiedBot) {
 				}
 				continue
 			}
+			// A fight it would be choosing, and its own nerve would pull it out on the first tick (a hull
+			// still carrying the last fight's damage): it does not open fire, lock or call out at all.
+			// Aggressing and warping off in the same second is what a watching player would notice.
+			// A gank strike and a fleet keep their own calls (fcGridRetreat has side effects).
+			if !eb.gankStrike && !eb.isFleetCommander() && fleetLeaderLive(eb) == nil && chosenFight(sighted) {
+				margin, known := m.assessGrid(eb, loadout, sighted)
+				if arm := m.breakOffReason(eb, loadout, margin, known); arm != "" {
+					eb.mu.Lock()
+					note := time.Since(eb.stayOutLoggedAt) >= stayOutLogEvery
+					if note {
+						eb.stayOutLoggedAt = time.Now()
+					}
+					eb.mu.Unlock()
+					if note {
+						m.logBot(eb.charID, logInfo, "combat",
+							"staying out of it at %.0f%% hull, %.0f%% tank (%s)",
+							eb.hullFraction()*100, eb.tankFraction()*100, arm)
+					}
+					if !embodySleep(ctx, combatGuardTick) {
+						return
+					}
+					continue
+				}
+			}
 			engaged = true
 			// A fresh engagement starts its rat tally at zero, so kills left from an earlier fight do
 			// not settle a later clear.
@@ -1322,17 +1380,35 @@ func (m *Mod) embodyCombatLoop(ctx context.Context, eb *embodiedBot) {
 			policeNoted = true
 			m.logBot(eb.charID, logWarn, "combat", "the police are on me — leaving")
 		}
-		if gankRun || policeRun || (!eb.gankStrike && m.shouldBreakOff(eb, loadout, margin, marginKnown)) {
+		var arm breakArm
+		switch {
+		case gankRun:
+			arm = breakGankRun
+		case policeRun:
+			arm = breakPolice
+		case !eb.gankStrike:
+			arm = m.breakOffReason(eb, loadout, margin, marginKnown)
+		}
+		if arm != "" {
+			// Read by fleeGrid's log line, so a break-off says which rule called it.
+			eb.mu.Lock()
+			eb.breakReason = arm
+			eb.mu.Unlock()
 			// warpMandatory: this ship is being shot at, and one refused
 			// break-off warp is a bot that stands there and dies.
-			m.fleeGrid(ctx, eb, loadout, warpMandatory)
-			// The escape rack, re-cycled every tick of the break-off, after fleeGrid (which decides the
-			// ship is leaving). A jam lapses on its own cycle and must be renewed.
-			m.runFlightEwar(eb, loadout, hostiles)
-			if !embodySleep(ctx, combatGuardTick) {
-				return
+			//
+			// fleeGrid reports whether the ship is actually leaving. One that cannot (warp-scrambled,
+			// nowhere to run) is cornered, and a cornered ship fights: falling through to the gun
+			// loop below, not sitting out the break-off with its guns cold while it is shot to pieces.
+			if m.fleeGrid(ctx, eb, loadout, warpMandatory) {
+				// The escape rack, re-cycled every tick of the break-off, after fleeGrid (which decides the
+				// ship is leaving). A jam lapses on its own cycle and must be renewed.
+				m.runFlightEwar(eb, loadout, hostiles)
+				if !embodySleep(ctx, combatGuardTick) {
+					return
+				}
+				continue
 			}
-			continue
 		}
 
 		// The locked rat died without the guns reporting it: the drones got
@@ -1406,8 +1482,14 @@ func (m *Mod) embodyCombatLoop(ctx context.Context, eb *embodiedBot) {
 		lockedEnt = tgt
 
 		// Hold the range the guns want as a player would: orbit, keep at range or hold at optimal,
-		// off the fit (combatdoctrine.go).
-		m.holdCombatRange(eb, loadout, tgt)
+		// off the fit (combatdoctrine.go). Not once a trip's burn-in has outlasted the fight hold:
+		// then travel flies the ship and the guns fire from wherever it is (combatHoldsHelm).
+		eb.mu.Lock()
+		helm := combatHoldsHelm(eb.approachID != 0, eb.fighting, eb.fightSince, time.Now())
+		eb.mu.Unlock()
+		if helm {
+			m.holdCombatRange(eb, loadout, tgt)
+		}
 
 		// Lock delay: a ship cannot shoot what it has not finished locking.
 		// A switched-away pilot hears otherlost here; the new one waits for the lock.
@@ -1482,33 +1564,98 @@ func (m *Mod) embodyCombatLoop(ctx context.Context, eb *embodiedBot) {
 // The margin arm exists because a bar check does not know what it is fighting: below the
 // refusal floor the arithmetic says the ship dies, so the first tick is the cheapest moment to act.
 func (m *Mod) shouldBreakOff(eb *embodiedBot, l *combatLoadout, margin float64, marginKnown bool) bool {
+	return m.breakOffReason(eb, l, margin, marginKnown) != ""
+}
+
+// breakArm names the rule that called a break-off, for the log; "" is no break-off.
+type breakArm string
+
+const (
+	breakFleetCalled   breakArm = "fleet called retreat"
+	breakCommander     breakArm = "commander's read"
+	breakFleetHullLine breakArm = "fleet hull floor"
+	breakHopeless      breakArm = "hopeless margin"
+	breakWorkerTank    breakArm = "worker tank line"
+	breakUnarmedTank   breakArm = "unarmed tank line"
+	breakArmedHull     breakArm = "armed hull line"
+	breakGankRun       breakArm = "gank run"
+	breakPolice        breakArm = "police"
+)
+
+// breakInputs is everything breakOffArm weighs, read off the pilot once.
+type breakInputs struct {
+	fleetCalled   bool // the commander called the fleet off
+	underLeader   bool // a live commander that has not called it
+	hopeless      bool // the threat guard reads the margin as hopeless
+	fightsPosture bool // the pilot came out to fight (postureFights)
+	armed         bool
+	hull, tank    float64
+	fleeHullArmed float64 // Tuning.FleeHullFracArmed
+	fleeTankUnarm float64 // Tuning.FleeTankFracUnarmed
+}
+
+// breakOffArm is the pure rule behind shouldBreakOff, short of the commander's own read
+// (fcGridRetreat), which breakOffReason asks first.
+func breakOffArm(in breakInputs) breakArm {
 	// The fleet's call outranks the pilot's own nerve (fleetcommand_grid.go): a member leaves when its commander
 	// calls the fleet off and stays while it holds, and the commander judges the fleet's state. No command, no call.
-	if called, _ := fleetRetreatCalled(eb); called {
-		return true
+	if in.fleetCalled {
+		return breakFleetCalled
 	}
-	if eb.isFleetCommander() {
-		return m.fcGridRetreat(eb, l, m.gridHostileIDs(eb))
-	}
-	if fleetLeaderLive(eb) != nil {
+	if in.underLeader {
 		// Under a live commander that has not called it: stay, unless the hull itself is about to go,
 		// the one call no commander may make for a member.
-		return eb.hullFraction() < eb.tune.FleeHullFracArmed*0.5
+		if in.hull < in.fleeHullArmed*0.5 {
+			return breakFleetHullLine
+		}
+		return ""
 	}
-	if marginKnown && threatGuardEnabled() && hopeless(margin) {
-		return true
+	if in.hopeless {
+		return breakHopeless
 	}
 	// What the pilot came out to do comes ahead of what it carries (combatdoctrine.go): a mining
 	// frigate with a popgun reads as armed. A worker keeps working until something lands.
-	if !postureFights(eb.posture) {
-		return eb.tankFraction() < eb.tune.FleeTankFracUnarmed
+	if !in.fightsPosture {
+		if in.tank < in.fleeTankUnarm {
+			return breakWorkerTank
+		}
+		return ""
 	}
-	if !l.armed() {
+	if !in.armed {
 		// Nothing to shoot with. The only question is whether it is taking damage yet: a bot that
 		// has merely been locked keeps working.
-		return eb.tankFraction() < eb.tune.FleeTankFracUnarmed
+		if in.tank < in.fleeTankUnarm {
+			return breakUnarmedTank
+		}
+		return ""
 	}
-	return eb.hullFraction() < eb.tune.FleeHullFracArmed
+	if in.hull < in.fleeHullArmed {
+		return breakArmedHull
+	}
+	return ""
+}
+
+// breakOffReason decides whether this fight is still worth having and names the rule that
+// says not; "" means stay.
+func (m *Mod) breakOffReason(eb *embodiedBot, l *combatLoadout, margin float64, marginKnown bool) breakArm {
+	called, _ := fleetRetreatCalled(eb)
+	if !called && eb.isFleetCommander() {
+		if m.fcGridRetreat(eb, l, m.gridHostileIDs(eb)) {
+			return breakCommander
+		}
+		return ""
+	}
+	return breakOffArm(breakInputs{
+		fleetCalled:   called,
+		underLeader:   fleetLeaderLive(eb) != nil,
+		hopeless:      marginKnown && threatGuardEnabled() && hopeless(margin),
+		fightsPosture: postureFights(eb.posture),
+		armed:         l.armed(),
+		hull:          eb.hullFraction(),
+		tank:          eb.tankFraction(),
+		fleeHullArmed: eb.tune.FleeHullFracArmed,
+		fleeTankUnarm: eb.tune.FleeTankFracUnarmed,
+	})
 }
 
 // pickCombatTarget takes the hostile the bot should be shooting: the one
@@ -2649,7 +2796,11 @@ func (m *Mod) moduleFX(eb *embodiedBot, itemID, typeID int64, guid string,
 // and says so. An escape is one decision: the destination is latched for the whole break-off
 // and a break-off in flight is left alone, so it is safe to call every tick. The class is the
 // caller's. See docs/comment-notes-b02.md#flee-grid.
-func (m *Mod) fleeGrid(ctx context.Context, eb *embodiedBot, l *combatLoadout, class warpClass) {
+//
+// It reports whether the ship is leaving: a warp or dock is under way, latched or just started.
+// False means it is stuck here (warp-scrambled, no destination, a hop refused), and the combat
+// loop must keep fighting rather than wait out a break-off that cannot happen.
+func (m *Mod) fleeGrid(ctx context.Context, eb *embodiedBot, l *combatLoadout, class warpClass) bool {
 	// Not disengageAll: a webbed or jammed pursuer is what buys the align. Everything lifts at
 	// stand-down (see disengageForFlight).
 	m.disengageForFlight(eb, l)
@@ -2664,7 +2815,7 @@ func (m *Mod) fleeGrid(ctx context.Context, eb *embodiedBot, l *combatLoadout, c
 
 	// Already leaving. Warp is not interruptible by this loop, and re-issuing it cancels it.
 	if fleeDest != 0 && warping {
-		return
+		return true
 	}
 
 	// The two exits that leave the ship where it is are reported once per break-off, not once
@@ -2680,14 +2831,14 @@ func (m *Mod) fleeGrid(ctx context.Context, eb *embodiedBot, l *combatLoadout, c
 	}
 
 	if eb.ent != nil && eb.ent.WarpScrambleTotal() > 0 {
-		report(logWarn, "warp scrambled — cannot disengage, riding it out at %.0f%% hull",
+		report(logWarn, "warp scrambled — cannot disengage, fighting it out at %.0f%% hull",
 			eb.hullFraction()*100)
-		return
+		return false
 	}
 
 	// On an undock, dock back rather than warp (gank_undock.go).
 	if fleeDest == 0 && m.tryRedock(eb) {
-		return
+		return true
 	}
 
 	// Anywhere but here: a station if the system has one (it can dock and the abstract tier
@@ -2714,7 +2865,7 @@ func (m *Mod) fleeGrid(ctx context.Context, eb *embodiedBot, l *combatLoadout, c
 	}
 	if dest == nil {
 		report(logWarn, "nowhere to run to in this system")
-		return
+		return false
 	}
 	// A miner run off a belt keeps off it for a while and calls its gang's guns there
 	// (beltbail.go); the destination is not yet the bolt-hole, so the belt is still underfoot.
@@ -2734,16 +2885,26 @@ func (m *Mod) fleeGrid(ctx context.Context, eb *embodiedBot, l *combatLoadout, c
 		eb.fleeDest = fleeDest
 		eb.fleeing = wasFleeing
 		eb.mu.Unlock()
-		return
+		return false
 	}
 	// Logged after admission: a refused hop is a bot that had a quiet second (deferWarp's
-	// contract), and announcing a break-off that did not happen is noise.
+	// contract), and announcing a break-off that did not happen is noise. The reason is the rule
+	// the combat loop said called it (breakOffReason); a flee from elsewhere has none.
+	eb.mu.Lock()
+	why := eb.breakReason
+	eb.breakReason = ""
+	eb.mu.Unlock()
+	if why == "" {
+		why = "pre-emptive"
+	}
 	m.logBot(eb.charID, logInfo, "combat",
-		"breaking off at %.0f%% hull — warping to %s", eb.hullFraction()*100, celestialLabel(*dest))
+		"breaking off at %.0f%% hull, %.0f%% tank (%s) — warping to %s",
+		eb.hullFraction()*100, eb.tankFraction()*100, why, celestialLabel(*dest))
 
 	// Hold the loop open until the warp actually starts, so the caller does
 	// not immediately re-enter combat and cancel it.
 	_ = embodySleep(ctx, 5*time.Second)
+	return true
 }
 
 // clearFlee ends the break-off. An engaged flee ends when the engagement stands down: a

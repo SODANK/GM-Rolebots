@@ -353,6 +353,13 @@ type embodiedBot struct {
 	// burnToActivation).
 	approachID    int64
 	approachSince time.Time
+	// approach is the burn's budget clock (approachStep). Under mu.
+	approach approachClock
+
+	// breakReason is the rule that called the break-off under way (breakOffReason), read and
+	// cleared by fleeGrid's log line. stayOutLoggedAt spaces the declined-fight line. Under mu.
+	breakReason     breakArm
+	stayOutLoggedAt time.Time
 
 	// The undock burn and the loiter after it (undockwave.go). undockRunUntil is when the run out
 	// of the door ends; nothing steers the ship before then. loiterUntil is when a loitering pilot
@@ -993,6 +1000,7 @@ func (m *Mod) prepareProjection(ctx context.Context, w embodyWant) (*embodiedBot
 	// A bot under its undock burn comes out of the door under thrust, as the server launches a
 	// player: on the undock line at max velocity along the station's undock orientation.
 	launched := false
+	var launchGoTo destiny.Vec3
 	if w.undockLaunch {
 		// destiny.UndockPlacement is shared with setInSpace and the server's initDestiny, so the three
 		// agree. The slot is the one already claimed and stored on the state row, not a fresh one.
@@ -1026,6 +1034,7 @@ func (m *Mod) prepareProjection(ctx context.Context, w embodyWant) (*embodiedBot
 				dm.GotoDirection(goTo)
 				dm.SetSpeedFraction(1)
 				launched = true
+				launchGoTo = goTo
 				birthMode = "launch"
 				if travelled > 0 {
 					birthMode = "launch-inflight"
@@ -1056,6 +1065,28 @@ func (m *Mod) prepareProjection(ctx context.Context, w embodyWant) (*embodiedBot
 			placed = &sp
 			birthMode = "site"
 			birthNote = fmt.Sprintf("room %d of site %d", sp.RoomIdx+1, w.siteID)
+		}
+	}
+	// The backstop for every writer above: never put this hull down on another one (occupancy.go).
+	// Births run one at a time under embodyWorkMu and each is installed before the next is
+	// prepared, so this sees the ones born just before it. A launch moves sideways only, exit and
+	// waypoint together, and keeps its run velocity; anything else may move any way and the row
+	// follows, so the abstract tier and the next embodiment agree.
+	if occ := destiny.OccupancySnapshot(ss, systemID, dm.Pos, birthScanRange, uint32(shipID)); len(occ) > 0 {
+		axis := dm.Vel
+		if launched {
+			axis = launchGoTo.Sub(dm.Pos)
+		}
+		if p, off, ok := birthClear(dm.Pos, axis, stats.Radius, occ, launched); ok && !off.IsZero() {
+			vel := dm.Vel
+			dm.SetPosition(p)
+			if launched {
+				dm.Vel = vel
+				dm.GotoDirection(launchGoTo.Add(off))
+			} else {
+				m.writePosition(ctx, shipID, p)
+			}
+			birthNote = strings.TrimSpace(birthNote + fmt.Sprintf(" (nudged %.0f m off another hull)", off.Len()))
 		}
 	}
 	dm.TargetLookup = func(id uint32) (destiny.Vec3, bool) {
@@ -1690,8 +1721,10 @@ func (m *Mod) embodyWarpTo(ctx context.Context, eb *embodiedBot, target evedb.Ce
 	}
 	// The per-ship nudge rides on the base, before the claim, never on the point the claim returns.
 	// See docs/comment-notes-b07.md#warp-landing-lane.
-	landing = destiny.ClaimArrivalPoint(ss, ss.ID,
-		landing.Add(parkJitter(eb.shipID)), laneDir, dm.Radius(), ent.ID)
+	// laneBase and departPos are kept for the landing's second look before the mirror (phase 2b).
+	laneBase := landing.Add(parkJitter(eb.shipID))
+	departPos := dm.Pos
+	landing = destiny.ClaimArrivalPoint(ss, ss.ID, laneBase, laneDir, dm.Radius(), ent.ID)
 	// No exit radius is carried past this point: the lane's offset is lateral, so both the wire action
 	// and the ball's warp sector name the landing itself and pass 0.
 	_, tunnelSec, _ := dm.WarpPhases(celPos)
@@ -1821,6 +1854,32 @@ func (m *Mod) embodyWarpTo(ctx context.Context, eb *embodiedBot, target evedb.Ce
 			return
 		}
 	}
+	// The landing was claimed before the align; another hull may have moved onto it since (a ship
+	// orbiting a fight at the gate, one burning in from its own landing). Look again while no
+	// witness holds this landing yet: on a hop past the bubble the departure grid's witnesses are
+	// gone and the destination's get the ball from the mirror below or at phase 3. A move re-aims
+	// the server's warp and the actions the mirror sends, so nobody sees a snap.
+	relanded := func(stage string) {
+		nl, _, moved := destiny.RecheckArrivalPoint(ss, ss.ID, landing, laneBase, laneDir, dm.Radius(), ent.ID)
+		if !moved {
+			return
+		}
+		m.logBot(eb.charID, logInfo, "embody", "landing moved %.0f m off a hull standing on it (%s)",
+			nl.Sub(landing).Len(), stage)
+		landing = nl
+		dm.WarpTo(landing, effectStamp, dm.EntityID, 0)
+		warpActions = destiny.BuildWarpToActions(dm.EntityID,
+			landing.X, landing.Y, landing.Z, 0, destiny.WarpSpeedAUperSec)
+		warpKeyed = []keyedAction{
+			{"wssf", warpActions[0]},
+			{"warp", warpActions[1]},
+			{"wfx", warpActions[2]},
+		}
+	}
+	longHop := landing.Sub(departPos).Len() > destiny.BubbleRadius
+	if longHop {
+		relanded("before the mirror")
+	}
 	mirrorMates = m.armWarpMirror(ss, eb, ent, dm, landing, warpKeyed)
 	if rest := tunnelSec - mirrorAt; rest > 0 {
 		if !embodySleep(ctx, time.Duration(rest*float64(time.Second))) {
@@ -1836,6 +1895,11 @@ func (m *Mod) embodyWarpTo(ctx context.Context, eb *embodiedBot, target evedb.Ce
 	eb.mu.Unlock()
 	if gone {
 		return
+	}
+	// The last look at the landing, only while no mirror witness is flying the old WarpTo: moving
+	// it then would be a snap on their screens.
+	if longHop && len(mirrorMates) == 0 {
+		relanded("at arrival")
 	}
 	// Phase 3: the late joiner's ball only. Pilots at this landing at warp start hold it already; a
 	// late joiner gets the ship parked at its landing. See docs/comment-notes-b07.md#warp-mirror.
@@ -2000,21 +2064,17 @@ func (m *Mod) warnIfStacked(eb *embodiedBot) {
 		return
 	}
 	pos := eb.ent.Pos()
-	// FreeBallFootprints reports only free balls and nothing for a ball mid-warp, which keeps this quiet.
+	// FreeBallFootprints reports only free balls; one mid-warp counts at its landing.
 	for _, fp := range eb.ss.FreeBallFootprints(pos, stackWarnRadius, eb.ent.ID) {
 		d := fp.Pos.Sub(pos).Len()
 		sep := eb.ent.Manager.Radius() + fp.Radius + destiny.ArrivalClearMargin
-		if d > sep {
+		level, stacked := stackLevel(d, sep)
+		if !stacked {
 			continue
 		}
-		level := logError
-		if d > 1.0 {
-			// Close but not identical: the client can still resolve it, so log at info.
-			level = logInfo
-		}
 		m.logBot(eb.charID, level, "embody",
-			"materialised %.2fm from another hull (needs %.0fm) — whichever writer produced this point is stacking ships",
-			d, sep)
+			"materialised %.2fm from another hull (needs %.0fm, born %s) — whichever writer produced this point is stacking ships",
+			d, sep, eb.birthMode)
 		return
 	}
 }

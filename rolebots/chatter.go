@@ -66,9 +66,15 @@ const (
 	settingChatterGap       = "rolebots.chatter.speakerGapSec"
 	settingChatterBystander = "rolebots.chatter.bystanderPct"
 	settingChatterReply     = "rolebots.chatter.replyPct"
+	// settingChatterOpenerGap is one pilot's floor between two engagement openers in Local.
+	// Openers are urgent (they skip the speaker gap so the line lands with the first shot),
+	// so without this a gate camper taking a new war target every minute held Local at its
+	// ceiling on its own. 0 turns the floor off.
+	settingChatterOpenerGap = "rolebots.chatter.openerGapSec"
 
 	defaultChatterLocalRate = 6
 	defaultChatterGapSec    = 30
+	defaultChatterOpenerGap = 240
 	defaultChatterBystander = 25
 	defaultChatterReply     = 70
 
@@ -170,6 +176,17 @@ func setChatterGap(n int) {
 	chatterGapSec.Store(int64(n))
 }
 
+// chatterOpenerGapSec is settingChatterOpenerGap's live value, in seconds.
+var chatterOpenerGapSec atomic.Int64
+
+// setChatterOpenerGap takes seconds; negative restores the default, 0 turns the floor off.
+func setChatterOpenerGap(n int) {
+	if n < 0 {
+		n = defaultChatterOpenerGap
+	}
+	chatterOpenerGapSec.Store(int64(n))
+}
+
 func clampPct(n int) int {
 	return max(0, min(100, n))
 }
@@ -186,6 +203,7 @@ func setChatterExchangeDefaults() {
 	setChatterRetorts(true)
 	setChatterLocalRate(defaultChatterLocalRate)
 	setChatterGap(defaultChatterGapSec)
+	setChatterOpenerGap(defaultChatterOpenerGap)
 	setChatterBystander(defaultChatterBystander)
 	setChatterReply(defaultChatterReply)
 	setChatterMarketDefaults()
@@ -340,6 +358,7 @@ func (m *Mod) loadChatterSettings(ctx context.Context) {
 	readBool(settingChatterRetorts, setChatterRetorts)
 	readInt(settingChatterLocalRate, setChatterLocalRate)
 	readInt(settingChatterGap, setChatterGap)
+	readInt(settingChatterOpenerGap, setChatterOpenerGap)
 	readInt(settingChatterBystander, setChatterBystander)
 	readInt(settingChatterReply, setChatterReply)
 	readBool(settingChatterMarket, setChatterMarket)

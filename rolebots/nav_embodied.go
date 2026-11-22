@@ -377,7 +377,33 @@ func (m *Mod) embodyJumpFX(charID, nextSysID int64) {
 		return
 	}
 	if gate := gateTo(eb.celestials, nextSysID); gate != nil {
+		m.logDepartRange(eb, "jumping through", *gate)
 		m.jumpOutFX(eb, uint32(gate.ItemID))
+	}
+}
+
+// logDepartRange records how far off the object a projection was when it jumped or docked,
+// so a departure from out of range shows in the log instead of only on a player's screen.
+func (m *Mod) logDepartRange(eb *embodiedBot, verb string, obj evedb.CelestialEntity) {
+	if eb == nil || eb.ent == nil {
+		return
+	}
+	surface := eb.ent.Pos().Sub(destiny.Vec3{X: obj.X, Y: obj.Y, Z: obj.Z}).Len() - obj.Radius
+	level := logInfo
+	if surface > navActivateRange+500 {
+		level = logWarn
+	}
+	m.logBot(eb.charID, level, "embody", "%s %s from %.1fkm", verb, celestialLabel(obj), math.Max(0, surface)/1000)
+}
+
+// embodyDockRangeLog logs the dock distance of this pilot's projection, if it has one.
+func (m *Mod) embodyDockRangeLog(charID, stationID int64) {
+	eb := liveProjection(charID)
+	if eb == nil {
+		return
+	}
+	if st := celestialByID(eb.celestials, stationID); st != nil {
+		m.logDepartRange(eb, "docking at", *st)
 	}
 }
 
@@ -414,6 +440,17 @@ func (m *Mod) projectionHoldsTravel(charID int64) bool {
 		return false
 	}
 	return travelHoldsForFight(fighting, since, time.Now())
+}
+
+// projectionFleeing reports whether this pilot's projection is running from a fight.
+func (m *Mod) projectionFleeing(charID int64) bool {
+	eb := liveProjection(charID)
+	if eb == nil {
+		return false
+	}
+	eb.mu.Lock()
+	defer eb.mu.Unlock()
+	return eb.fleeing
 }
 
 // isEmbodied reports whether this bot currently has a projection on grid.
@@ -473,8 +510,12 @@ func (m *Mod) embodyDockClearanceWait(charID, shipID, stationID int64) int64 {
 	if eb == nil {
 		return 0
 	}
+	surface := math.Inf(1)
+	if st := celestialByID(eb.celestials, stationID); st != nil && eb.ent != nil {
+		surface = eb.ent.Pos().Sub(destiny.Vec3{X: st.X, Y: st.Y, Z: st.Z}).Len() - st.Radius
+	}
 	eb.mu.Lock()
-	landed := !eb.warping && eb.currentDest == stationID
+	landed := dockClearanceLanded(eb.warping, eb.currentDest, stationID, surface)
 	eb.mu.Unlock()
 	if !landed {
 		return 0
@@ -551,70 +592,215 @@ func (m *Mod) flyToCelestial(eb *embodiedBot, itemID int64) bool {
 }
 
 // burnToActivation closes the last 15 km under propulsion and reports
-// whether the ship is still short of the range it can dock or jump at.
+// whether the ship is still short of the range it can dock or jump at. It
+// reports false only inside activation range: a ship that cannot close tries
+// again (and after approachMaxRetries warps off and back in), because a gate
+// flash or a dock from kilometres out is something a watching player sees.
 func (m *Mod) burnToActivation(eb *embodiedBot, target evedb.CelestialEntity) bool {
 	if eb.ent == nil {
 		return false
 	}
 	center := destiny.Vec3{X: target.X, Y: target.Y, Z: target.Z}
 	surface := eb.ent.Pos().Sub(center).Len() - target.Radius
+	speed := 0.0
+	if eb.ent.Manager != nil {
+		// Through the Entity, not the Manager: the system tick and any active web are
+		// writing that number from their own goroutines.
+		speed = eb.ent.EffectiveMaxVelocity()
+	}
+	now := time.Now()
 
 	eb.mu.Lock()
 	started := eb.approachID == target.ItemID
 	if !started {
-		eb.approachID, eb.approachSince = target.ItemID, time.Now()
+		eb.approachID = target.ItemID
 	}
-	since := eb.approachSince
+	// A fight under the travel hold owns the helm (combatHoldsHelm); the clock waits for it.
+	paused := eb.fighting && travelHoldsForFight(eb.fighting, eb.fightSince, now)
+	clk, verdict := approachStep(eb.approach, started, surface, speed, paused, now)
+	eb.approach = clk
+	eb.approachSince = clk.since
+	if verdict == approachArrived {
+		eb.approachID = 0
+	}
 	eb.mu.Unlock()
 
-	if surface <= navActivateRange {
-		eb.mu.Lock()
-		eb.approachID = 0
-		eb.mu.Unlock()
+	switch verdict {
+	case approachArrived:
 		return false
-	}
-	budget := approachBudget(eb)
-	if started && time.Since(since) > budget {
-		// Something keeps the ship off the object (webbed, wrong landing, zero
-		// velocity). Let the abstract tier finish the move rather than wedge the bot.
-		m.logBot(eb.charID, logError, "embody",
-			"could not close on %s (%.1fkm off after %.0fs) — completing the move anyway",
-			celestialLabel(target), surface/1000, budget.Seconds())
-		eb.mu.Lock()
-		eb.approachID = 0
-		eb.mu.Unlock()
-		return false
+	case approachGaveUp:
+		return m.approachGaveUp(eb, target, surface, clk)
 	}
 	if !started {
 		m.logBot(eb.charID, logInfo, "embody",
 			"approaching %s — %.1fkm to go, activating inside %.1fkm",
 			celestialLabel(target), surface/1000, navActivateRange/1000)
 	}
+	if paused {
+		// No follow while the guns have the helm: the two would trade commands every tick.
+		return true
+	}
 	m.embodyApproach(eb, uint32(target.ItemID), navApproachHold, target.Radius)
 	return true
 }
 
-// approachBudget is how long this hull is given to fly the landing buffer
-// in. A flat clock is the wrong unit for it: the leg is a fixed distance and
-// the ships flying it differ by an order of magnitude in speed.
-func approachBudget(eb *embodiedBot) time.Duration {
-	speed := 0.0
-	if eb.ent != nil && eb.ent.Manager != nil {
-		// Through the Entity, not the Manager: the system tick and any
-		// active web are writing that number from their own goroutines.
-		speed = eb.ent.EffectiveMaxVelocity()
+// approachGaveUp handles a burn that ran out its budget without closing: send the
+// approach again, re-warp when the ship has been dragged out past warp range, and after
+// approachMaxRetries warp off to another celestial so the leg warps back in. Only after
+// approachHardRetries does the move complete from where the ship is, the old escape for a
+// hull that cannot move at all. Reports whether the ship is still travelling.
+func (m *Mod) approachGaveUp(eb *embodiedBot, target evedb.CelestialEntity, surface float64, clk approachClock) bool {
+	elapsed := clk.lastBudget.Seconds()
+	if clk.retries >= approachHardRetries {
+		m.logBot(eb.charID, logError, "embody",
+			"could not close on %s (%.1fkm off, attempt %d) — completing the move anyway",
+			celestialLabel(target), surface/1000, clk.retries)
+		eb.mu.Lock()
+		eb.approachID = 0
+		eb.approach = approachClock{}
+		eb.mu.Unlock()
+		return false
 	}
+	eb.clearNav()
+	what := "approaching again"
+	switch {
+	case surface > navWarpMinRange:
+		// Dragged out past warp range (a kite, a long orbit): warp back in like anyone would.
+		eb.mu.Lock()
+		eb.currentDest = 0
+		eb.mu.Unlock()
+		what = "warping back in"
+	case clk.retries >= approachMaxRetries:
+		if m.approachBounce(eb, target) {
+			what = "warping off to come back in"
+		}
+	}
+	m.logBot(eb.charID, logWarn, "embody",
+		"could not close on %s (%.1fkm off after %.0fs, attempt %d) — %s",
+		celestialLabel(target), surface/1000, elapsed, clk.retries, what)
+	return true
+}
+
+// approachBounce warps the ship to the nearest celestial past warp range other than
+// target, so the leg's next look warps it back onto target fresh. Reports whether the
+// warp was commanded.
+func (m *Mod) approachBounce(eb *embodiedBot, target evedb.CelestialEntity) bool {
+	if eb.ent == nil {
+		return false
+	}
+	pos := eb.ent.Pos()
+	var best *evedb.CelestialEntity
+	bestD := math.Inf(1)
+	for i := range eb.celestials {
+		c := &eb.celestials[i]
+		if c.ItemID == target.ItemID || c.GroupID == groupStar {
+			continue
+		}
+		d := pos.Sub(destiny.Vec3{X: c.X, Y: c.Y, Z: c.Z}).Len()
+		if d <= navWarpMinRange || d >= bestD {
+			continue
+		}
+		best, bestD = c, d
+	}
+	if best == nil || !m.startEmbodyWarpTo(eb, *best, warpDiscretionary) {
+		return false
+	}
+	eb.mu.Lock()
+	eb.approachID = 0
+	eb.approach = approachClock{}
+	eb.mu.Unlock()
+	m.logBot(eb.charID, logInfo, "embody", "warping to %s", celestialLabel(*best))
+	return true
+}
+
+// approachVerdict is what one look at a burn-in decides.
+type approachVerdict int
+
+const (
+	approachFlying approachVerdict = iota
+	approachArrived
+	approachGaveUp
+)
+
+const (
+	// approachStaleGap: a burn not looked at for this long was held (a fight, a gate
+	// wave), so its clock restarts instead of charging the hold against the budget.
+	approachStaleGap = 3 * navLegHoldSec * time.Second
+	// approachMaxRetries is how many budgets a burn gets before the ship warps off and back.
+	approachMaxRetries = 3
+	// approachHardRetries is the last resort: a hull that has failed this many budgets
+	// (no propulsion, a broken landing) completes the move from where it is.
+	approachHardRetries = 8
+)
+
+// approachClock is one burn-in's timing. since and startDist are the current budget's
+// start; polled is the last look; retries counts budgets run out on this target.
+// lastBudget is the budget that last ran out, for the log.
+type approachClock struct {
+	since, polled time.Time
+	startDist     float64
+	retries       int
+	lastBudget    time.Duration
+}
+
+// approachStep is the pure rule behind burnToActivation. Inside navActivateRange the
+// burn has arrived. A new target, a look after approachStaleGap, or a paused burn (a fight
+// holds the helm) restarts the budget from here; retries survive everything but a new
+// target. A budget (approachBudgetFor the distance it started at) run out gives up once
+// and starts the next budget.
+func approachStep(c approachClock, started bool, surface, speed float64, paused bool, now time.Time) (approachClock, approachVerdict) {
+	if surface <= navActivateRange {
+		return approachClock{}, approachArrived
+	}
+	if !started {
+		return approachClock{since: now, polled: now, startDist: surface}, approachFlying
+	}
+	if paused || c.since.IsZero() || now.Sub(c.polled) > approachStaleGap {
+		c.since, c.startDist, c.polled = now, surface, now
+		return c, approachFlying
+	}
+	c.polled = now
+	if budget := approachBudgetFor(c.startDist, speed); now.Sub(c.since) > budget {
+		c.retries++
+		c.lastBudget = budget
+		c.since, c.startDist = now, surface
+		return c, approachGaveUp
+	}
+	return c, approachFlying
+}
+
+// approachBudgetFor is how long a hull at speed is given to burn distM. A flat clock
+// is the wrong unit: the ships flying it differ by an order of magnitude in speed, and
+// a fight can leave the ship much further out than the 15 km a warp lands it.
+// navApproachSlack covers spin-up and the arc a Follow flies; the floor never gives up
+// faster than a fast frigate needs, and the ceiling grows with the distance.
+func approachBudgetFor(distM, speed float64) time.Duration {
 	if speed <= 0 {
 		return navCloseMax
 	}
-	d := time.Duration((embodyLandingBuffer / speed) * navApproachSlack * float64(time.Second))
+	d := time.Duration((distM / speed) * navApproachSlack * float64(time.Second))
+	hi := time.Duration(float64(navApproachMax) * math.Max(1, distM/embodyLandingBuffer))
 	if d < navApproachMin {
 		return navApproachMin
 	}
-	if d > navApproachMax {
-		return navApproachMax
+	if d > hi {
+		return hi
 	}
 	return d
+}
+
+// combatHoldsHelm reports whether the combat loop steers the ship this tick. It does,
+// except while travel is burning in (approaching) and the fight has outlasted the travel
+// hold (travelHoldsForFight): then the guns keep firing and the ship keeps flying its leg.
+func combatHoldsHelm(approaching, fighting bool, since, now time.Time) bool {
+	return !approaching || travelHoldsForFight(fighting, since, now)
+}
+
+// dockClearanceLanded is the pure rule for when a projection may file for docking: out of
+// warp, bound for this station, and close enough that the clearance runs alongside the
+// last of the burn-in rather than from wherever a fight left it.
+func dockClearanceLanded(warping bool, currentDest, stationID int64, surface float64) bool {
+	return !warping && currentDest == stationID && surface <= embodyLandingBuffer+navActivateRange
 }
 
 func celestialByID(cels []evedb.CelestialEntity, itemID int64) *evedb.CelestialEntity {

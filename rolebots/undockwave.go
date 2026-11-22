@@ -516,6 +516,15 @@ func claimUndockSlot(objectID, shipID int64, hold int64) int {
 	return destiny.ClaimUndockSlot(objectID, shipID, time.Duration(hold)*time.Second)
 }
 
+// claimUndockSlotWhere is claimUndockSlot with destiny.ClaimUndockSlotWhere's veto: fits
+// (nil accepts all) runs under the registry lock and must be pure.
+func claimUndockSlotWhere(objectID, shipID int64, hold int64, fits func(slot int) bool) int {
+	if hold < 1 {
+		hold = 1
+	}
+	return destiny.ClaimUndockSlotWhere(objectID, shipID, time.Duration(hold)*time.Second, fits)
+}
+
 // releaseUndockSlot hands a slot back early, for a bot that docked again or
 // lost its ship before the run was over.
 func releaseUndockSlot(objectID, shipID int64) {

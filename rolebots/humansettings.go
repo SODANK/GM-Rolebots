@@ -220,10 +220,10 @@ type humanSwitch struct {
 
 func humanSwitches() []humanSwitch {
 	return []humanSwitch{
-		{settingHumanPipeline, "Applicant mail, offer expiry, welcome", &humanPipelineV, false},
-		{settingCorpNews, "Corp bulletins (Corp mail tab)", &corpNewsV, false},
-		{settingAssignments, "Paid assignments for human members", &assignmentsV, false},
-		{settingMerit, "Merit ranks (roles, titles, pay) for every member", &meritV, false},
+		{settingHumanPipeline, "Applicant mail, offer expiry, welcome", &humanPipelineV, true},
+		{settingCorpNews, "Corp bulletins (Corp mail tab)", &corpNewsV, true},
+		{settingAssignments, "Paid assignments for human members", &assignmentsV, true},
+		{settingMerit, "Merit ranks (roles, titles, pay) for every member", &meritV, true},
 		{settingPostings, "Members live at their Base; the CEO posts them to offices by job", &postingsV, true},
 		{settingHumanPostings, "The CEO posts human members too (by mail, with a choice)", &humanPostingsV, true},
 		{settingLabExpand, "R&D grows into another lab office when its bases run out of lines", &labExpandV, true},

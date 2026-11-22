@@ -426,6 +426,7 @@ type localLedger struct {
 	mu        sync.Mutex
 	channelAt map[int64][]time.Time
 	speakerAt map[int64]time.Time
+	openerAt  map[int64]time.Time  // speaker: its last engagement opener (chatterOpenerGapSec)
 	saidAt    map[string]time.Time // channel|template
 	heardBy   map[string]time.Time // pilot|template
 }
@@ -434,6 +435,7 @@ func newLocalLedger() *localLedger {
 	return &localLedger{
 		channelAt: map[int64][]time.Time{},
 		speakerAt: map[int64]time.Time{},
+		openerAt:  map[int64]time.Time{},
 		saidAt:    map[string]time.Time{},
 		heardBy:   map[string]time.Time{},
 	}
@@ -505,10 +507,16 @@ func (l *localLedger) lastHeard(channel, pilot int64, tpl string) time.Time {
 	return last
 }
 
-// allow spends one line of a system's budget. urgent skips the speaker gap,
-// never the ceiling.
-func (l *localLedger) allow(channel, speaker int64, ceiling int, urgent bool) bool {
-	now := clock.Now()
+// allow spends one line of a system's budget and returns "" when it may be said, else
+// the drop reason. urgent skips the speaker gap, never the ceiling. opener marks an
+// engagement's first line, which is urgent but still held to one per speaker per
+// chatterOpenerGapSec.
+func (l *localLedger) allow(channel, speaker int64, ceiling int, urgent, opener bool) string {
+	return l.allowAt(clock.Now(), channel, speaker, ceiling, urgent, opener)
+}
+
+// allowAt is allow at an explicit instant, for tests.
+func (l *localLedger) allowAt(now time.Time, channel, speaker int64, ceiling int, urgent, opener bool) string {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	kept := l.channelAt[channel][:0]
@@ -519,21 +527,30 @@ func (l *localLedger) allow(channel, speaker int64, ceiling int, urgent bool) bo
 	}
 	l.channelAt[channel] = kept
 	if len(kept) >= ceiling {
-		return false
+		return "local"
+	}
+	openerGap := time.Duration(chatterOpenerGapSec.Load()) * time.Second
+	if opener && openerGap > 0 {
+		if last, ok := l.openerAt[speaker]; ok && now.Sub(last) < openerGap {
+			return "opener"
+		}
 	}
 	if !urgent {
 		if gap := time.Duration(chatterGapSec.Load()) * time.Second; gap > 0 {
 			if last, ok := l.speakerAt[speaker]; ok && now.Sub(last) < gap {
-				return false
+				return "local"
 			}
 		}
+	}
+	if opener {
+		l.openerAt[speaker] = now
 	}
 	l.speakerAt[speaker] = now
 	l.channelAt[channel] = append(l.channelAt[channel], now)
 	if len(l.speakerAt) > 8192 {
 		l.trimLocked(now)
 	}
-	return true
+	return ""
 }
 
 // trimLocked drops what nothing will read again. Caller holds l.mu.
@@ -551,6 +568,12 @@ func (l *localLedger) trimLocked(now time.Time) {
 	for id, t := range l.speakerAt {
 		if now.Sub(t) > localRepeatWindow {
 			delete(l.speakerAt, id)
+		}
+	}
+	openerKeep := max(localRepeatWindow, time.Duration(chatterOpenerGapSec.Load())*time.Second)
+	for id, t := range l.openerAt {
+		if now.Sub(t) > openerKeep {
+			delete(l.openerAt, id)
 		}
 	}
 	for id, ts := range l.channelAt {
@@ -667,8 +690,11 @@ func (m *Mod) chatSay(ctx context.Context, channel int64, corp bool, speaker, ab
 		}
 		return line
 	}
-	if !localBook.allow(channel, speaker.CharID, int(chatterLocalRate.Load()), urgent || follow) {
-		chatterDrop("local")
+	// An engagement's opening line is urgent but rationed per speaker (chatterOpenerGapSec):
+	// a camper taking target after target speaks once, not once per target.
+	opener := ev == evEngage && !follow
+	if why := localBook.allow(channel, speaker.CharID, int(chatterLocalRate.Load()), urgent || follow, opener); why != "" {
+		chatterDrop(why)
 		return ""
 	}
 	localBook.noteSaid(channel, tpl)

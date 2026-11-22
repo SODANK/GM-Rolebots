@@ -2,6 +2,7 @@ package rolebots
 
 import (
 	"context"
+	"math"
 	"time"
 
 	evedb "gurimoon/db"
@@ -125,6 +126,17 @@ func (m *Mod) initProjectionTank(ctx context.Context, e *destiny.Entity, charID,
 	e.SetNoLockUntil(time.Now().Add(projectionNoLockSec * time.Second))
 }
 
+// damageToPersist is the armour and structure damage a teardown writes back, and whether
+// anything should be written at all. A destroyed ship writes nothing: its hull row is gone
+// or replaced, and a wreck's damage carried onto the next embodiment is a pilot born at 0%.
+// An HP block that was never filled (MaxStructure 0) writes nothing either.
+func damageToPersist(hp destiny.HPState, destroyed bool) (structDmg, armorDmg float64, ok bool) {
+	if destroyed || hp.MaxStructure <= 0 {
+		return 0, 0, false
+	}
+	return math.Max(0, hp.MaxStructure-hp.CurStructure), math.Max(0, hp.MaxArmor-hp.CurArmor), true
+}
+
 // persistProjectionDamage writes a projection's armour and structure damage
 // back to the ship row, so a bot that de-embodies mid-fight stays hurt. Called
 // on every teardown path that is not a death.
@@ -132,17 +144,9 @@ func (m *Mod) persistProjectionDamage(eb *embodiedBot) {
 	if eb == nil || eb.ent == nil {
 		return
 	}
-	hp := eb.ent.HPSnapshot()
-	if hp.MaxStructure <= 0 {
+	structDmg, armorDmg, ok := damageToPersist(eb.ent.HPSnapshot(), eb.ent.IsDestroyed())
+	if !ok {
 		return
-	}
-	armorDmg := hp.MaxArmor - hp.CurArmor
-	structDmg := hp.MaxStructure - hp.CurStructure
-	if armorDmg < 0 {
-		armorDmg = 0
-	}
-	if structDmg < 0 {
-		structDmg = 0
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

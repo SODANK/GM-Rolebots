@@ -440,6 +440,13 @@ func (m *Mod) travelDockStep(ctx context.Context, b *botRun) (bool, error) {
 	// A player may have arrived since the approach began: put a hull on the grid
 	// before the hangar takes it, as the ship is already parked at the door.
 	m.embodyIfWatched(ctx, b)
+	// A ship in a fight does not dock out from under it: the combat loop owns the helm until the grid
+	// clears or the hold's ceiling passes, as for the next gate (travelStep). A ship running for this
+	// door (the re-dock reflex, gank_undock.go) is exactly what docking is for, so it never holds.
+	if m.projectionHoldsTravel(b.CharID) && !m.projectionFleeing(b.CharID) {
+		st.Data.LegEndsAt = clock.Unix() + navLegHoldSec
+		return false, saveState(ctx, m.db, st)
+	}
 	// Docking clearance: a projection at the door files its request now, so the
 	// station's 4-6 s runs alongside the burn-in (before embodyDockPrep).
 	m.embodyDockClearanceWait(b.CharID, b.ShipID, st.Data.TargetStationID)
@@ -473,6 +480,7 @@ func (m *Mod) travelDockStep(ctx context.Context, b *botRun) (bool, error) {
 		st.Data.TargetStationID = instead
 	}
 	// The approach leg is over: dock for real.
+	m.embodyDockRangeLog(b.CharID, st.Data.TargetStationID)
 	if err := m.dockAt(ctx, b, st.Data.TargetStationID); err != nil {
 		m.departAborted(b.CharID)
 		return false, err
@@ -1108,10 +1116,36 @@ func (m *Mod) setInSpace(ctx context.Context, b *botRun) error {
 		return nil
 	}
 	// The slot is claimed once, here, and carried on the state row: the persisted ship
-	// position and the projection's start must be the same coordinate.
-	slot := claimUndockSlot(station, b.ShipID, undockHoldSec()+dockApproachSec)
+	// position and the projection's start must be the same coordinate. In a loaded system the
+	// claim skips any seat whose exit point or run out of the door would put this hull through
+	// another one standing there now (a ship parked at the door, a slow launcher still in its run).
+	stats, haveStats := m.dockStats(ctx, b.ShipID, b.CharID, station)
+	var fits func(int) bool
+	if haveStats && m.systems != nil {
+		if ss := m.systems.Get(b.SystemID); ss != nil {
+			center := destiny.Vec3{X: stats.StationX, Y: stats.StationY, Z: stats.StationZ}
+			if occ := destiny.OccupancySnapshot(ss, b.SystemID, center, undockScanRange, uint32(b.ShipID)); len(occ) > 0 {
+				jit, r := parkJitter(b.ShipID), stats.Radius
+				fits = func(s int) bool {
+					pos, _, goTo, _, ok := dockExitFrom(stats, s)
+					if !ok {
+						return true
+					}
+					pos, goTo = pos.Add(jit), goTo.Add(jit)
+					return destiny.PointClear(pos, r, occ) && segmentClear(pos, goTo, r, occ)
+				}
+			}
+		}
+	}
+	slot := claimUndockSlotWhere(station, b.ShipID, undockHoldSec()+dockApproachSec, fits)
 	runSec := UndockRunSec()
-	if pos, _, _, sec, ok := m.dockExit(ctx, b.ShipID, b.CharID, station, slot); ok {
+	var pos destiny.Vec3
+	var sec int64
+	ok := false
+	if haveStats {
+		pos, _, _, sec, ok = dockExitFrom(stats, slot)
+	}
+	if ok {
 		runSec = sec
 		// Jitter is the last resort when two ships share a slot (the registry is empty after
 		// a restart). It is reproducible from the shipID so prepareProjection recomputes this point.
@@ -1146,11 +1180,25 @@ func (m *Mod) setInSpace(ctx context.Context, b *botRun) error {
 // call initDestiny makes), so a bot and a player leave one door alike. ok=false means no
 // authored dock entry. runSec comes from the geometry (UndockRunSecFor).
 func (m *Mod) dockExit(ctx context.Context, shipID, charID, stationID int64, slot int) (pos, vel, goTo destiny.Vec3, runSec int64, ok bool) {
+	stats, have := m.dockStats(ctx, shipID, charID, stationID)
+	if !have {
+		return destiny.Vec3{}, destiny.Vec3{}, destiny.Vec3{}, UndockRunSec(), false
+	}
+	return dockExitFrom(stats, slot)
+}
+
+// dockStats reads what dockExitFrom needs about a ship at a station's door.
+func (m *Mod) dockStats(ctx context.Context, shipID, charID, stationID int64) (*evedb.ShipStats, bool) {
 	stats, err := evedb.GetShipStats(ctx, m.db, shipID, charID, stationID)
 	if err != nil {
 		rlogf("rolebots: dock exit station %d: %v", stationID, err)
-		return destiny.Vec3{}, destiny.Vec3{}, destiny.Vec3{}, UndockRunSec(), false
+		return nil, false
 	}
+	return stats, true
+}
+
+// dockExitFrom is dockExit's arithmetic on stats already read. Pure.
+func dockExitFrom(stats *evedb.ShipStats, slot int) (pos, vel, goTo destiny.Vec3, runSec int64, ok bool) {
 	pos, vel, goTo, ok = destiny.UndockPlacement(
 		destiny.Vec3{X: stats.StationX, Y: stats.StationY, Z: stats.StationZ},
 		destiny.Vec3{X: stats.DockEntryX, Y: stats.DockEntryY, Z: stats.DockEntryZ},
@@ -1186,15 +1234,29 @@ func (m *Mod) parkAtGate(ctx context.Context, b *botRun, sysID, fromSys int64) i
 	}
 	// The jump line through the arrival gate (lane.go gateArrivalGeom, the geometry a
 	// camp covering this gate parks on).
-	gate, dir, radius, ok := m.gateArrivalGeom(ctx, gateID)
+	gate, dir, _, ok := m.gateArrivalGeom(ctx, gateID)
 	if !ok {
 		m.parkAtCelestial(ctx, b.ShipID, gateID)
 		return gateID
 	}
-	landing := gate.Add(dir.Scale(radius + parkStandoff))
-	// The arrival lane: the landing is a pure function of the gate pair, so without it
-	// every bot jumping this link parks on one coordinate (parklane.go).
-	landing = landing.Add(parkLaneOffset(gateID, b.ShipID, dir))
+	// The player's rule (the core's StargateJump): GateArrivalPoint's scatter cone round the jump
+	// line, then an arrival-lane claim checked against whatever stands there now and against
+	// landings still in flight, players' included. Claimed under the ship's ball ID, which is the
+	// projection's, so its own claim is replaced and not counted against it. A system nobody has
+	// loaded has no balls to check; the claim still reserves the seat.
+	var ss *destiny.SolarSystem
+	if m.systems != nil {
+		ss = m.systems.Get(sysID)
+	}
+	hull := 150.0
+	if ss != nil {
+		hull = m.hullRadiusFor(ctx, b.CharID, b.ShipID)
+	}
+	base, adir := destiny.GateArrivalPoint(gate, dir, nil)
+	landing, _ := destiny.ClaimArrivalPointEx(ss, sysID, base.Add(parkJitter(b.ShipID)), adir, hull, uint32(b.ShipID))
+	// The gate park seat parkLaneOffset used to hold here is now the campers' alone (gateCampPoint);
+	// drop whatever seat this ship still held, as claiming one used to do.
+	destiny.ReleaseHeldSlot(b.ShipID)
 	m.writePosition(ctx, b.ShipID, landing)
 	return gateID
 }

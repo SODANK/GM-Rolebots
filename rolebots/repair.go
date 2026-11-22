@@ -3,6 +3,7 @@ package rolebots
 import (
 	"context"
 	"fmt"
+	"math"
 	"sync"
 
 	evedb "gurimoon/db"
@@ -30,7 +31,29 @@ const (
 	// above the floor. A partly funded repair is valid (armour is mended before
 	// structure), so a poor pilot comes again.
 	repairWalletShare = 0.5
+	// repairReserveMin is what a pilot keeps back when the hull itself is holed
+	// (repairCritical). A ship flying on structure breaks off the first fight it meets,
+	// which a watching player reads as a pilot who aggresses and runs; a poor pilot
+	// spends down to this rather than fly it that way.
+	repairReserveMin = 50_000.0
 )
+
+// repairCritical reports whether stored damage reaches the structure: the armour is gone
+// and the next hit lands on the hull, so the ship is not fit to fly into anything.
+func repairCritical(structDmg float64) bool {
+	return structDmg >= repairMinDamage
+}
+
+// repairBudget is what one repair may spend. The normal rule keeps repairWalletFloor and
+// spends repairWalletShare of the rest; a critical hull may spend down to repairReserveMin.
+// RepairItems only spends what the work costs, so a budget is a ceiling, not a price.
+func repairBudget(balance float64, critical bool) float64 {
+	normal := (balance - repairWalletFloor) * repairWalletShare
+	if critical {
+		return math.Max(normal, balance-repairReserveMin)
+	}
+	return normal
+}
 
 // repairBrokeTTL is how long a pilot who could not afford the yard is not quoted again, in
 // seconds. repairUpkeep runs on every plan pass, and an idle pilot plans every few seconds.
@@ -106,7 +129,7 @@ func (m *Mod) repairUpkeep(ctx context.Context, b *botRun) (repaired bool, err e
 	if err != nil {
 		return false, fmt.Errorf("wallet: %w", err)
 	}
-	budget := (bal - repairWalletFloor) * repairWalletShare
+	budget := repairBudget(bal, repairCritical(structDmg))
 	if budget <= 0 {
 		noteRepairBroke(b.CharID)
 		m.logBot(b.CharID, logInfo, "repair",

@@ -866,11 +866,10 @@ func (m *Mod) promotionPass(ctx context.Context) (string, error) {
 }
 
 // startPromotionSweep registers the weekly clock check. Same shape as the formation
-// sweep: off the tick goroutine, behind an overlap guard, gated on the master and
-// formation switches, since a hierarchy matters only while corp fleets exist.
+// sweep: off the tick goroutine, behind an overlap guard, gated on the master switch.
 func (m *Mod) startPromotionSweep() {
 	m.registerPeriodic("rolebot-corp-promote", promoteCheckTicks, func(uint64) bool {
-		if !Master() || !GangForm() {
+		if !Master() {
 			return true
 		}
 		if clock.Unix() < promoteNextAt.Load() {

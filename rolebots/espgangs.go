@@ -13,8 +13,8 @@ import (
 //
 // This page is an observatory, not a console. Corporations form, crew, steer and wind down
 // fleets (gangform.go, corprank.go, gangplan.go), and nothing here starts, stops, re-crews or
-// reboots one: a per-fleet override has to be un-pressed later. The formation switch, fleet
-// cap, clocks and PvP dials are not edited here. A fleet's size is its corporation's roster,
+// reboots one: a per-fleet override has to be un-pressed later. Formation has no switch (it
+// runs whenever the module does); the fleet cap, clocks and PvP dials are not edited here. A fleet's size is its corporation's roster,
 // not a cap. The bottom card is the player-fleet half (conscription).
 
 // ── list page ───────────────────────────────────────────────────────────────
@@ -84,7 +84,7 @@ const tmplGangs = gangTabs + `{{define "content"}}` + castTabsStyle + `
     </tbody>
   </table>
   {{else}}
-  <p>No fleets are flying. {{if .GangFormOn}}Corporations will raise one soon.{{else}}Corporations are not fielding fleets.{{end}}</p>
+  <p>No fleets are flying. Corporations will raise one soon.</p>
   {{end}}
 </div>
 
@@ -413,22 +413,21 @@ func (m *Mod) handleGangs(w http.ResponseWriter, r *http.Request) {
 	}
 
 	espRender(w, "rolebots_gangs.html", map[string]any{
-		"Page":               "rolebot-gangs",
-		"Tab":                "fleets",
-		"Gangs":              gangs,
-		"GangCount":          len(gangs),
-		"Activities":         sortedKeys(acts),
-		"Phases":             sortedKeys(phases),
-		"GangFormOn":         GangForm(),
-		"FleetMirrorOn":      FleetMirror(),
-		"FleetNarrationOn":   FleetNarration(),
-		"PointCallsOn":       PointCalls(),
-		"SeatTTL":            seatRequestTTL.Load(),
-		"CorpOrdersOn":       CorpOrders(),
-		"OrderTTLHours":      orderTTLHours.Load(),
-		"OrderRetries":       orderRetries.Load(),
-		"FleetMaxOpen":       humanFleetMaxOpen.Load(),
-		"HoldMax":            directiveHoldMax.Load(),
+		"Page":             "rolebot-gangs",
+		"Tab":              "fleets",
+		"Gangs":            gangs,
+		"GangCount":        len(gangs),
+		"Activities":       sortedKeys(acts),
+		"Phases":           sortedKeys(phases),
+		"FleetMirrorOn":    FleetMirror(),
+		"FleetNarrationOn": FleetNarration(),
+		"PointCallsOn":     PointCalls(),
+		"SeatTTL":          seatRequestTTL.Load(),
+		"CorpOrdersOn":     CorpOrders(),
+		"OrderTTLHours":    orderTTLHours.Load(),
+		"OrderRetries":     orderRetries.Load(),
+		"FleetMaxOpen":     humanFleetMaxOpen.Load(),
+		"HoldMax":          directiveHoldMax.Load(),
 
 		"Conscripts":      conscripts,
 		"ConscriptOn":     Conscription(),

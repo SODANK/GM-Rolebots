@@ -25,10 +25,10 @@ import (
 // after-action report). Operator-built gangs (autoFormed = 0) are never touched.
 // Recruiting rules: docs/comment-notes-b10.md#fleet-recruiting.
 
+// Formation has no switch: corporations fielding fleets is part of the module, gated only by the
+// master switch. (A former rolebots.gangForm row in server_settings is no longer read.)
+
 const (
-	// settingGangForm is the formation switch, persisted in server_settings.
-	// Off until somebody turns it on.
-	settingGangForm = "rolebots.gangForm"
 	// settingMaxGangs is the operator's cap on how many gangs fly at once. It counts every
 	// gang, hand-built ones included, to put a lid on formation flying. There is no cap on
 	// how many pilots one gang holds (see gangSeatsUncapped).
@@ -84,7 +84,6 @@ const (
 )
 
 var (
-	gangFormOn   atomic.Bool
 	maxGangsVal  atomic.Int64
 	gangFormBusy atomic.Bool
 
@@ -140,21 +139,12 @@ func (m *Mod) logiViable(ctx context.Context) bool {
 	return ok
 }
 
-// GangForm reports whether bots may form gangs on their own.
-func GangForm() bool      { return gangFormOn.Load() }
-func setGangForm(on bool) { gangFormOn.Store(on) }
-func MaxGangs() int       { return int(maxGangsVal.Load()) }
-func setMaxGangs(n int)   { maxGangsVal.Store(int64(max(n, 0))) }
+func MaxGangs() int     { return int(maxGangsVal.Load()) }
+func setMaxGangs(n int) { maxGangsVal.Store(int64(max(n, 0))) }
 
-// loadGangSettings reads the gang settings at boot. Missing values keep the
-// defaults; the switch stays off until somebody flipped it once.
+// loadGangSettings reads the gang settings at boot. Missing values keep the defaults.
 func (m *Mod) loadGangSettings(ctx context.Context) {
 	setMaxGangs(defaultMaxGangs)
-	if v, ok, err := evedb.GetServerSetting(ctx, m.db, settingGangForm); err != nil {
-		rlogf("rolebots: read gang formation setting: %v (leaving it off)", err)
-	} else if ok {
-		setGangForm(v == "1")
-	}
 	readInt := func(key string, set func(int)) {
 		v, ok, err := evedb.GetServerSetting(ctx, m.db, key)
 		if err != nil || !ok {
@@ -333,7 +323,7 @@ func gangLeaderRole(activity string) string {
 // and a formation pass does real fit-pool work.
 func (m *Mod) startGangFormation() {
 	m.registerPeriodic("rolebot-gang-form", gangFormEveryTicks, func(uint64) bool {
-		if !Master() || !GangForm() {
+		if !Master() {
 			return true
 		}
 		if !gangFormBusy.CompareAndSwap(false, true) {
