@@ -352,36 +352,77 @@ func armName(a corpArm) string {
 	return "<font size=3 color=" + armColor(a) + "><b>" + esp.IGBText(label) + "</b></font>"
 }
 
-// armRoleShort is what an arm's bundle opens, in the client's own role
-// names, short enough for a card.
+// armRoleShort names an arm's corporation-wide roles in the client's own role
+// names, short enough for a card. Hangar access is armGrantShort's.
 func armRoleShort(mask uint64) string {
 	var out []string
-	if mask&corp.RoleFactoryManager != 0 {
-		out = append(out, "Factory Manager")
-	}
-	if mask&(corp.RoleHangarCanQuery1|corp.RoleHangarCanQuery2|corp.RoleHangarCanQuery3) != 0 {
-		out = append(out, "view Materials, Library and Production")
-	}
-	if mask&corp.RoleSecurityOfficer != 0 {
-		out = append(out, "Security Officer")
-	}
-	if mask&corp.RoleEquipmentConfig != 0 {
-		out = append(out, "Config Equipment")
-	}
-	if mask&corp.RoleStationManager != 0 {
-		out = append(out, "Station Manager")
-	}
-	if mask&corp.RoleCanRentOffice != 0 {
-		out = append(out, "Rent Office")
-	}
-	if mask&corp.RoleChatManager != 0 {
-		out = append(out, "Communications Officer")
-	}
-	if mask&corp.RoleAuditor != 0 {
-		out = append(out, "Auditor")
-	}
-	if mask&corp.RoleJuniorAccountant != 0 {
-		out = append(out, "Junior Accountant")
+	for _, r := range []struct {
+		bit  uint64
+		name string
+	}{
+		{corp.RoleFactoryManager, "Factory Manager"},
+		{corp.RoleTrader, "Trader"},
+		{corp.RoleSecurityOfficer, "Security Officer"},
+		{corp.RoleEquipmentConfig, "Config Equipment"},
+		{corp.RoleStarbaseConfig, "Config Starbase Equipment (run the towers)"},
+		{corp.RoleStationManager, "Station Manager"},
+		{corp.RoleCanRentOffice, "Rent Office"},
+		{corp.RoleChatManager, "Communications Officer"},
+		{corp.RoleAuditor, "Auditor"},
+		{corp.RoleJuniorAccountant, "Junior Accountant"},
+	} {
+		if mask&r.bit != 0 {
+			out = append(out, r.name)
+		}
 	}
 	return strings.Join(out, ", ")
+}
+
+// divPlainName is what a division holds: its war-chest label, its desk name, or
+// its number. Pure over the profile.
+func divPlainName(p *divProfile, d int) string {
+	if l := p.Label(d); l != "" {
+		return l
+	}
+	if n, ok := corpDivisionNames[d]; ok {
+		return n
+	}
+	if n, ok := starbaseDivisionNames[d]; ok {
+		return n
+	}
+	return "Division " + itoa(d)
+}
+
+// armGrantShort is everything a capsuleer at a tier of an arm is granted by it
+// (armRoles and armOwnRoles, as applyArmRoles grants them), short enough for a
+// card. atBase marks the hangar roles as held at the member's Base office only.
+// Pure over the profile.
+func armGrantShort(p *divProfile, a corpArm, tier int, atBase bool) string {
+	if a == "" {
+		return ""
+	}
+	mask := armRoles(a, tier, false) | armOwnRoles(p, a)
+	var out []string
+	if r := armRoleShort(mask); r != "" {
+		out = append(out, r)
+	}
+	var hang []string
+	if mask&armQueryAll == armQueryAll {
+		hang = append(hang, "view every hangar")
+	}
+	var take []string
+	for _, d := range armDivisions(p, a) {
+		take = append(take, divPlainName(p, d))
+	}
+	if len(take) > 0 {
+		hang = append(hang, "take from "+strings.Join(take, ", "))
+	}
+	if len(hang) > 0 {
+		h := strings.Join(hang, ", ")
+		if atBase {
+			h += " (at your Base office)"
+		}
+		out = append(out, h)
+	}
+	return strings.Join(out, "; ")
 }

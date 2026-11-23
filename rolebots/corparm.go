@@ -455,20 +455,25 @@ const armCorpJobGate = corp.RoleFactoryManager |
 	corp.RoleHangarCanQuery1 | corp.RoleHangarCanQuery2 | corp.RoleHangarCanQuery3
 
 // armRoleMask is every bit the arm pass ever grants; armRoleDelta never touches a bit outside
-// it.
+// it. armHangarRoles covers armOwnRoles, which differ per corporation.
 const armRoleMask = corp.RoleSecurityOfficer | corp.RoleStationManager | corp.RoleAuditor |
 	corp.RoleEquipmentConfig | corp.RoleCanRentOffice | corp.RoleJuniorAccountant | corp.RoleChatManager |
-	armIndustryRoles | armInfraRoles
+	corp.RoleTrader | armIndustryRoles | armInfraRoles | armHangarRoles
+
+// armHangarRoles is query and take on all seven divisions.
+const armHangarRoles = armQueryAll | corp.RoleHangarCanTake1 | corp.RoleHangarCanTake2 |
+	corp.RoleHangarCanTake3 | corp.RoleHangarCanTake4 | corp.RoleHangarCanTake5 |
+	corp.RoleHangarCanTake6 | corp.RoleHangarCanTake7
 
 // armInfraRoles is what every member of Infrastructure holds: query and take on the Starbase
-// Kit and Fuel divisions, to load a fuel, ammo or rig leg. The head also configures starbases
-// (the Fuel Technician's bit), which the anchor and online seams stand in for.
+// Kit and Fuel divisions, to load a fuel, ammo or rig leg, and configuring the corporation's
+// starbases (the Fuel Technician's bit), which the anchor and online seams stand in for.
 const armInfraRoles = corp.RoleHangarCanQuery6 | corp.RoleHangarCanQuery7 |
 	corp.RoleHangarCanTake6 | corp.RoleHangarCanTake7 | corp.RoleStarbaseConfig
 
-// armRoles is what a member of an arm at a tier holds by virtue of the arm. Officer bits are
-// never here, and a benched member holds no Factory Manager. See
-// docs/comment-notes-b03.md#arm-role-bundles.
+// armRoles is what a member of an arm at a tier holds by virtue of the arm, besides query and
+// take on its own divisions (armOwnRoles, added by applyArmRoles). Officer bits are never here,
+// and a benched member holds no Factory Manager. See docs/comment-notes-b03.md#arm-role-bundles.
 func armRoles(a corpArm, tier int, benched bool) uint64 {
 	switch a {
 	case armIndustry, armResearch:
@@ -477,12 +482,13 @@ func armRoles(a corpArm, tier int, benched bool) uint64 {
 		}
 		return armIndustryRoles
 	case armSecurity:
-		switch tier {
-		case armTierHead:
+		// Every member of Security may inspect members' hangars; the head also configures equipment.
+		if tier == armTierHead {
 			return corp.RoleSecurityOfficer | corp.RoleEquipmentConfig
-		case armTierJunior:
-			return corp.RoleSecurityOfficer
 		}
+		return corp.RoleSecurityOfficer
+	case armSales:
+		return corp.RoleTrader
 	case armHR:
 		if tier == armTierHead {
 			return corp.RoleStationManager | corp.RoleCanRentOffice | corp.RoleChatManager
@@ -492,9 +498,6 @@ func armRoles(a corpArm, tier int, benched bool) uint64 {
 			return corp.RoleAuditor | corp.RoleJuniorAccountant
 		}
 	case armInfrastructure:
-		if tier == armTierMember {
-			return armInfraRoles &^ corp.RoleStarbaseConfig
-		}
 		return armInfraRoles
 	}
 	return 0

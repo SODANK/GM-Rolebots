@@ -84,13 +84,14 @@ func armHomeDivision(p *divProfile, a corpArm) int {
 	return 1
 }
 
-// armLookRoles is the query bits a member of an arm holds on the divisions its
-// arm owns: a member of Security can see the Armory and what is in it. Never
-// take; taking is earned (merit rank, the quartermaster's issue).
-func armLookRoles(p *divProfile, a corpArm) uint64 {
+// armOwnRoles is the query and take bits a member of an arm holds on the
+// divisions its arm owns: R&D works the Blueprint Library, Security draws from
+// the Armory. A human's take on a war-chest division is still subject to
+// humanGuardedTake (corpdivisions.go).
+func armOwnRoles(p *divProfile, a corpArm) uint64 {
 	var bits uint64
 	for _, d := range armDivisions(p, a) {
-		bits |= divQueryBit(d)
+		bits |= divQueryBit(d) | divTakeBit(d)
 	}
 	return bits
 }

@@ -293,6 +293,10 @@ func (m *Mod) Init(ctx *modapi.Context) error {
 	if _, err := m.migrateBPOEscrowNuke(bctx); err != nil {
 		rlogf("rolebots: print listing clear-out: %v", err)
 	}
+	// Corporation-wide hangar roles show per location in the client (corpbaseroles.go).
+	if err := m.mirrorLocationBackfill(bctx); err != nil {
+		rlogf("rolebots: %v", err)
+	}
 
 	// Character sheets that hold a skill without its prerequisites (an impossible
 	// state some adopted characters had) are mended first (seed.go).

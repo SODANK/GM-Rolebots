@@ -240,6 +240,8 @@ func (m *Mod) onOfficeDeposit(corpID, charID, itemID, typeID, flag int64) {
 		// free to circulate.
 		m.lockArrivedPrint(ctx, corpID, itemID)
 		m.noteAssignmentDeposit(ctx, corpID, charID, itemID, typeID, flag)
+		// War-chest gear put back signs its sign-out in (corpsignout.go).
+		m.signoutReturned(ctx, corpID, charID, itemID)
 	})
 }
 

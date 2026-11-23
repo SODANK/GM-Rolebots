@@ -772,7 +772,23 @@ func (m *Mod) ceoArms(ctx context.Context, c *corpCEO, sig armSignals, justified
 		prev, had := cur[id]
 		if had && prev.SetBy == postSetHuman {
 			// The chair placed them (corpcommanddesk_org.go), or a human member chose the arm by mail
-			// (corparm_human.go); the deal leaves it.
+			// (corparm_human.go); the deal leaves it. Its roles still follow the bundle, at the
+			// tier a position in that arm gives.
+			tier := prev.Tier
+			if p, ok := pos[id]; ok && p.Arm == prev.Arm && p.Tier > tier {
+				tier = p.Tier
+			}
+			grant, err := m.applyArmRoles(ctx, cm, prev.GrantMask, armPlacement{prev.Arm, tier}, benched[id])
+			if err != nil {
+				return err
+			}
+			if grant != prev.GrantMask || tier != prev.Tier {
+				row := prev
+				row.Tier, row.GrantMask = tier, grant
+				if err := m.saveArmRow(ctx, row); err != nil {
+					return err
+				}
+			}
 			continue
 		}
 		switch {
@@ -840,33 +856,45 @@ func (m *Mod) ceoArms(ctx context.Context, c *corpCEO, sig armSignals, justified
 
 // applyArmRoles moves a member's arm role bits from what its old placement granted
 // (prevGrant) to what its new one wants, and answers the new grant.
+//
+// A department head holds its bundle at every office. A capsuleer junior or member holds the
+// hangar part of it (and Factory Manager) at its Base only while base roles are in force
+// (corpbaseroles.go); with no Base, or the switch off, it holds them everywhere.
 func (m *Mod) applyArmRoles(ctx context.Context, cm corpMember, prevGrant uint64, next armPlacement, benched bool) (uint64, error) {
+	corpID := m.charCorpID(ctx, cm.CharID)
 	want := uint64(0)
 	if next.Arm != "" {
 		want = armRoles(next.Arm, next.Tier, benched)
-		// Every member may look in its arm's own hangars (corpdeptdivs.go).
-		if corpID := m.charCorpID(ctx, cm.CharID); corpID != 0 {
-			want |= armLookRoles(m.corpDivs(ctx, corpID), next.Arm)
+		if corpID != 0 {
+			// Every member works its arm's own hangars (corpdeptdivs.go). A bot only looks: its
+			// take is earned (merit rank, the quartermaster's issue).
+			own := armOwnRoles(m.corpDivs(ctx, corpID), next.Arm)
+			if !cm.Human() {
+				own &= armQueryAll
+			}
+			want |= own
+		}
+	}
+	var base uint64
+	if cm.Human() {
+		atBase := next.Arm != "" && next.Tier != armTierHead && m.baseRolesActive(ctx) &&
+			m.memberBaseID(ctx, cm.CharID) != 0
+		want, base = splitBaseRoles(want, atBase)
+		base = m.stripGuardedTake(ctx, corpID, cm.CharID, base)
+	}
+	want = m.stripGuardedTake(ctx, corpID, cm.CharID, want)
+	roles, grant := armRoleDelta(cm.Roles, prevGrant, want)
+	if roles != cm.Roles {
+		if err := m.setMemberRoles(ctx, cm.CharID, roles); err != nil {
+			return prevGrant, fmt.Errorf("arm roles %d: %w", cm.CharID, err)
 		}
 	}
 	if cm.Human() {
-		// A capsuleer's job roles may be held at its Base only (corpbaseroles.go); with the switch
-		// off this takes any back.
-		atBase := (next.Arm == armIndustry || next.Arm == armResearch) && m.baseRolesActive(ctx)
-		global, base := splitBaseRoles(want, atBase)
-		want = global
-		corpID, _ := evedb.GetCharCorpID(ctx, m.db, cm.CharID)
+		// After the corporation-wide write, so bits now held everywhere are not taken off the
+		// Base column; with the switch off this takes any Base bits back.
 		if err := m.applyBaseRoles(ctx, corpID, cm.CharID, base); err != nil {
 			rlogf("rolebots: %v", err)
 		}
-	}
-	want = m.stripGuardedTake(ctx, m.charCorpID(ctx, cm.CharID), cm.CharID, want)
-	roles, grant := armRoleDelta(cm.Roles, prevGrant, want)
-	if roles == cm.Roles {
-		return grant, nil
-	}
-	if err := m.setMemberRoles(ctx, cm.CharID, roles); err != nil {
-		return prevGrant, fmt.Errorf("arm roles %d: %w", cm.CharID, err)
 	}
 	return grant, nil
 }
@@ -905,6 +933,9 @@ func armRoleWords(mask uint64) []string {
 	var out []string
 	if mask&corp.RoleFactoryManager != 0 {
 		out = append(out, "install corporation jobs from the library against its materials (Factory Manager)")
+	}
+	if mask&corp.RoleTrader != 0 {
+		out = append(out, "trade on the corporation's account (Trader)")
 	}
 	if mask&corp.RoleSecurityOfficer != 0 {
 		out = append(out, "inspect members' hangars (Security Officer)")

@@ -41,6 +41,7 @@ func init() {
 				return
 			}
 			pushMemberRoleSession(context.Background(), globalDB, charID, old, false)
+			modMemberRowChanged(charID, old)
 		},
 		SharesChanged: func(corpID int64, deltas []evedb.ShareDelta, oldTotal, newTotal int64) {
 			if globalDB == nil || globalSessReg == nil {
@@ -280,4 +281,40 @@ func modItemChanged(charID, itemID, oldLocationID, oldFlag, oldOwnerID int64) {
 	_ = server.SendNotification(s.Conn, s.AccountID, "OnItemChange", "charid", marshal.PyTuple{Items: []marshal.PyRep{
 		evedb.BuildEntityRow(er), change,
 	}})
+}
+
+// modMemberRowChanged pushes OnCorporationMemberChanged for a role edit the module made, so
+// an open member list or role window shows it (corpwrites.go notifyMemberRowChanged). The
+// line before the edit is the fresh line with old's role columns.
+func modMemberRowChanged(charID int64, old *evedb.CorpMemberInfo) {
+	if globalDB == nil || globalSessReg == nil || old == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	corpID := boundCharCorpID(charID, globalDB)
+	if corpID == 0 {
+		return
+	}
+	line, err := evedb.GetCorpMemberLine(ctx, globalDB, corpID, charID)
+	if err != nil || line == nil {
+		return
+	}
+	before := append([]marshal.PyRep(nil), line...)
+	for i, col := range evedb.CorpMemberColumns() {
+		if i >= len(before) {
+			break
+		}
+		switch col {
+		case "roles":
+			before[i] = marshal.PyInt{Value: old.Corprole}
+		case "rolesAtHQ":
+			before[i] = marshal.PyInt{Value: old.RolesAtHQ}
+		case "rolesAtBase":
+			before[i] = marshal.PyInt{Value: old.RolesAtBase}
+		case "rolesAtOther":
+			before[i] = marshal.PyInt{Value: old.RolesAtOther}
+		}
+	}
+	notifyMemberRowChanged(ctx, globalDB, corpID, charID, before)
 }

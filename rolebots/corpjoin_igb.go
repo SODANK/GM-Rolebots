@@ -113,7 +113,7 @@ func (m *Mod) mailArmConfirm(ctx context.Context, corpID, charID int64, arm corp
 	line(&b, "%s,", cm.Name)
 	b.WriteString("<br>")
 	line(&b, "You asked to join %s. Its people %s.", armLabel(arm), armPitch(arm))
-	if roles := armRoleShort(armRoles(arm, armTierMember, false)); roles != "" {
+	if roles := armGrantShort(m.corpDivs(ctx, corpID), arm, armTierMember, m.baseRolesActive(ctx)); roles != "" {
 		line(&b, "Joining gives you these roles while you stay in it: %s.", roles)
 	}
 	b.WriteString("<br>")

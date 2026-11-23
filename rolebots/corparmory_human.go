@@ -18,8 +18,8 @@ import (
 // A human draws a kit; it is never pushed one. On the Corporate Portal's Operations page a
 // member aboard one of the corporation's fleets (per the fleet registry, which a header cannot
 // forge) at merit rank Specialist or above is offered the seat's kit, handed over outright
-// with a letter naming the seat, station and due time. A human never holds take on the Armory,
-// so the kit is returned by parking it, empty, at the station it was drawn from. A kit sold,
+// with a letter naming the seat, station and due time. A human outside Security holds no take on
+// the Armory, so the kit is returned by parking it, empty, at the station it was drawn from. A kit sold,
 // contracted away, left behind, or not back by the due date plus grace is stolen: the
 // corporation sets the thief hostile, puts the kit's value on their head and bars them. A
 // stripped return costs a month off the shelf and the merit.
@@ -386,37 +386,67 @@ func (m *Mod) collectHumanKit(ctx context.Context, c *corpCEO, is *corpIssue) {
 // armoryTheft is the corporation's answer to a kit that did not come back.
 func (m *Mod) armoryTheft(ctx context.Context, c *corpCEO, is *corpIssue) {
 	m.closeIssue(ctx, is, issueStolen, "not returned")
-	name := m.charNameOr(ctx, is.CharID)
 	hull := m.typeNameOr(ctx, is.HullTypeID)
+	m.punishTheft(ctx, c, theftCase{
+		CharID: is.CharID, Value: is.Value, IssueID: is.IssueID,
+		Deed:    "stole a " + hull + " from the Armory",
+		Subject: "Armory: theft",
+		Letter:  fmt.Sprintf("The %s issued to you was not returned. The corporation counts it stolen.", hull),
+		Log:     fmt.Sprintf("counts the %s lent to %s stolen", hull, m.charNameOr(ctx, is.CharID)),
+	})
+}
+
+// theftCase is one theft from the corporation, as punishTheft answers it.
+type theftCase struct {
+	CharID  int64
+	Value   float64
+	IssueID int64  // the kit issue or sign-out it was, 0 for none
+	Deed    string // the standing's reason: "stole a Rifter from the Armory"
+	Subject string // the letter's subject
+	Letter  string // the letter's first paragraph
+	Log     string // the CEO log line, before what was done about it
+}
+
+// punishTheft is the corporation's answer to theft: the thief is barred from the Armory (and so
+// loses its take on the war chest, humanGuardedTake) and from rejoining, set hostile, and has the
+// value put on its head.
+func (m *Mod) punishTheft(ctx context.Context, c *corpCEO, t theftCase) {
+	name := m.charNameOr(ctx, t.CharID)
 	_, _ = m.db.ExecContext(ctx, `
 		INSERT INTO rolebot_corp_barred (corporationID, characterID, reason, value, issueID, barredAt, untilAt)
 		VALUES (?, ?, 'theft', ?, ?, ?, 0)
 		ON DUPLICATE KEY UPDATE reason = 'theft', value = value + VALUES(value), issueID = VALUES(issueID),
 		    barredAt = VALUES(barredAt), untilAt = 0`,
-		is.CorpID, is.CharID, is.Value, is.IssueID, clock.Unix())
+		c.CorpID, t.CharID, t.Value, t.IssueID, clock.Unix())
 	standing := float64(armoryTheftStandV.Load()) / 100
-	if err := evedb.SetCorpStanding(ctx, m.db, is.CorpID, is.CharID, standing, 0,
-		"stole a "+hull+" from the Armory"); err != nil {
-		rlogf("rolebots: theft standing corp=%d char=%d: %v", is.CorpID, is.CharID, err)
+	if err := evedb.SetCorpStanding(ctx, m.db, c.CorpID, t.CharID, standing, 0, t.Deed); err != nil {
+		rlogf("rolebots: theft standing corp=%d char=%d: %v", c.CorpID, t.CharID, err)
 	}
 	bounty := 0.0
 	if mul := float64(armoryTheftBountyV.Load()) / 100; mul > 0 {
-		price := is.Value * mul
+		price := t.Value * mul
 		if price < kitTheftMinBounty {
 			price = kitTheftMinBounty
 		}
-		if m.corpFilesBounty(ctx, is.CorpID, &pvpCombatant{CharID: is.CharID, Name: name}, price) {
+		if m.corpFilesBounty(ctx, c.CorpID, &pvpCombatant{CharID: t.CharID, Name: name}, price) {
 			bounty = price
 		}
 	}
 	from, _ := m.letterFrom(ctx, c, mailFromSecurity)
-	m.mailPilot(ctx, is.CharID, from, "Armory: theft",
-		fmt.Sprintf("The %s issued to you was not returned. The corporation counts it stolen.<br><br>"+
-			"You are barred from its Armory and from rejoining it%s.",
-			hull, map[bool]string{true: fmt.Sprintf(", and %s has been placed on your head", iskShort(bounty))}[bounty > 0]))
-	m.ceoLog(ctx, c, powerProduction, "kit.theft", is.CharID, is.Value,
-		"counts the %s lent to %s stolen — set them hostile%s and barred them",
-		hull, name, map[bool]string{true: ", put " + iskShort(bounty) + " on their head"}[bounty > 0])
+	m.mailPilot(ctx, t.CharID, from, t.Subject,
+		fmt.Sprintf("%s<br><br>You are barred from its Armory and from rejoining it%s.",
+			t.Letter, map[bool]string{true: fmt.Sprintf(", and %s has been placed on your head", iskShort(bounty))}[bounty > 0]))
+	m.ceoLog(ctx, c, powerProduction, "kit.theft", t.CharID, t.Value,
+		"%s — set them hostile%s and barred them",
+		t.Log, map[bool]string{true: ", put " + iskShort(bounty) + " on their head"}[bounty > 0])
+	// The bar takes its war-chest take back now, not at the next arm pass.
+	if seat, ok := armOf(t.CharID, c.CorpID); ok && seat.Arm != "" {
+		if row, err := m.readMemberRoleRow(ctx, t.CharID); err == nil {
+			if err := m.setMemberRoles(ctx, t.CharID, row.Corprole); err != nil {
+				rlogf("rolebots: theft roles %d: %v", t.CharID, err)
+			}
+		}
+	}
 }
 
 // reconcileBotIssues settles bot loans that can no longer come home on their own: a pilot

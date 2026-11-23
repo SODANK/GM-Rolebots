@@ -358,7 +358,18 @@ func (m *Mod) setMemberRoles(ctx context.Context, charID int64, roles uint64) er
 	}
 	roles = m.stripGuardedTake(ctx, corpID, charID, roles)
 	v := int64(roles)
-	if err := evedb.UpdateCorpMemberRow(ctx, m.db, charID, &evedb.CorpMemberUpdate{Roles: &v}); err != nil {
+	u := &evedb.CorpMemberUpdate{Roles: &v}
+	// The client's role window shows hangar and container bits only per location, so what the
+	// corporation grants everywhere is mirrored into the HQ, Base and Other columns.
+	if row, err := m.readMemberRoleRow(ctx, charID); err == nil {
+		was := [3]uint64{row.AtHQ, row.AtBase, row.AtOther}
+		cols := mirrorLocationRoles(row.Corprole, roles, was)
+		if cols != was {
+			hq, base, other := int64(cols[0]), int64(cols[1]), int64(cols[2])
+			u.RolesAtHQ, u.RolesAtBase, u.RolesAtOther = &hq, &base, &other
+		}
+	}
+	if err := evedb.UpdateCorpMemberRow(ctx, m.db, charID, u); err != nil {
 		return err
 	}
 	if tc != nil {

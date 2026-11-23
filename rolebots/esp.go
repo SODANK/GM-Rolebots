@@ -130,6 +130,7 @@ func (m *Mod) registerESP() {
 	esp.CorpOverviewSections = append(esp.CorpOverviewSections,
 		esp.CorpOverviewSection{Order: 10, Render: m.renderCorpOverview})
 	esp.OfficeDepositHook = m.onOfficeDeposit
+	esp.OfficeTakeHook = m.onOfficeTake
 	// A Base a human set in the corp window is final for the posting pass
 	// (corpposting.go).
 	esp.MemberBaseChangedHook = m.onMemberBaseChanged

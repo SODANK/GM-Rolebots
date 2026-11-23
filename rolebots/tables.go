@@ -1557,6 +1557,26 @@ func ensureTables(ctx context.Context, db *sql.DB) error {
 			untilAt       BIGINT NOT NULL DEFAULT 0,
 			PRIMARY KEY (corporationID, characterID)
 		)`,
+		// What a capsuleer took from a war-chest division, by type (corpsignout.go). qty is what is
+		// still out; status is open, returned, lost or stolen.
+		`CREATE TABLE IF NOT EXISTS rolebot_corp_signout (
+			signoutID     BIGINT NOT NULL AUTO_INCREMENT,
+			corporationID BIGINT NOT NULL,
+			characterID   BIGINT NOT NULL,
+			stationID     BIGINT NOT NULL DEFAULT 0,
+			division      INT NOT NULL DEFAULT 0,
+			typeID        BIGINT NOT NULL,
+			taken         BIGINT NOT NULL DEFAULT 0,
+			qty           BIGINT NOT NULL DEFAULT 0,
+			unitValue     DOUBLE NOT NULL DEFAULT 0,
+			takenAt       BIGINT NOT NULL DEFAULT 0,
+			warnedAt      BIGINT NOT NULL DEFAULT 0,
+			lastKillID    BIGINT NOT NULL DEFAULT 0,
+			status        VARCHAR(8) NOT NULL DEFAULT 'open',
+			closedAt      BIGINT NOT NULL DEFAULT 0,
+			PRIMARY KEY (signoutID),
+			KEY idx_signout_open (corporationID, status, characterID, typeID)
+		)`,
 		`CREATE TABLE IF NOT EXISTS rolebot_corp_base_roles (
 			characterID   BIGINT NOT NULL,
 			corporationID BIGINT NOT NULL,

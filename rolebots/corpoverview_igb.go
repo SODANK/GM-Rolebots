@@ -112,7 +112,8 @@ func (m *Mod) writeYourPlace(ctx context.Context, b *strings.Builder, pg igbPage
 			who.WriteString(igbF3(" &mdash; you head it"))
 		}
 		who.WriteString("<br>")
-		if roles := armRoleShort(armRoles(me.Arm, me.Tier, false)); roles != "" {
+		atBase := me.Tier != armTierHead && m.baseRolesActive(ctx) && m.memberBaseID(ctx, me.CharID) != 0
+		if roles := armGrantShort(m.corpDivs(ctx, pr.CorpID), me.Arm, me.Tier, atBase); roles != "" {
 			who.WriteString(pg.soft("Your department gives you: "+esp.IGBText(roles)) + "<br>")
 		}
 	default:
@@ -302,7 +303,7 @@ func (m *Mod) deptCard(ctx context.Context, pg igbPage, pr *portalRoster, a corp
 
 	// What it opens.
 	opens := pg.soft("no corporation roles")
-	if r := armRoleShort(armRoles(a, armTierMember, false)); r != "" {
+	if r := armGrantShort(m.corpDivs(ctx, pr.CorpID), a, armTierMember, m.baseRolesActive(ctx)); r != "" {
 		opens = pg.soft(esp.IGBText(r))
 	} else if a == armHR || a == armFinance {
 		opens = pg.soft("officer roles, for its officers")

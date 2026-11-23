@@ -21,8 +21,9 @@ import (
 // 160 call sites. A profile adds the war chest: the Armory (doctrine kits), the
 // Fleet Yard (barges and industrials lent for a mining op) and Spoils (loot
 // handed in), each borrowed per corporation from a desk division it does not use
-// and stored in rolebot_corp_divisions. Nothing is borrowed from 6 and 7. Humans
-// never hold take on a war-chest division (guardedTakeBits); they may look.
+// and stored in rolebot_corp_divisions. Nothing is borrowed from 6 and 7. A human
+// holds take on a war-chest division only when its own department owns it
+// (humanGuardedTake); what it takes is signed out to it (corpsignout.go).
 // See docs/comment-notes-b04.md#war-chest-divisions.
 
 type divPurpose string
@@ -602,20 +603,54 @@ func (m *Mod) nameWarChestDivisions(ctx context.Context, corpID int64, corpName 
 	}
 }
 
-// stripGuardedTake removes the war-chest take bits from a human member's roles.
+// stripGuardedTake removes the war-chest take bits a human member may not hold.
 // Bots keep theirs: the quartermaster is a bot. Every module role write passes
 // through here (setMemberRoles, applyBaseRoles).
 func (m *Mod) stripGuardedTake(ctx context.Context, corpID, charID int64, roles uint64) uint64 {
 	if corpID == 0 || m.isSynthetic(charID) {
 		return roles
 	}
-	return roles &^ m.corpDivs(ctx, corpID).guardedTakeBits()
+	return roles &^ m.humanGuardedTake(ctx, corpID, charID)
+}
+
+// humanGuardedTake is the war-chest take bits a human member of corpID may not
+// hold: every war-chest division except those its own department owns
+// (Security the Armory, Mining the Fleet Yard, Sales the Spoils). A member the
+// corporation barred for theft loses that exemption. What a member takes from
+// the war chest is signed out to them (corpsignout.go).
+func (m *Mod) humanGuardedTake(ctx context.Context, corpID, charID int64) uint64 {
+	p := m.corpDivs(ctx, corpID)
+	guarded := p.guardedTakeBits()
+	if guarded == 0 {
+		return 0
+	}
+	seat, ok := armOf(charID, corpID)
+	if !ok {
+		return guarded
+	}
+	own := ownedTakeBits(p, seat.Arm) & guarded
+	if own == 0 {
+		return guarded
+	}
+	if barred, why := m.kitBarred(ctx, corpID, charID); barred && why == "theft" {
+		return guarded
+	}
+	return guarded &^ own
+}
+
+// ownedTakeBits is the take bits of every division an arm owns. Pure.
+func ownedTakeBits(p *divProfile, a corpArm) uint64 {
+	var bits uint64
+	for _, d := range armDivisions(p, a) {
+		bits |= divTakeBit(d)
+	}
+	return bits
 }
 
 // corpRoleFilter is the core's role filter (db.CorpRoleFilter): every
 // effective-role read strips a human member's take on the war chest of a
-// bot-run corporation, so a role a human Director granted themselves, or a title
-// carrying one, does not open the Armory.
+// bot-run corporation outside its own department, so a role a human Director
+// granted themselves, or a title carrying one, does not open the Armory.
 func (m *Mod) corpRoleFilter(corpID, charID int64, roles uint64) uint64 {
 	if corpID == 0 || charID == 0 || !divisionProfilesOn.Load() {
 		return roles
@@ -628,5 +663,5 @@ func (m *Mod) corpRoleFilter(corpID, charID int64, roles uint64) uint64 {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	return roles &^ m.corpDivs(ctx, corpID).guardedTakeBits()
+	return roles &^ m.humanGuardedTake(ctx, corpID, charID)
 }

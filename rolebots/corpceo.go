@@ -1047,6 +1047,8 @@ func (m *Mod) ceoThink(ctx context.Context, c *corpCEO) error {
 	// The Armory and Fleet Yard (corparmory.go): kits for the doctrine's seats
 	// and the mining op's hauler, bought through the requisition desk.
 	run(powerProduction, func() error { return m.quartermasterChore(ctx, c, ch, facts) })
+	// What capsuleers took from the war chest: back, lost, or stolen (corpsignout.go).
+	run(powerProduction, func() error { return m.signoutChore(ctx, c) })
 	// Last: what the owners are paid comes out of what every other power left.
 	run(powerShares, func() error { return m.ceoShares(ctx, c, ch, review) })
 
