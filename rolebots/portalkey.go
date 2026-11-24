@@ -44,10 +44,11 @@ func (m *Mod) loadPortalKeySettings(ctx context.Context) {
 }
 
 var (
-	errPortalNoKey     = errors.New("you have no portal key yet — request one and it is mailed to you")
-	errPortalBadKey    = errors.New("that key is not right")
-	errPortalKeyLocked = errors.New("too many wrong keys: your key is locked for a while")
-	errPortalKeyCorp   = errors.New("that key was issued in another corporation — request a new one")
+	errPortalNoKey      = errors.New("you have no portal key yet — request one and it is mailed to you")
+	errPortalBadKey     = errors.New("that key is not right")
+	errPortalKeyLocked  = errors.New("too many wrong keys: your key is locked for a while")
+	errPortalKeyCorp    = errors.New("that key was issued in another corporation — request a new one")
+	errPortalNotOfficer = errors.New("a portal key is issued only to the CEO and the Directors of the corporation")
 )
 
 // newPortalKey draws CORP-XXXX-XXXX-XXXX.
@@ -84,6 +85,10 @@ func hashPortalKey(k string) string {
 func (m *Mod) issuePortalKey(ctx context.Context, charID, corpID int64) (string, error) {
 	if charID <= 0 || corpID <= 0 {
 		return "", fmt.Errorf("no pilot")
+	}
+	// The key opens the Management desk, which is the CEO's and the Directors' alone.
+	if !m.memberRankIn(ctx, corpID, charID).Director {
+		return "", errPortalNotOfficer
 	}
 	key, err := newPortalKey()
 	if err != nil {
@@ -151,6 +156,9 @@ func (m *Mod) verifyPortalKey(ctx context.Context, charID, corpID int64, key str
 func (m *Mod) mailPortalKey(ctx context.Context, charID, corpID int64) string {
 	key, err := m.issuePortalKey(ctx, charID, corpID)
 	if err != nil {
+		if errors.Is(err, errPortalNotOfficer) {
+			return "Request refused: " + err.Error() + "."
+		}
 		rlogf("rolebots: portal key for %d: %v", charID, err)
 		return "The key could not be issued. Try again shortly."
 	}

@@ -124,15 +124,6 @@ func (m *Mod) commandScopeErr(ctx context.Context, corpID, charID int64) (comman
 	return s, nil
 }
 
-// managementVisible is the Management tab's own test (esp.CorpPortalSection.Visible): the CEO and
-// the Directors, people only.
-func (m *Mod) managementVisible(ctx context.Context, corpID, charID int64) bool {
-	if !m.seatedByPerson(ctx, charID) {
-		return false
-	}
-	return m.memberRankIn(ctx, corpID, charID).Director
-}
-
 // seatedByPerson reports whether a person sits at this character: not a rolebot, or a roster
 // character the operator switched off (enabled = 0) and took over to play (personSeat). isSynthetic counts
 // the latter as a bot, which would lock its human out of their own corporation's Management.

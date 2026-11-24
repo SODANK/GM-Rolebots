@@ -91,10 +91,9 @@ func (m *Mod) registerESP() {
 	// The desk pages are sections of the core's Corporate Portal (/corp/). The /ig/
 	// addresses stay registered with the same handlers because sent letters carry them.
 	esp.CorpPortalSections = append(esp.CorpPortalSections,
-		// The desk of a human CEO and the division heads (corpmanage_igb.go), beside Overview and in
-		// nobody else's menu.
-		esp.CorpPortalSection{Key: "management", Label: "Management", Path: managePath, Order: 1, Handler: m.handleIGBCorpManagement,
-			Visible: m.managementVisible},
+		// The desk of a human CEO and the division heads (corpmanage_igb.go), beside Overview. Every
+		// member sees the tab; only the CEO and Directors are issued the key that opens the desk.
+		esp.CorpPortalSection{Key: "management", Label: "Management", Path: managePath, Order: 1, Handler: m.handleIGBCorpManagement},
 		esp.CorpPortalSection{Key: "bulletins", Label: "Bulletins", Path: "/corp/bulletins", Order: 2, Handler: m.handleIGBCorpNews},
 		// The job board (corpassign_igb.go): work the departments post for a pilot to take.
 		esp.CorpPortalSection{Key: "assignments", Label: "Assignments", Path: assignBoardPortalPath, Order: 2, Handler: m.handleIGBCorpAssignments},
