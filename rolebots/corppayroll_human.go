@@ -149,7 +149,7 @@ func (m *Mod) chairPayroll(ctx context.Context, c *corpCEO, heads map[corpArm]co
 		return
 	}
 	issuer, office := c.CharID, "Treasury"
-	if h, ok := heads[armFinance]; ok && m.isSynthetic(h.CharID) && !popIsOffline(h.CharID) {
+	if h, ok := heads[armFinance]; ok && m.botFlown(h.CharID) && !popIsOffline(h.CharID) {
 		issuer, office = h.CharID, "head of Finance"
 	}
 	if n, total := m.treasuryPayroll(ctx, c.CorpID, issuer, office); n > 0 {

@@ -117,7 +117,7 @@ func (m *Mod) humanChairDesks(ctx context.Context, corpID int64) {
 	m.chairBoards(ctx, c, ch)
 	for _, a := range armOrder {
 		h, ok := heads[a]
-		if !ok || ctx.Err() != nil || !m.isSynthetic(h.CharID) || popIsOffline(h.CharID) {
+		if !ok || ctx.Err() != nil || !m.botFlown(h.CharID) || popIsOffline(h.CharID) {
 			continue
 		}
 		hc := humanChairCEO(corpID, h.CharID)
@@ -144,7 +144,7 @@ func leftoverCutoff(heads map[corpArm]corpHead, bot func(int64) bool, now int64)
 // this wallet pays cash for what its own chair and heads ask for. What a pilot already has in hand
 // runs its course.
 func (m *Mod) chairLeftovers(ctx context.Context, c *corpCEO, heads map[corpArm]corpHead) {
-	cutoff := leftoverCutoff(heads, m.isSynthetic, clock.Unix())
+	cutoff := leftoverCutoff(heads, m.botFlown, clock.Unix())
 	if ws, err := m.queryWork(ctx, `
 		WHERE corporationID = ? AND status = 'open' AND source <> 'human' AND reqID = 0 AND postedAt < ?`, c.CorpID, cutoff); err == nil {
 		for _, w := range ws {
@@ -367,10 +367,10 @@ func (m *Mod) chairSeatActivities(ctx context.Context, corpID int64) []string {
 	}
 	heads := m.corpHeads(ctx, corpID)
 	var out []string
-	if h, ok := heads[armMining]; ok && m.isSynthetic(h.CharID) {
+	if h, ok := heads[armMining]; ok && m.botFlown(h.CharID) {
 		out = append(out, ActMining)
 	}
-	if h, ok := heads[armSecurity]; ok && m.isSynthetic(h.CharID) {
+	if h, ok := heads[armSecurity]; ok && m.botFlown(h.CharID) {
 		out = append(out, ActCombat, ActSecurity)
 	}
 	return out

@@ -67,7 +67,8 @@ func humanChairCorpIDs() []int64 {
 }
 
 // refreshHumanChairIndex rebuilds the index: player corporations whose CEO is a person and which
-// have an active bot on the books.
+// have an active bot on the books. A person is whoever seatedByPerson says is one, the same test the
+// Management page opens on: a CEO whose own roster row is switched off is played by its human.
 func (m *Mod) refreshHumanChairIndex(ctx context.Context) {
 	rows, err := m.db.QueryContext(ctx, `
 		SELECT co.corporationID, co.ceoID
@@ -75,7 +76,7 @@ func (m *Mod) refreshHumanChairIndex(ctx context.Context) {
 		  JOIN character_ cc ON cc.characterID = co.ceoID AND cc.accountID > 0
 		  LEFT JOIN rolebot_characters rb ON rb.characterID = co.ceoID
 		  LEFT JOIN crpNPCCorporations n ON n.corporationID = co.corporationID
-		 WHERE n.corporationID IS NULL AND rb.characterID IS NULL AND COALESCE(co.deleted, 0) = 0
+		 WHERE n.corporationID IS NULL AND COALESCE(rb.enabled, 0) = 0 AND COALESCE(co.deleted, 0) = 0
 		   AND EXISTS (SELECT 1 FROM character_ ch
 		                 JOIN rolebot_characters b ON b.characterID = ch.characterID AND b.enabled = 1
 		                WHERE ch.corporationID = co.corporationID)`)
@@ -95,9 +96,9 @@ func (m *Mod) refreshHumanChairIndex(ctx context.Context) {
 		return
 	}
 	for corpID, ceoID := range idx {
-		// A generated pilot off the roster is still a bot, and a bot CEO's
+		// A generated pilot is still a bot, switched off or off the roster, and a bot CEO's
 		// corporation is managed, not chaired.
-		if _, managed := managedCEO(corpID); managed || m.isSynthetic(ceoID) {
+		if _, managed := managedCEO(corpID); managed || !m.seatedByPerson(ctx, ceoID) {
 			delete(idx, corpID)
 		}
 	}

@@ -1042,7 +1042,8 @@ func (m *Mod) formFleetAround(ctx context.Context, seat fcSeat, order *fleetOrde
 			}
 			// Some Security or Mercenary patrols hold a gate instead of sweeping belts (camp.go): a
 			// checkpoint, by the share the dial sets.
-			if activity == ActSecurity && !seat.pack && checkpointOn() &&
+			// A fleet the chair sent somewhere goes there instead.
+			if order == nil && activity == ActSecurity && !seat.pack && checkpointOn() &&
 				checkpointDoctrine(m.corpDoctrineFor(ctx, seat.corpID)) &&
 				rand.Float64() < dialCheckpointShare.Get() {
 				gs.Focus = gangFocusCheckpoint
@@ -1067,6 +1068,9 @@ func (m *Mod) formFleetAround(ctx context.Context, seat fcSeat, order *fleetOrde
 					gs.OrderSystemID = order.SystemID
 					reliefName = order.SystemName
 				}
+			case order != nil && order.AreaID != 0:
+				// The chair gave a constellation or a region: the fleet sweeps inside it (gangSite).
+				gs.OrderID, gs.OrderAreaID = order.CommandID, order.AreaID
 			case (activity == ActCombat || activity == ActSecurity) && !seat.pack:
 				if sysID, sysName := m.pickReliefSystem(ctx, lb.CorpID, reliefScope); sysID != 0 {
 					gs.ReliefSystemID, gs.ReliefSystemName = sysID, sysName

@@ -50,7 +50,7 @@ func (p *mgPage) body(top string) string {
 			_, ok = humanChaired(p.corpID)
 		}
 		if !ok {
-			b.WriteString(p.pg.ordersBanner("No active bot flies for this corporation, so nobody will carry these orders out yet.", true))
+			b.WriteString(p.pg.ordersBanner(p.idleDeskReason(), true))
 		}
 	}
 	switch {
@@ -66,6 +66,26 @@ func (p *mgPage) body(top string) string {
 		p.writeHome(&b)
 	}
 	return b.String()
+}
+
+// idleDeskReason is why nobody works this corporation's orders: no active bot on the books, or a CEO
+// that is a bot nobody plays.
+func (p *mgPage) idleDeskReason() string {
+	var bots int64
+	err := p.m.db.QueryRowContext(p.ctx, `
+		SELECT COUNT(*) FROM character_ ch
+		  JOIN rolebot_characters b ON b.characterID = ch.characterID AND b.enabled = 1
+		 WHERE ch.corporationID = ?`, p.corpID).Scan(&bots)
+	switch {
+	case err != nil:
+		return "Nobody will carry these orders out yet."
+	case bots == 0:
+		return "No active bot flies for this corporation, so nobody will carry these orders out yet."
+	case p.ceoID != 0 && !p.m.seatedByPerson(p.ctx, p.ceoID):
+		return esp.IGBText(p.m.charNameOr(p.ctx, p.ceoID)) +
+			", the CEO, is a bot that does not run this corporation, so nobody will carry these orders out yet."
+	}
+	return "The corporation's bots have not taken up these orders yet. Try again in a minute."
 }
 
 // railCell is one stop of the rail: an icon over a label, lit when it is the page shown.
@@ -196,7 +216,7 @@ func (p *mgPage) divisionCard(a corpArm, pr *portalRoster, heads map[corpArm]cor
 	face, head := armIcon(a, p.corpID, 48), p.pg.soft("nobody heads it")
 	if id := p.headOf(a, pr, heads); id != 0 {
 		face = esp.Portrait(id, 64)
-		head = igbF3("<b>"+esp.IGBText(p.m.charNameOr(p.ctx, id))+"</b>") + " " + p.pg.dim(p.kindOf(id))
+		head = igbF3("<b>"+esp.IGBText(p.m.charNameOr(p.ctx, id))+"</b>") + " " + p.pg.dim(p.kindOf(id)) + p.headActions(a, heads)
 	} else if p.scope.CEO && !p.botCEO {
 		head += " " + igbF3(p.link(mgHeads, "appoint", "o", "head", "pre", "head", "pre_arm", string(a)))
 	}
@@ -210,9 +230,25 @@ func (p *mgPage) divisionCard(a corpArm, pr *portalRoster, heads map[corpArm]cor
 		Align: []string{"", ""}, Width: []string{"72", ""}, Rows: [][]string{{face, detail}}}
 }
 
+// headActions is the CEO's way to swap or stand down a division's head, drawn beside the head. "change"
+// opens the appointment for the division (naming another Director replaces the head); "stand down" files
+// the same order the Heads page does and previews it first. Only a human CEO appoints heads (a bot CEO
+// deals its own), and only an appointment can be stood down: a head the corporation's posts name is
+// not one. Empty for anybody else. Pure apart from the page's own state.
+func (p *mgPage) headActions(a corpArm, heads map[corpArm]corpHead) string {
+	if !p.scope.CEO || p.botCEO {
+		return ""
+	}
+	s := " " + igbF3(p.link(mgHeads, "change", "o", "head", "pre", "head", "pre_arm", string(a)))
+	if _, ok := heads[a]; ok {
+		s += " " + igbF3(p.link(mgHeads, "stand down", "form", "head", "arm", string(a), "member", ""))
+	}
+	return s
+}
+
 // kindOf says whether a member is a bot or a person.
 func (p *mgPage) kindOf(charID int64) string {
-	if p.m.isSynthetic(charID) {
+	if p.m.botFlown(charID) {
 		return "bot"
 	}
 	return "capsuleer"
@@ -222,7 +258,7 @@ func (p *mgPage) kindOf(charID int64) string {
 
 func (p *mgPage) writeDivision(b *strings.Builder, a corpArm) {
 	ctx, m := p.ctx, p.m
-	pr := m.portalRosterFor(ctx, p.corpID)
+	pr := p.people()
 	heads := m.corpHeads(ctx, p.corpID)
 	present, inSpace := onDuty(pr.ByArm[a])
 	open := 0
@@ -237,20 +273,28 @@ func (p *mgPage) writeDivision(b *strings.Builder, a corpArm) {
 	case headID == p.charID:
 		faceLine = p.pg.accent("You head it") + "<br>" + p.pg.soft("the CEO may overrule you")
 	case headID != 0:
-		faceLine = p.pg.accent(esp.IGBText(m.charNameOr(ctx, headID))) + "<br>" + p.pg.soft("heads it &middot; "+p.kindOf(headID))
+		faceLine = p.pg.accent(esp.IGBText(m.charNameOr(ctx, headID))) + "<br>" + p.pg.soft("heads it &middot; "+p.kindOf(headID)) +
+			p.headActions(a, heads)
 	}
 	line := armPurposeLine(a)
 	if path := armPagePath(a); path != "" {
 		line += ` <a href="` + esp.IGBHost() + path + `">Division page</a>`
 	}
 	p.masthead(b, armIcon(a, p.corpID, 48), armColor(a), esp.IGBText(armLabel(a)), line, headID, faceLine)
-	p.pg.statStrip(b, []igbStat{
+	stats := []igbStat{
 		{Label: "Members", Value: strconv.Itoa(len(pr.ByArm[a])), Note: fmt.Sprintf("%d on duty &middot; %d in space", present, inSpace)},
 		{Label: "Orders open", Value: strconv.Itoa(open)},
 		{Label: "Free to spend", Value: esp.ISKShort(m.chairFree(ctx, p.corpID)), Note: "ISK above the reserve"},
-	})
+	}
+	if a == armSecurity {
+		stats = append(stats, igbStat{Label: "Fleets out", Value: strconv.Itoa(len(armFleets(pr, a)))})
+	}
+	p.pg.statStrip(b, stats)
 	b.WriteString("<br>\n")
 
+	if a == armSecurity {
+		p.writeFleets(b, a)
+	}
 	p.writeTiles(b, a)
 	p.writeOrders(b, func(c corpCommand) bool { return corpArm(c.Arm) == a })
 	b.WriteString("<br>\n")
@@ -641,9 +685,9 @@ func (p *mgPage) writeBelts(b *strings.Builder) {
 		}
 		name := p.m.nameOfSystem(p.ctx, id)
 		t.Rows = append(t.Rows, []string{igbF3("<b>"+esp.IGBText(name)+"</b> ") + p.m.systemCell(p.ctx, id), igbF3(strings.Join([]string{
-			p.link(p.div, "send a fleet", "o", "fleet", "pre", "fleet", "pre_system", name),
-			p.link(p.div, "patrol", "o", "standing", "pre", "standing", "pre_system", name),
-			p.link(p.div, "post a job", "o", "assign", "pre", "assign", "pre_system", name)}, " &nbsp; "))})
+			p.link(p.div, "send a fleet", "o", "fleet", "pre", "fleet", "pre_place", name),
+			p.link(p.div, "patrol", "o", "standing", "pre", "standing", "pre_place", name),
+			p.link(p.div, "post a job", "o", "assign", "pre", "assign", "pre_place", name)}, " &nbsp; "))})
 	}
 	esp.PanelGrid(b, p.pg.pal, [][]esp.Panel{{t}})
 	b.WriteString("<br>\n")

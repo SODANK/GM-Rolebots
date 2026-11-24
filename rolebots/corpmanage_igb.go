@@ -123,6 +123,8 @@ type mgPage struct {
 	suggest []string
 	// previewing is set while a preview waits above to be confirmed.
 	previewing bool
+	// roster is the corporation's people (people), nil until a part of the page asks.
+	roster *portalRoster
 }
 
 // arm is the division the page is on, "" for none.

@@ -67,8 +67,8 @@ func (m *Mod) ceoStaffView(ctx context.Context, c *corpCEO) *ceoStaffViewData {
 
 	for _, o := range m.listFleetOrders(ctx, c.CorpID) {
 		target := strings.Join(o.OreNames, ", ")
-		if o.SystemID != 0 {
-			target = m.nameOfSystem(ctx, o.SystemID)
+		if o.Place() != 0 {
+			target = m.placeName(ctx, o.Place())
 		}
 		v.Orders = append(v.Orders, ceoOrderRow{
 			Dept: portfolioLabel(o.Dept), Target: target, Reason: o.Reason,

@@ -74,7 +74,7 @@ func (m *Mod) letterFrom(ctx context.Context, c *corpCEO, topic string) (int64, 
 		}
 	case mailFromIndustry:
 		if p, err := m.loadCorpPolicy(ctx, c.CorpID); err == nil && p.DirectorID != 0 &&
-			(p.DirectorID != c.CharID || human) && m.isSynthetic(p.DirectorID) {
+			(p.DirectorID != c.CharID || human) && m.botFlown(p.DirectorID) {
 			id, hat, ok = p.DirectorID, m.writerHat(ctx, p.DirectorID, corpIndustryDirector), true
 		}
 	}

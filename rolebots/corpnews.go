@@ -525,7 +525,7 @@ func (m *Mod) corpSnapshotFor(ctx context.Context, corpID, ceoID int64) corpSnap
 	}
 	now := clock.Unix()
 	if rows, err := m.db.QueryContext(ctx, `
-		SELECT activity, systemID, oreNames, reason FROM rolebot_corp_fleet_orders
+		SELECT activity, IF(systemID <> 0, systemID, areaID), oreNames, reason FROM rolebot_corp_fleet_orders
 		 WHERE corporationID = ? AND expiresAt > ? ORDER BY activity`, corpID, now); err == nil {
 		for rows.Next() {
 			var act, ores, why string
@@ -533,7 +533,7 @@ func (m *Mod) corpSnapshotFor(ctx context.Context, corpID, ceoID int64) corpSnap
 			if rows.Scan(&act, &sys, &ores, &why) != nil {
 				continue
 			}
-			s.FleetOrders = append(s.FleetOrders, fleetOrderText(act, m.nameOfSystem(ctx, sys), ores, why))
+			s.FleetOrders = append(s.FleetOrders, fleetOrderText(act, m.placeName(ctx, sys), ores, why))
 		}
 		rows.Close()
 	}

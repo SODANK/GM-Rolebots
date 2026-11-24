@@ -223,13 +223,13 @@ func (m *Mod) securityLadderPanel(ctx context.Context, pg igbPage, corpID int64)
 		p.Rows = append(p.Rows, []string{mark, name + "<br>" + pg.soft(esp.IGBText(rg.Detail))})
 		p.Shades = append(p.Shades, shade)
 	}
-	if o := m.corpFleetOrderFor(ctx, corpID, portSecurity); o != nil && o.SystemID != 0 {
+	if o := m.corpFleetOrderFor(ctx, corpID, portSecurity); o != nil && o.Place() != 0 {
 		who := "the Director of Security"
 		if o.Source == fleetOrderHuman {
 			who = "the chair"
 		}
 		p.Rows = append(p.Rows, []string{pg.dim3("Order"),
-			"The wing is sent to " + m.systemCell(ctx, o.SystemID) + "<br>" +
+			"The wing is sent to " + m.placeCell(ctx, o.Place()) + "<br>" +
 				pg.soft(esp.IGBText(o.Reason)) + "<br>" +
 				pg.dim(esp.IGBText(who)+" &middot; "+igbAgo(o.PostedAt))})
 	} else {
@@ -408,8 +408,8 @@ func (m *Mod) writeSecurityWars(ctx context.Context, b *strings.Builder, pg igbP
 	}
 	esp.PanelGrid(b, pg.pal, [][]esp.Panel{{p}})
 	if len(wars) > 0 {
-		if o := m.corpFleetOrderFor(ctx, corpID, portSecurity); o != nil && o.SystemID != 0 {
-			b.WriteString(pg.soft("The combat wing is ordered to ") + m.systemCell(ctx, o.SystemID) +
+		if o := m.corpFleetOrderFor(ctx, corpID, portSecurity); o != nil && o.Place() != 0 {
+			b.WriteString(pg.soft("The combat wing is ordered to ") + m.placeCell(ctx, o.Place()) +
 				pg.soft(` &mdash; x-up for a seat on <a href="`+esp.IGBHost()+`/corp/ops">Operations</a>.`) + "<br>\n")
 		}
 	}
@@ -625,7 +625,7 @@ func (m *Mod) securityPatrolPanel(ctx context.Context, pg igbPage, corpID, viewe
 		for _, a := range as {
 			line := fmt.Sprintf("Patrol: collect %d bounties", a.Qty)
 			if a.SystemID != 0 {
-				line += " around " + m.systemLabel(ctx, a.SystemID)
+				line += " around " + m.placeName(ctx, a.SystemID)
 			}
 			state := pg.tint(pg.pal.Amber, "offered") + " " + pg.soft("&mdash; the letter carries the link")
 			if a.Status == asAccepted {

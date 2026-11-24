@@ -26,7 +26,7 @@ var workPriorities = []struct {
 // divisionForms is the forms of the divisions, in the order a page draws them.
 func divisionForms() []mgForm {
 	return []mgForm{
-		{Form: "fleet", Icon: fleetTileIcon, Title: "Raise a fleet", Short: "pilots to a system, now", Arms: []corpArm{armMining, armSecurity},
+		{Form: "fleet", Icon: fleetTileIcon, Title: "Raise a fleet", Short: "pilots to a place, now", Arms: []corpArm{armMining, armSecurity},
 			Note:  "A commander of the corporation musters the fleet at their home station and takes it where you say.",
 			Write: writeFleetForm, Parse: parseFleetForm},
 		{Form: "standing", Icon: uiTile("07_07"), Title: "Standing order", Short: "what the fleets go for", Arms: []corpArm{armMining, armSecurity},
@@ -1068,8 +1068,8 @@ func writeAssignmentForm(p *mgPage, b *strings.Builder, a corpArm) {
 		}
 		switch k.v {
 		case assignPatrol:
-			b.WriteString(form + mgText("Kill", "qty", cur("qty"), 4, "pirates in") + mgText("", "system", cur("system"), 18, "") +
-				mgText("for", "reward", cur("reward"), 10, "ISK"))
+			b.WriteString(form + mgText("Kill", "qty", cur("qty"), 4, "pirates") + mgText("for", "reward", cur("reward"), 10, "ISK") + "<br><br>\n" +
+				p.placeLine("Where", cur("place")))
 		case assignDeliver:
 			off, ok := p.officeField("assign", "to division 1 at", "station")
 			if !ok {
@@ -1122,7 +1122,7 @@ func parseAssignmentForm(p *mgPage, a corpArm, hidden map[string]string) ([]corp
 			return no("A patrol is 1 to 100 kills.")
 		}
 		var bad string
-		if pay.SystemID, bad = p.systemField(); bad != "" {
+		if pay.SystemID, _, bad = p.placeField(); bad != "" {
 			return no(bad)
 		}
 	case assignDeliver:
@@ -1149,7 +1149,7 @@ func parseAssignmentForm(p *mgPage, a corpArm, hidden map[string]string) ([]corp
 	if why := p.m.afford(p.ctx, p.corpID, pay.Reward); why != "" {
 		return no(why)
 	}
-	p.keep(hidden, "what", "qty", "reward", "system", "item", "station", "work")
+	p.keep(hidden, "what", "qty", "reward", "place", "item", "station", "work")
 	c := corpCommand{Kind: cmdKindAssign, Payload: encodeCommandPayload(pay)}
 	sum, _ := c.boardSummary(p.m, p.ctx)
 	return one(c, igbF3("Post an assignment: <b>"+esp.IGBText(sum)+"</b>.")+"<br>"+

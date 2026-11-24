@@ -55,13 +55,13 @@ func (m *Mod) takeBoardCommand(ctx context.Context, c corpCommand) bool {
 	}
 	if s, ok := c.standing(); ok {
 		expires := clock.Unix() + int64(s.Hours)*3600
-		if err := m.postFleetOrder(ctx, corpFleetOrder{CorpID: c.CorpID, Dept: s.Dept, SystemID: s.SystemID, OreNames: splitOres(s.Ores),
+		if err := m.postFleetOrder(ctx, corpFleetOrder{CorpID: c.CorpID, Dept: s.Dept, SystemID: s.SystemID, AreaID: s.AreaID, OreNames: splitOres(s.Ores),
 			Reason: "ordered by " + who, PostedBy: c.PosterID, Source: fleetOrderHuman, ExpiresAt: expires}); err != nil {
 			m.commandRetry(ctx, c, "the order could not be posted")
 			return true
 		}
 		_ = m.claimCommand(ctx, c.CommandID, c.PosterID, "order", c.CorpID, "stands until "+igbWhen(expires))
-		m.humanLog(ctx, c.CorpID, c.PosterID, "standing", s.SystemID, 0, "%s gave a standing order: %s", who, c.Summary(m, ctx))
+		m.humanLog(ctx, c.CorpID, c.PosterID, "standing", s.SystemID+s.AreaID, 0, "%s gave a standing order: %s", who, c.Summary(m, ctx))
 		return true
 	}
 	p, ok := c.board()
@@ -369,7 +369,7 @@ func (m *Mod) followBoardCommand(ctx context.Context, c corpCommand) bool {
 			return true
 		}
 		if o := m.corpFleetOrderFor(ctx, c.CorpID, s.Dept); o == nil || o.PostedBy != c.PosterID || o.Source != fleetOrderHuman ||
-			o.SystemID != s.SystemID || strings.Join(o.OreNames, ",") != strings.Join(splitOres(s.Ores), ",") {
+			o.SystemID != s.SystemID || o.AreaID != s.AreaID || strings.Join(o.OreNames, ",") != strings.Join(splitOres(s.Ores), ",") {
 			_ = m.setCommandStatus(ctx, c.CommandID, cmdDone, "another order replaced it")
 			return true
 		}

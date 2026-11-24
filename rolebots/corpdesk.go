@@ -507,7 +507,7 @@ func (m *Mod) bulletinsBody(ctx context.Context, r *http.Request, corpID, ceoID,
 		Align: []string{"", ""}, Width: []string{"30", ""}, Empty: "None &mdash; fleets pick their own ground."}
 	for _, o := range m.listFleetOrders(ctx, corpID) {
 		orders.Rows = append(orders.Rows, []string{roleIcon(fleetOrderRole(o.Dept)),
-			igbF3(esp.IGBText(fleetOrderText(o.Dept, m.nameOfSystem(ctx, o.SystemID), strings.Join(o.OreNames, ", "), o.Reason)))})
+			igbF3(esp.IGBText(fleetOrderText(o.Dept, m.placeName(ctx, o.Place()), strings.Join(o.OreNames, ", "), o.Reason)))})
 	}
 	esp.PanelBand(&b, pg.pal, []esp.Panel{orders})
 	b.WriteString("<br>\n")

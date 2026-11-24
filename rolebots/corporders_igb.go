@@ -66,7 +66,12 @@ func writeFleetForm(p *mgPage, b *strings.Builder, a corpArm) {
 	for _, k := range kinds {
 		b.WriteString(selOpt(k.slug, k.label, p.cur("fleet", "activity", "") == k.slug))
 	}
-	b.WriteString(`</select> ` + mgText("to system:", "system", p.cur("fleet", "system", ""), 20, "") + `<br>`)
+	b.WriteString("</select><br><br>\n")
+	if a == armSecurity {
+		b.WriteString(p.placeLine("Where to", p.cur("fleet", "place", "")) + p.leaderLine(a, "fleet"))
+	} else {
+		b.WriteString(p.line("To system", "system", p.cur("fleet", "system", ""), 20, hintSystem, "system"))
+	}
 	b.WriteString(`<font size=3>Pilots: </font><select name="size">`)
 	size := p.cur("fleet", "size", "5")
 	for _, n := range fleetOrderSizes {
@@ -104,11 +109,16 @@ func parseFleetForm(p *mgPage, a corpArm, hidden map[string]string) ([]corpComma
 	if !ok {
 		return nil, "", "Pick the kind of fleet."
 	}
-	sysID, bad := p.systemField()
+	var place int64
+	var where, bad string
+	if a == armSecurity {
+		place, where, bad = p.placeField()
+	} else if place, bad = p.systemField(); bad == "" {
+		where = p.m.nameOfSystem(p.ctx, place)
+	}
 	if bad != "" {
 		return nil, "", bad
 	}
-	sysName := p.m.nameOfSystem(p.ctx, sysID)
 	size, _ := strconv.Atoi(p.q.Get("size"))
 	if size < gangMinMembers || size > 12 {
 		return nil, "", "A fleet is 3 to 12 pilots."
@@ -127,7 +137,18 @@ func parseFleetForm(p *mgPage, a corpArm, hidden map[string]string) ([]corpComma
 	if int64(open) >= humanFleetMaxOpen.Load() {
 		return nil, "", fmt.Sprintf("There are already %d fleet order(s) in hand — wait for one to finish or withdraw it.", open)
 	}
-	pay := cmdFleetPayload{Activity: act, SystemID: sysID, SystemName: sysName, Size: size, DurationMin: dur}
+	pay := cmdFleetPayload{Activity: act, SystemName: where, Size: size, DurationMin: dur}
+	pay.SystemID, pay.AreaID = splitPlace(place)
+	led := ""
+	if a == armSecurity {
+		l, bad := p.leaderField(a)
+		if bad != "" {
+			return nil, "", bad
+		}
+		if pay.LeaderID = l.CharID; l.CharID != 0 {
+			led = ", led by <b>" + esp.IGBText(l.Name) + "</b>" + fmt.Sprintf(" (Leadership %d)", l.Leadership)
+		}
+	}
 	if raw := p.q.Get("ore"); a == armMining && strings.TrimSpace(raw) != "" {
 		ids, names, bad := p.parseOres(raw)
 		if bad != "" {
@@ -135,18 +156,22 @@ func parseFleetForm(p *mgPage, a corpArm, hidden map[string]string) ([]corpComma
 		}
 		pay.Ores, pay.OreNames = ids, strings.Join(names, ",")
 	}
-	for _, k := range []string{"activity", "system", "size", "duration", "ore"} {
+	for _, k := range []string{"activity", "system", "place", "leader", "size", "duration", "ore"} {
 		hidden[k] = p.q.Get(k)
 	}
 	cmd := corpCommand{Kind: cmdKindFleet, Payload: encodeCommandPayload(pay), ExpiresAt: clock.Unix() + orderTTLHours.Load()*3600}
+	takes := "A commander with a hull for the seat"
+	if pay.LeaderID != 0 {
+		takes = esp.IGBText(p.m.charNameOr(p.ctx, pay.LeaderID))
+	}
 	dig := ""
 	if pay.OreNames != "" {
 		dig = ", digging " + esp.IGBText(strings.ReplaceAll(pay.OreNames, ",", ", "))
 	}
-	return []corpCommand{cmd}, igbF3(fmt.Sprintf("Raise a <b>%s</b> fleet of <b>%d</b> pilots to <b>%s</b> %s for <b>%s</b>%s.",
-		strings.ToLower(activityLabel(act)), size, esp.IGBText(sysName), p.m.systemCell(p.ctx, sysID), durationWords(dur), dig)) + "<br>" +
-		p.pg.dim3("A commander with a hull for the seat takes it up within a minute and musters at their home station. "+
-			"If nobody can, the order is retried and then refused with the reason.") + "<br><br>", ""
+	return []corpCommand{cmd}, igbF3(fmt.Sprintf("Raise a <b>%s</b> fleet of <b>%d</b> pilots to <b>%s</b> %s for <b>%s</b>%s%s.",
+		strings.ToLower(activityLabel(act)), size, esp.IGBText(where), p.placeNote(place), durationWords(dur), dig, led)) + "<br>" +
+		p.pg.dim3(takes+" takes it up within a minute and musters at their home station. "+
+			"If that cannot be done, the order is retried and then refused with the reason.") + "<br><br>", ""
 }
 
 // ── standing orders ─────────────────────────────────────────────────────────
@@ -156,7 +181,7 @@ func writeStandingForm(p *mgPage, b *strings.Builder, a corpArm) {
 	if a == armMining {
 		b.WriteString(mgText("Ores, best first:", "ore", p.cur("standing", "ore", ""), 36, "separate with commas") + `<br>`)
 	} else {
-		b.WriteString(mgText("Patrol:", "system", p.cur("standing", "system", ""), 20, "") + `<br>`)
+		b.WriteString(p.placeLine("Patrol", p.cur("standing", "place", "")))
 	}
 	b.WriteString(`<font size=3>for </font><select name="hours">`)
 	for _, h := range standingOrderHours {
@@ -183,14 +208,15 @@ func parseStandingForm(p *mgPage, a corpArm, hidden map[string]string) ([]corpCo
 		pay.Dept, pay.Ores = portOperations, strings.Join(names, ",")
 		line = "Mining fleets dig <b>" + esp.IGBText(strings.Join(names, ", ")) + "</b>"
 	} else {
-		sysID, bad := p.systemField()
+		place, where, bad := p.placeField()
 		if bad != "" {
 			return nil, "", bad
 		}
-		pay.Dept, pay.SystemID, pay.SystemName = portSecurity, sysID, p.m.nameOfSystem(p.ctx, sysID)
-		line = "The combat wing works <b>" + esp.IGBText(pay.SystemName) + "</b> " + p.m.systemCell(p.ctx, sysID)
+		pay.Dept, pay.SystemName = portSecurity, where
+		pay.SystemID, pay.AreaID = splitPlace(place)
+		line = "The combat wing works <b>" + esp.IGBText(where) + "</b> " + p.placeNote(place)
 	}
-	for _, k := range []string{"ore", "system", "hours"} {
+	for _, k := range []string{"ore", "place", "hours"} {
 		hidden[k] = p.q.Get(k)
 	}
 	return []corpCommand{{Kind: cmdKindStanding, Payload: encodeCommandPayload(pay)}},
@@ -289,11 +315,11 @@ func (m *Mod) withdrawCommand(ctx context.Context, c corpCommand, byID int64) st
 			}
 		}
 		if p, ok := c.fleet(); ok && c.Status != cmdPending {
-			m.clearFleetOrderOf(ctx, c.CorpID, deptForActivity(p.Activity), c.PosterID, p.SystemID, p.OreNames)
+			m.clearFleetOrderOf(ctx, c.CorpID, deptForActivity(p.Activity), c.PosterID, p.SystemID, p.AreaID, p.OreNames)
 		}
 	case cmdKindStanding:
 		if p, ok := c.standing(); ok && c.Status != cmdPending {
-			m.clearFleetOrderOf(ctx, c.CorpID, p.Dept, c.PosterID, p.SystemID, p.Ores)
+			m.clearFleetOrderOf(ctx, c.CorpID, p.Dept, c.PosterID, p.SystemID, p.AreaID, p.Ores)
 		}
 	case cmdKindDirective:
 		if c.Status != cmdPending {
@@ -324,11 +350,11 @@ func (m *Mod) withdrawCommand(ctx context.Context, c corpCommand, byID int64) st
 
 // clearFleetOrderOf withdraws a department's standing order if it is still this one: one that
 // replaced it stands.
-func (m *Mod) clearFleetOrderOf(ctx context.Context, corpID int64, dept string, postedBy, systemID int64, ores string) {
+func (m *Mod) clearFleetOrderOf(ctx context.Context, corpID int64, dept string, postedBy, systemID, areaID int64, ores string) {
 	_, _ = m.db.ExecContext(ctx, `
 		DELETE FROM rolebot_corp_fleet_orders
-		 WHERE corporationID = ? AND activity = ? AND postedBy = ? AND systemID = ? AND oreNames = ? AND source = 'human'`,
-		corpID, dept, postedBy, systemID, truncate(strings.Join(splitOres(ores), ","), 255))
+		 WHERE corporationID = ? AND activity = ? AND postedBy = ? AND systemID = ? AND areaID = ? AND oreNames = ? AND source = 'human'`,
+		corpID, dept, postedBy, systemID, areaID, truncate(strings.Join(splitOres(ores), ","), 255))
 }
 
 // withdrawWork takes a work order back. Jobs already in the lines are finished and paid: the order

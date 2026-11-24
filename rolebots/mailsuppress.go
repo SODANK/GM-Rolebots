@@ -152,7 +152,7 @@ func (m *Mod) personSeat(charID int64) bool {
 // mailSuppressed is the mail gate: a bot's mailbox is skipped, a person's is not, even when the
 // person plays a character that has a (switched off) roster row.
 func (m *Mod) mailSuppressed(charID int64) bool {
-	return m.isSynthetic(charID) && !m.personSeat(charID)
+	return m.botFlown(charID)
 }
 
 func loadBotMailboxes(db *sql.DB) (map[int64]struct{}, error) {

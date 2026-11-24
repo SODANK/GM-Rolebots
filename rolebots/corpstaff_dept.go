@@ -162,9 +162,11 @@ func warSurgeSeats(seats int, war bool, activities []string) int {
 
 // corpFleetOrder is a department's live standing order to its fleets.
 type corpFleetOrder struct {
-	CorpID    int64
-	Dept      string
-	SystemID  int64
+	CorpID   int64
+	Dept     string
+	SystemID int64
+	// AreaID is a constellation or region the chair gave in place of one system (corpplace.go).
+	AreaID    int64
 	OreNames  []string
 	Reason    string
 	PostedBy  int64
@@ -174,6 +176,14 @@ type corpFleetOrder struct {
 	// chair through the Corporate Portal (fleetOrderHuman). A human's order outranks the
 	// desk's while it stands: the desk neither overwrites nor clears it (corpcommanddesk.go).
 	Source string
+}
+
+// Place is where the order is for: its system, else its area, 0 for neither.
+func (o corpFleetOrder) Place() int64 {
+	if o.SystemID != 0 {
+		return o.SystemID
+	}
+	return o.AreaID
 }
 
 const (
@@ -197,20 +207,21 @@ func (m *Mod) postFleetOrder(ctx context.Context, o corpFleetOrder) error {
 	// from the new row only when the old is not a live human order or the new one is the chair's.
 	_, err := m.db.ExecContext(ctx, `
 		INSERT INTO rolebot_corp_fleet_orders
-			(corporationID, activity, systemID, oreNames, reason, postedBy, postedAt, expiresAt, source)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+			(corporationID, activity, systemID, areaID, oreNames, reason, postedBy, postedAt, expiresAt, source)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON DUPLICATE KEY UPDATE
 			postedAt = IF(source = 'human' AND expiresAt > ? AND VALUES(source) <> 'human', postedAt,
-			           IF(systemID <=> VALUES(systemID) AND oreNames <=> VALUES(oreNames), postedAt, VALUES(postedAt))),
+			           IF(systemID <=> VALUES(systemID) AND areaID <=> VALUES(areaID) AND oreNames <=> VALUES(oreNames), postedAt, VALUES(postedAt))),
 			systemID  = IF(source = 'human' AND expiresAt > ? AND VALUES(source) <> 'human', systemID, VALUES(systemID)),
+			areaID    = IF(source = 'human' AND expiresAt > ? AND VALUES(source) <> 'human', areaID, VALUES(areaID)),
 			oreNames  = IF(source = 'human' AND expiresAt > ? AND VALUES(source) <> 'human', oreNames, VALUES(oreNames)),
 			reason    = IF(source = 'human' AND expiresAt > ? AND VALUES(source) <> 'human', reason, VALUES(reason)),
 			postedBy  = IF(source = 'human' AND expiresAt > ? AND VALUES(source) <> 'human', postedBy, VALUES(postedBy)),
 			expiresAt = IF(source = 'human' AND expiresAt > ? AND VALUES(source) <> 'human', expiresAt, VALUES(expiresAt)),
 			source    = IF(source = 'human' AND expiresAt > ? AND VALUES(source) <> 'human', source, VALUES(source))`,
-		o.CorpID, o.Dept, o.SystemID, truncate(strings.Join(o.OreNames, ","), 255),
+		o.CorpID, o.Dept, o.SystemID, o.AreaID, truncate(strings.Join(o.OreNames, ","), 255),
 		truncate(o.Reason, 255), o.PostedBy, now, expires, o.Source,
-		now, now, now, now, now, now, now)
+		now, now, now, now, now, now, now, now)
 	if err == nil && fleetOrderIsNew(prev, o) {
 		goSafe("chatter corp order", func() {
 			cctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -231,7 +242,7 @@ func fleetOrderIsNew(prev *corpFleetOrder, o corpFleetOrder) bool {
 	if prev.Source == fleetOrderHuman && o.Source != fleetOrderHuman && prev.ExpiresAt > clock.Unix() {
 		return false
 	}
-	return prev.SystemID != o.SystemID || strings.Join(prev.OreNames, ",") != strings.Join(o.OreNames, ",")
+	return prev.SystemID != o.SystemID || prev.AreaID != o.AreaID || strings.Join(prev.OreNames, ",") != strings.Join(o.OreNames, ",")
 }
 
 // clearFleetOrder withdraws a desk's order. A standing human order is left
@@ -251,10 +262,10 @@ func (m *Mod) corpFleetOrderFor(ctx context.Context, corpID int64, dept string) 
 	var o corpFleetOrder
 	var ores string
 	err := m.db.QueryRowContext(ctx, `
-		SELECT systemID, oreNames, reason, postedBy, postedAt, expiresAt, source
+		SELECT systemID, areaID, oreNames, reason, postedBy, postedAt, expiresAt, source
 		  FROM rolebot_corp_fleet_orders
 		 WHERE corporationID = ? AND activity = ? AND expiresAt > ?`, corpID, dept, clock.Unix()).
-		Scan(&o.SystemID, &ores, &o.Reason, &o.PostedBy, &o.PostedAt, &o.ExpiresAt, &o.Source)
+		Scan(&o.SystemID, &o.AreaID, &ores, &o.Reason, &o.PostedBy, &o.PostedAt, &o.ExpiresAt, &o.Source)
 	if err != nil {
 		return nil
 	}
@@ -270,7 +281,7 @@ func (m *Mod) corpFleetOrderFor(ctx context.Context, corpID int64, dept string) 
 // listFleetOrders is every live order a corporation has out, for the panel.
 func (m *Mod) listFleetOrders(ctx context.Context, corpID int64) []corpFleetOrder {
 	rows, err := m.db.QueryContext(ctx, `
-		SELECT activity, systemID, oreNames, reason, postedBy, postedAt, expiresAt, source
+		SELECT activity, systemID, areaID, oreNames, reason, postedBy, postedAt, expiresAt, source
 		  FROM rolebot_corp_fleet_orders WHERE corporationID = ? AND expiresAt > ?
 		 ORDER BY activity`, corpID, clock.Unix())
 	if err != nil {
@@ -281,7 +292,7 @@ func (m *Mod) listFleetOrders(ctx context.Context, corpID int64) []corpFleetOrde
 	for rows.Next() {
 		var o corpFleetOrder
 		var ores string
-		if rows.Scan(&o.Dept, &o.SystemID, &ores, &o.Reason, &o.PostedBy, &o.PostedAt, &o.ExpiresAt, &o.Source) == nil {
+		if rows.Scan(&o.Dept, &o.SystemID, &o.AreaID, &ores, &o.Reason, &o.PostedBy, &o.PostedAt, &o.ExpiresAt, &o.Source) == nil {
 			o.CorpID = corpID
 			if ores != "" {
 				o.OreNames = strings.Split(ores, ",")

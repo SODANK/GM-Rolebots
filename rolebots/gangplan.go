@@ -2117,14 +2117,63 @@ func (m *Mod) gangSite(ctx context.Context, b *botRun, g *Gang, cfg combatConfig
 		}
 	}
 
+	// A constellation or region the chair sent this fleet to, or gave the whole wing: the nearest
+	// system of it worth a sweep, a distressed one first, then the next. The chair's word is not held
+	// to the fleet's home regions, only to its security floor and what it can win.
+	o := m.corpFleetOrderFor(ctx, g.CorpID, portSecurity)
+	area := gs.OrderAreaID
+	if area == 0 && gs.OrderID == 0 && o != nil {
+		area = o.AreaID
+	}
+	if area != 0 {
+		next := func(skip map[int64]bool) int64 {
+			return u.areaSystem(b.SystemID, area, r.SecFloor, func(sysID int64) bool {
+				ms := u.meta[sysID]
+				return !skip[sysID] && ms.Security >= cfg.SecMin && u.hasBelts(ctx, m.db, sysID) &&
+					(!powerKnown || !hopeless(threatMargin(packDPS, packEHP, m.spawnThreatFor(ctx, ms.RegionID, ms.Security))))
+			}, func(sysID int64) bool { return distress[sysID] })
+		}
+		sysID, again := next(recent), false
+		if sysID == 0 && len(gs.HuntRecent) > 0 {
+			// Every system of it has just been swept: the round starts over.
+			sysID, again = next(map[int64]bool{gs.HuntSystemID: true}), true
+		}
+		if sysID != 0 {
+			v, err := pick(objOrder, sysID, func(st *GangState) {
+				st.OrderSystemID = sysID
+				if again {
+					st.HuntRecent = nil
+				}
+			})
+			if err != nil {
+				return nil, err
+			}
+			if v == objRefuse || v == objSame {
+				return kept()
+			}
+			m.logBot(b.CharID, logInfo, "gang", "gang %q works the %s as ordered — sweeping %s",
+				g.Name, m.placeName(ctx, area), gs.HuntSystemName)
+			return gs, nil
+		}
+		// Nowhere else in it: the neighbours of the same region until the one it swept is worth another.
+		if home := u.areaRegion(area); len(r.Regions) > 0 && u.meta[b.SystemID].RegionID == home {
+			wide := map[int64]bool{home: true}
+			for id := range r.Regions {
+				wide[id] = true
+			}
+			r.Regions = wide
+		}
+	}
+
 	// The Director of Security's standing order (corpstaff_dept.go): the war enemy's system or
-	// a belt its miners are run off. Taken on the relief stamp's terms, else ignored.
-	if o := m.corpFleetOrderFor(ctx, g.CorpID, portSecurity); o != nil && o.SystemID != 0 &&
+	// a belt its miners are run off. Taken on the relief stamp's terms, else ignored. A fleet with an
+	// area of its own keeps to it.
+	if o != nil && o.SystemID != 0 && gs.OrderAreaID == 0 &&
 		o.SystemID != gs.HuntSystemID && !recent[o.SystemID] {
 		ms := u.meta[o.SystemID]
 		// A war order is the one exception to the no-march rule: the corporation paid CONCORD to
-		// fight that enemy, wherever it works.
-		inBand := r.Regions == nil || r.Regions[ms.RegionID] ||
+		// fight that enemy, wherever it works. The chair's order is another.
+		inBand := r.Regions == nil || r.Regions[ms.RegionID] || o.Source == fleetOrderHuman ||
 			(warEverywhere() && relWarEnemySystem(g.CorpID, o.SystemID))
 		if inBand && ms.Security >= cfg.SecMin && ms.Security <= 1.0 &&
 			(!powerKnown || !hopeless(threatMargin(packDPS, packEHP,

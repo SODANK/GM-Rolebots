@@ -136,6 +136,8 @@ func setRolebotEnabled(ctx context.Context, db *sql.DB, charID int64, enabled bo
 		return fmt.Errorf("setRolebotEnabled: %w", err)
 	}
 	rosterCacheInvalidate() // the roster's membership changed (rostercache.go)
+	// Switching a pilot off hands it to its person (personSeat), switching it on takes it back.
+	invalidateBotMailboxes()
 	if n, _ := res.RowsAffected(); n == 0 {
 		var one int64
 		if err := db.QueryRowContext(ctx,

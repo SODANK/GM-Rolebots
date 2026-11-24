@@ -157,8 +157,11 @@ type GangState struct {
 	ReliefSystemName string `json:"reliefSystemName,omitempty"`
 	// A department head's standing order the fleet is working (corpstaff_dept.go):
 	// the ordered hunt system or ores. The CEO page shows which fleets took orders.
-	OrderSystemID int64  `json:"orderSystemID,omitempty"`
-	OrderOres     string `json:"orderOres,omitempty"`
+	OrderSystemID int64 `json:"orderSystemID,omitempty"`
+	// OrderAreaID is the constellation or region the chair sent this fleet to (corpplace.go): it
+	// sweeps inside it, one system after another.
+	OrderAreaID int64  `json:"orderAreaID,omitempty"`
+	OrderOres   string `json:"orderOres,omitempty"`
 	// A Director's order from fleet chat (fleetmirror_orders.go): the system the op
 	// is pinned to, which the mining site picker prefers, and a counter each
 	// re-siting bumps so a member mid-cycle re-plans (gangStep).

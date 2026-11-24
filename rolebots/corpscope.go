@@ -6,6 +6,7 @@ import (
 	"errors"
 
 	"gurimoon/corp"
+	evedb "gurimoon/db"
 )
 
 // Who may order what on the Management page. The CEO commands every division; a division head
@@ -79,7 +80,18 @@ func (m *Mod) memberRankErr(ctx context.Context, corpID, charID int64) (memberRa
 	}
 	r.Member = true
 	r.CEO = ceo == charID
-	r.Director = r.CEO || (roles.Valid && holdsDirector(roles.V))
+	if r.CEO {
+		r.Director = true
+		return r, nil
+	}
+	// A Director is whoever holds the role, on the member row or through a title (crpTitles): the
+	// same union every other role gate reads (evedb.AddTitleRoles). Reading corprole alone locked a
+	// human whose Director came from a title out of Management, in any corporation.
+	info := evedb.CorpMemberInfo{Corprole: roles.V}
+	if err := evedb.AddTitleRoles(ctx, m.db, charID, &info); err != nil {
+		return r, err
+	}
+	r.Director = holdsDirector(info.Corprole)
 	return r, nil
 }
 
@@ -132,6 +144,21 @@ func (m *Mod) seatedByPerson(_ context.Context, charID int64) bool {
 		return false
 	}
 	return !m.isSynthetic(charID) || m.personSeat(charID)
+}
+
+// botFlown reports whether the module flies this pilot: a rolebot nobody plays. isSynthetic also counts
+// the roster pilot its person took over.
+func (m *Mod) botFlown(charID int64) bool {
+	return m.isSynthetic(charID) && !m.personSeat(charID)
+}
+
+// asSeated is a member as whoever sits at it: a switched-off roster pilot its person plays is a
+// capsuleer (Human, Eligible), not a bot out of service.
+func (m *Mod) asSeated(cm corpMember) corpMember {
+	if cm.OnRoster && !cm.Enabled && m.personSeat(cm.CharID) {
+		cm.OnRoster = false
+	}
+	return cm
 }
 
 // mayCancelCommand reports whether a pilot may withdraw an order: the CEO any of them, a head its

@@ -243,8 +243,10 @@ func (m *Mod) commandFollow(ctx context.Context, c corpCommand) {
 // fleetOrderSpec is what a fleet order hands the formation code: the fleet
 // the chair asked for instead of the one the seat would have raised.
 type fleetOrderSpec struct {
-	CommandID  int64
-	SystemID   int64
+	CommandID int64
+	SystemID  int64
+	// AreaID is the constellation or region the chair sent it to, in place of one system.
+	AreaID     int64
 	SystemName string
 	Size       int
 	LifeSec    int64
@@ -275,13 +277,20 @@ func (m *Mod) takeFleetCommand(ctx context.Context, c corpCommand) {
 		_ = m.setCommandStatus(ctx, c.CommandID, cmdRefused, "the order could not be read")
 		return
 	}
-	seat, why := m.pickOrderCommander(ctx, c.CorpID, p.Activity)
+	var seat fcSeat
+	var why string
+	if p.LeaderID != 0 {
+		// The chair named the commander: nobody else is tried.
+		seat, why = m.leaderSeat(ctx, c.CorpID, p.LeaderID, p.Activity)
+	} else {
+		seat, why = m.pickOrderCommander(ctx, c.CorpID, p.Activity)
+	}
 	if why != "" {
 		m.commandRetry(ctx, c, why)
 		return
 	}
 	spec := &fleetOrderSpec{
-		CommandID: c.CommandID, SystemID: p.SystemID, SystemName: p.SystemName,
+		CommandID: c.CommandID, SystemID: p.SystemID, AreaID: p.AreaID, SystemName: p.SystemName,
 		Size: p.Size, LifeSec: int64(p.DurationMin) * 60, OreNames: p.OreNames,
 	}
 	if len(p.Ores) > 0 {
@@ -293,6 +302,9 @@ func (m *Mod) takeFleetCommand(ctx context.Context, c corpCommand) {
 		return
 	}
 	if !formed {
+		if p.LeaderID != 0 {
+			refusal = m.charNameOr(ctx, p.LeaderID) + " could not raise it: " + refusal
+		}
 		m.commandRetry(ctx, c, refusal)
 		return
 	}
@@ -307,7 +319,7 @@ func (m *Mod) takeFleetCommand(ctx context.Context, c corpCommand) {
 	// The standing order beside it, so sibling fleets of the same kind steer
 	// the same way (gangplan.go reads it), and the desks leave it alone.
 	_ = m.postFleetOrder(ctx, corpFleetOrder{
-		CorpID: c.CorpID, Dept: deptForActivity(p.Activity), SystemID: p.SystemID,
+		CorpID: c.CorpID, Dept: deptForActivity(p.Activity), SystemID: p.SystemID, AreaID: p.AreaID,
 		OreNames: splitOres(p.OreNames), Reason: "ordered by " + poster, PostedBy: c.PosterID,
 		Source: fleetOrderHuman, ExpiresAt: clock.Unix() + spec.LifeSec,
 	})

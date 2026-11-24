@@ -126,6 +126,7 @@ const (
 	tBotSec   = int64(90000011) // a bot, Director
 	tBotPlain = int64(90000012)
 	tBotHaul  = int64(90000013)
+	tBotLead  = int64(90000014) // a bot of Security, out with the one fleet
 	tStation  = int64(60000004)
 	tStation2 = int64(60000007)
 	tOffice   = int64(140000001)
@@ -150,9 +151,29 @@ var tPilots = map[int64]tPilot{
 	tBotSec:   {"Hadar Okuumi", corp.RoleDirector, true, "Director", armSecurity},
 	tBotPlain: {"Renn Salvaje", corp.RoleFactoryManager, true, "[IND] Technician", armIndustry},
 	tBotHaul:  {"Moira Keltan", corp.RoleTrader, true, "[SAL] Clerk", armSales},
+	tBotLead:  {"Yann Dessarin", 0, true, "[SEC] Ensign", armSecurity},
 }
 
-var tOrder = []int64{tCEO, tMiner, tSpare, tMember, tBotDir, tBotSec, tBotPlain, tBotHaul}
+// tPlaces is the map the location field is found in: "Amevync" is a constellation's name and a
+// system's both.
+var tPlaces = []findEntry{newFindEntry(10000032, "Sinq Laison", ""), newFindEntry(10000064, "Essence", ""),
+	newFindEntry(20000300, "Amevync", "Sinq Laison"), newFindEntry(30002900, "Amevync", "Sinq Laison"),
+	newFindEntry(30005304, "Alentene", "Sinq Laison"), newFindEntry(30005305, "Alenia", "Essence")}
+
+// tMap is three systems in a row: two of Sinq Laison, one of them of Amevync, and one of Essence with
+// no belts.
+func tMap() *universe {
+	u := &universe{adj: map[int64][]int64{30005304: {30002900}, 30002900: {30005304, 30005305}, 30005305: {30002900}},
+		meta: map[int64]sysMeta{
+			30005304: {Security: 0.9, RegionID: 10000032, ConstellationID: 20000301},
+			30002900: {Security: 0.5, RegionID: 10000032, ConstellationID: 20000300},
+			30005305: {Security: 0.4, RegionID: 10000064, ConstellationID: 20000400}},
+		belts: map[int64]bool{30005304: true, 30002900: true}}
+	u.beltOnce.Do(func() {})
+	return u
+}
+
+var tOrder = []int64{tCEO, tMiner, tSpare, tMember, tBotDir, tBotSec, tBotPlain, tBotHaul, tBotLead}
 
 var tTypes = map[int64]string{
 	34: "Tritanium", 35: "Pyerite", 36: "Mexallon", 1230: "Veldspar", 1228: "Scordite", 1224: "Pyroxeres",
@@ -287,6 +308,20 @@ func newManageDB() *fakeDB {
 		return out
 	})
 	add("SELECT solarSystemID FROM mapSolarSystems WHERE LOWER(solarSystemName)", func([]driver.NamedValue) []fakeRow { return one1(int64(30002809)) })
+	for match, kind := range map[string]string{"SELECT regionID, regionName, ''": placeRegion,
+		"SELECT c.constellationID, c.constellationName": placeConstellation, "SELECT s.solarSystemID, s.solarSystemName": placeSystem} {
+		add(match, func([]driver.NamedValue) []fakeRow {
+			var out []fakeRow
+			for _, e := range tPlaces {
+				if placeKindOf(e.ID) == kind {
+					out = append(out, fakeRow{e.ID, e.Name, e.Group})
+				}
+			}
+			return out
+		})
+	}
+	add("SELECT regionName FROM mapRegions", func([]driver.NamedValue) []fakeRow { return one1("Sinq Laison") })
+	add("SELECT constellationName FROM mapConstellations", func([]driver.NamedValue) []fakeRow { return one1("Amevync") })
 	add("SELECT o.stationID, o.price FROM market_orders o", func([]driver.NamedValue) []fakeRow { return one1(tStation, 5.0) })
 	add("SELECT COALESCE(typeName, ''), COALESCE(groupID, 0)", func(a []driver.NamedValue) []fakeRow {
 		if n, ok := tTypes[argInt(a, 0)]; ok {
@@ -364,6 +399,23 @@ func newManageDB() *fakeDB {
 	})
 	add("FROM rolebot_corp_commands WHERE corporationID = ? AND kind = ?", none)
 	add("FROM rolebot_corp_commands WHERE corporationID = ?", func([]driver.NamedValue) []fakeRow { return cmds })
+	// One fleet of Security's is out, raised by a desk, and led by the spare bot.
+	add("SELECT gangID FROM rolebot_gangs WHERE corpID", func([]driver.NamedValue) []fakeRow { return one1(int64(9001)) })
+	add("SELECT gangID, name, enabled, activity", func([]driver.NamedValue) []fakeRow {
+		return one1(int64(9001), "Test Corp Patrol", int64(1), ActSecurity, "",
+			`{"opPhase":"live","orderAreaID":10000032,"huntSystemID":30005304,"huntSystemName":"Alentene"}`,
+			tBotLead, tCorp, int64(1), tNow()+3600, tNow()-600, "")
+	})
+	add("SELECT gm.gangID, gm.characterID, gm.role", func([]driver.NamedValue) []fakeRow {
+		return []fakeRow{{int64(9001), tBotLead, RoleCombat, int64(0), int64(1), int64(0), int64(0), "", int64(0)},
+			{int64(9001), tBotHaul, RoleCombat, int64(0), int64(1), int64(0), int64(0), "", int64(0)}}
+	})
+	add("SELECT e.typeID, MAX(COALESCE(ea.valueInt", func(a []driver.NamedValue) []fakeRow {
+		if argInt(a, 0) == tBotSec {
+			return one1(int64(skillLeadership), int64(4))
+		}
+		return nil
+	})
 	add("SELECT balance FROM corporation", func([]driver.NamedValue) []fakeRow { return one1(412_000_000.0) })
 	add("FROM rolebot_corp_commit", func([]driver.NamedValue) []fakeRow { return one1(12_000_000.0) })
 	add("SELECT productTypeID FROM invBlueprintTypes", func([]driver.NamedValue) []fakeRow { return one1(int64(587)) })
@@ -389,6 +441,22 @@ func managePage(t *testing.T, f *fakeDB, who int64, signedIn bool, q url.Values)
 	}()
 	humanChairIndex.Store(&map[int64]int64{tCorp: tCEO})
 	deskSecret = []byte("0123456789abcdef0123456789abcdef")
+	// Nobody's hours are up, whatever the clock on the wall says.
+	armsMu.Lock()
+	heldSaved := armsHolds
+	armsHolds = map[int64]int64{}
+	for id := range tPilots {
+		armsHolds[id] = clock.Unix() + 3600
+	}
+	armsMu.Unlock()
+	defer func() {
+		armsMu.Lock()
+		armsHolds = heldSaved
+		armsMu.Unlock()
+	}()
+	uniSaved := uniOverride
+	uniOverride = tMap()
+	defer func() { uniOverride = uniSaved }()
 	deskModSaved := deskMod
 	deskMod = m
 	defer func() { deskMod = deskModSaved }()
@@ -531,6 +599,26 @@ func TestManagementPages(t *testing.T) {
 	})
 }
 
+// Security's page lists the fleets out and offers their leaders by Leadership.
+func TestManagementSecurity(t *testing.T) {
+	f := newManageDB()
+	page := managePage(t, f, tCEO, true, url.Values{"div": {"security"}, "o": {"fleet"}})
+	for _, want := range []string{"Fleets out", "Test Corp Patrol", "working ", "sent to the Sinq Laison region", "Yann Dessarin",
+		"Hadar Okuumi (Leadership 4)</option>", "Yann Dessarin (Leadership 0) - out with Test Corp Patrol", `name="find_place"`, "whoever is best placed"} {
+		if !strings.Contains(page, want) {
+			t.Errorf("the page lacks %q", want)
+		}
+	}
+	if strings.Contains(page, `name="system"`) {
+		t.Error("Security is still asked for a system")
+	}
+	// The other divisions' pages have no such list.
+	if page := managePage(t, newManageDB(), tCEO, true, url.Values{"div": {"mining"}, "o": {"fleet"}}); strings.Contains(page, "Fleets out") ||
+		strings.Contains(page, `name="leader"`) || !strings.Contains(page, `name="find_system"`) {
+		t.Error("the mining page is not as it was")
+	}
+}
+
 func TestManagementOrders(t *testing.T) {
 	build := url.Values{"div": {"industry"}, "form": {"build"}, "print": {fmt.Sprintf("691.%d", tStation)}, "runs": {"10"}, "wage": {"25,000"}, "prio": {"100"}}
 	with := func(q url.Values, kv ...string) url.Values {
@@ -542,6 +630,10 @@ func TestManagementOrders(t *testing.T) {
 			out.Set(kv[i], kv[i+1])
 		}
 		return out
+	}
+	secFleet := func(place, leader string) url.Values {
+		return url.Values{"div": {"security"}, "form": {"fleet"}, "activity": {ActSecurity}, "place": {place}, "leader": {leader}, "size": {"5"},
+			"duration": {"120"}, "confirm": {"1"}, "n": {"0123456789abcd02"}}
 	}
 	research := url.Values{"div": {"research"}, "form": {"research"}, "what": {"me"}, "print": {"1001"}, "runs": {"5"}}
 	for _, c := range []struct {
@@ -574,6 +666,21 @@ func TestManagementOrders(t *testing.T) {
 			"confirm": {"1"}, "n": {"0123456789abcdea"}}, "|fleet|", "Order given"},
 		{"a head raising another division's fleet", tMiner, true, url.Values{"form": {"fleet"}, "activity": {ActSecurity}, "system": {"alentene"}, "size": {"5"},
 			"duration": {"120"}, "confirm": {"1"}, "n": {"0123456789abcdeb"}}, "", "Pick the kind of fleet"},
+		{"a fleet to a system", tCEO, true, secFleet("alentene", ""), `"systemID":30005304,`, "Order given"},
+		{"a fleet to a region", tCEO, true, secFleet("sinq laison", ""), `"areaID":10000032,"systemName":"Sinq Laison region"`, "Order given"},
+		{"a fleet to a constellation, its kind said", tCEO, true, secFleet("Amevync (constellation)", ""), `"areaID":20000300`, "Order given"},
+		{"a name two places share", tCEO, true, secFleet("Amevync", ""), "", "could be more than one place"},
+		{"a region with nothing to hunt", tCEO, true, secFleet("essence region", ""), "", "no ground for a fleet"},
+		{"nowhere", tCEO, true, secFleet("zzzzqq", ""), "", "No system, constellation or region"},
+		{"a Find button lists places", tCEO, true, with(secFleet("ale", ""), "find_place", "Find location"), "", "Click the one you mean"},
+		{"a fleet's leader", tCEO, true, secFleet("alentene", fmt.Sprint(tBotSec)), fmt.Sprintf(`"leaderID":%d`, tBotSec), "Order given"},
+		{"a leader's Leadership in the preview", tCEO, true, with(secFleet("alentene", fmt.Sprint(tBotSec)), "confirm", ""), "", "</b> (Leadership 4)"},
+		{"a leader out with a fleet", tCEO, true, secFleet("alentene", fmt.Sprint(tBotLead)), "", "is out with Test Corp Patrol"},
+		{"a leader of another division", tCEO, true, secFleet("alentene", fmt.Sprint(tBotPlain)), "", "Pick a member of Security"},
+		{"a standing patrol of a region", tCEO, true, url.Values{"div": {"security"}, "form": {"standing"}, "place": {"Sinq Laison"}, "hours": {"24"},
+			"confirm": {"1"}, "n": {"0123456789abcd03"}}, `"areaID":10000032`, "Order given"},
+		{"a patrol job in a constellation", tCEO, true, url.Values{"div": {"security"}, "form": {"assign"}, "what": {assignPatrol}, "qty": {"5"}, "reward": {"1000"},
+			"place": {"Amevync constellation"}, "confirm": {"1"}, "n": {"0123456789abcd04"}}, `"systemID":20000300`, "Order given"},
 		{"an appointment", tCEO, true, url.Values{"div": {mgHeads}, "form": {"head"}, "arm": {"security"}, "member": {fmt.Sprint(tBotSec)}, "confirm": {"1"},
 			"n": {"0123456789abcdec"}}, "|head|", "Order given"},
 		{"an appointment by a head", tMiner, true, url.Values{"div": {mgHeads}, "form": {"head"}, "arm": {"security"}, "member": {fmt.Sprint(tBotSec)},
@@ -706,5 +813,99 @@ func TestHumanChairWageIsOwed(t *testing.T) {
 	}
 	if !owed || paid {
 		t.Errorf("owed=%v paid=%v, writes %v", owed, paid, f.writes)
+	}
+}
+
+// A CEO whose roster row is switched off is played by its person: the corporation is human-chaired. A
+// generated pilot switched off, and a bot CEO's corporation, are not.
+func TestHumanChairIndexTakesAPlayedRosterPilot(t *testing.T) {
+	const played, person, generated = int64(90000021), int64(90000022), int64(90000023)
+	f := &fakeDB{missed: map[string]int{}, answers: []fakeAnswer{
+		{"COALESCE(rb.enabled, 0) = 0", func([]driver.NamedValue) []fakeRow {
+			return []fakeRow{{tCorp, played}, {tCorp + 1, person}, {tCorp + 2, generated}, {tCorp + 3, played}}
+		}},
+		{"WHERE r.enabled = 0", func([]driver.NamedValue) []fakeRow { return one1(played) }},
+	}}
+	db := sql.OpenDB(f)
+	defer db.Close()
+	m := &Mod{db: db}
+	savedChairs, savedCEOs := humanChairIndex.Load(), ceoIndex.Load()
+	savedSet, savedAt, savedOK := botMailboxSet, botMailboxAt, botMailboxEverOK
+	savedSeats, savedSeatsAt := personSeatSet, personSeatAt
+	defer func() {
+		humanChairIndex.Store(savedChairs)
+		ceoIndex.Store(savedCEOs)
+		botMailboxSet, botMailboxAt, botMailboxEverOK = savedSet, savedAt, savedOK
+		personSeatSet, personSeatAt = savedSeats, savedSeatsAt
+	}()
+	botMailboxSet = map[int64]struct{}{played: {}, generated: {}}
+	botMailboxAt, botMailboxEverOK = clock.Now(), true
+	personSeatAt = time.Time{}
+	ceoIndex.Store(&map[int64]int64{tCorp + 3: tBotDir})
+	m.refreshHumanChairIndex(context.Background())
+	for corpID, want := range map[int64]int64{tCorp: played, tCorp + 1: person, tCorp + 2: 0, tCorp + 3: 0} {
+		if id, _ := humanChaired(corpID); id != want {
+			t.Errorf("corp %d is chaired by %d, want %d", corpID, id, want)
+		}
+	}
+}
+
+// A switched-off roster pilot its person plays heads a division as a capsuleer: it can be appointed, its
+// mail is written, and no bot desk runs beside it. Switched off and played by nobody, it is neither.
+func TestPlayedRosterPilotHeadsAsAPerson(t *testing.T) {
+	savedChairs := humanChairIndex.Load()
+	savedSet, savedAt, savedOK := botMailboxSet, botMailboxAt, botMailboxEverOK
+	savedSeats, savedSeatsAt := personSeatSet, personSeatAt
+	defer func() {
+		humanChairIndex.Store(savedChairs)
+		botMailboxSet, botMailboxAt, botMailboxEverOK = savedSet, savedAt, savedOK
+		personSeatSet, personSeatAt = savedSeats, savedSeatsAt
+	}()
+	for _, played := range []bool{true, false} {
+		t.Run(fmt.Sprintf("played %v", played), func(t *testing.T) {
+			f := newManageDB()
+			f.answers = append([]fakeAnswer{
+				{"SELECT ch.characterID, ch.characterName, COALESCE(r.corprole, 0), COALESCE(r.titleMask, 0)", func([]driver.NamedValue) []fakeRow {
+					p := tPilots[tBotSec]
+					return []fakeRow{{tBotSec, p.name, int64(p.roles), int64(0), p.title, int64(0), 1e6, true, int64(0)}}
+				}},
+				{"WHERE r.enabled = 0", func([]driver.NamedValue) []fakeRow {
+					if played {
+						return one1(tBotSec)
+					}
+					return nil
+				}},
+			}, f.answers...)
+			personSeatAt = time.Time{}
+			page := managePage(t, f, tCEO, true, url.Values{"div": {mgHeads}, "o": {"head"}, "pre": {"head"}, "pre_arm": {"security"}})
+			if got := strings.Contains(page, "Hadar Okuumi (capsuleer)"); got != played {
+				t.Errorf("offered as a capsuleer = %v", got)
+			}
+			if strings.Contains(page, "Hadar Okuumi (bot)") {
+				t.Error("a pilot switched off is offered as a bot")
+			}
+			preview := managePage(t, f, tCEO, true, url.Values{"div": {mgHeads}, "form": {"head"}, "arm": {"security"}, "member": {fmt.Sprint(tBotSec)}})
+			if got := strings.Contains(preview, "give its orders themselves"); got != played {
+				t.Errorf("previewed as a person = %v", got)
+			}
+
+			f.answers = append([]fakeAnswer{{"FROM rolebot_corp_heads", func([]driver.NamedValue) []fakeRow {
+				return []fakeRow{{tCorp, "security", tBotSec, int64(0), tCEO, tNow() - 86400, int64(0)}}
+			}}}, f.answers...)
+			db := sql.OpenDB(f)
+			defer db.Close()
+			m := &Mod{db: db}
+			botMailboxSet, botMailboxAt, botMailboxEverOK = map[int64]struct{}{tBotSec: {}}, clock.Now(), true
+			humanChairIndex.Store(&map[int64]int64{tCorp: tCEO})
+			if got := len(m.chairSeatActivities(context.Background(), tCorp)) == 0; got != played {
+				t.Errorf("no bot desk = %v", got)
+			}
+			if m.botFlown(tBotSec) == played {
+				t.Errorf("botFlown = %v", !played)
+			}
+			if m.mailSuppressed(tBotSec) == played {
+				t.Errorf("mailSuppressed = %v", !played)
+			}
+		})
 	}
 }

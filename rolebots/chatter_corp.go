@@ -225,8 +225,8 @@ func (m *Mod) chatterCorpOrder(ctx context.Context, o corpFleetOrder) {
 	if head.CharID != 0 && head.Name != "" {
 		extra["head"] = head.link()
 	}
-	if o.SystemID != 0 {
-		extra["system"] = m.nameOfSystem(ctx, o.SystemID)
+	if o.Place() != 0 {
+		extra["system"] = m.placeName(ctx, o.Place())
 	}
 	if len(o.OreNames) > 0 {
 		extra["ore"] = joinWords(o.OreNames)

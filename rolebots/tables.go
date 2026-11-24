@@ -783,7 +783,7 @@ func ensureTables(ctx context.Context, db *sql.DB) error {
 			KEY idx_rbceoact_at (at)
 		)`,
 		// A department head's standing order to its corporation's fleets (corpstaff_dept.go): one live order per (corporation, activity).
-		// Gang pickers prefer it while unexpired; an order outside a fleet's band is not taken.
+		// Gang pickers prefer it while unexpired; a desk's order outside a fleet's band is not taken, the chair's is.
 		`CREATE TABLE IF NOT EXISTS rolebot_corp_fleet_orders (
 			corporationID BIGINT NOT NULL,
 			activity      VARCHAR(24) NOT NULL,
@@ -2559,6 +2559,8 @@ func migrateCorpFleetColumns(ctx context.Context, db *sql.DB) error {
 	// and the bot CEO's desks pass over them while they stand.
 	for _, c := range []struct{ table, column, ddl string }{
 		{"rolebot_corp_fleet_orders", "source", "VARCHAR(8) NOT NULL DEFAULT 'desk'"},
+		// A constellation or region in place of one system (corpplace.go).
+		{"rolebot_corp_fleet_orders", "areaID", "BIGINT NOT NULL DEFAULT 0"},
 		{"rolebot_corp_directive", "setBy", "VARCHAR(8) NOT NULL DEFAULT 'ceo'"},
 		{"rolebot_corp_directive", "holdUntil", "BIGINT NOT NULL DEFAULT 0"},
 		{"rolebot_corp_directive", "strength", "DOUBLE NOT NULL DEFAULT 0"},

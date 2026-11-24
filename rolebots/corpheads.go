@@ -206,7 +206,7 @@ func (m *Mod) mirrorHead(ctx context.Context, h corpHead) error {
 			p.DirectorID, p.DirectorSince = h.CharID, h.Since
 		}
 		p.DeputyID = h.DeputyID
-		if p.DeputyID == 0 && m.isSynthetic(h.CharID) {
+		if p.DeputyID == 0 && m.botFlown(h.CharID) {
 			// The chores a deputy flies (print purchases) want a bot; a bot
 			// head is its own.
 			p.DeputyID = h.CharID
@@ -250,7 +250,8 @@ func (m *Mod) dismissHead(ctx context.Context, h corpHead) error {
 		}
 	}
 	// A Sales head's own desk's orders go back with it, as a relieved commerce head's do
-	// (ceoPortfolios). The chair's bids stay in its name, whoever else now heads Sales.
+	// (ceoPortfolios). The chair's bids stay in its name, whoever else now heads Sales. isSynthetic, not
+	// botFlown: a pilot its person has taken over may still hold the desk orders it placed as a bot.
 	if h.Arm == armSales && m.isSynthetic(h.CharID) {
 		m.cancelDeskOrdersOf(ctx, h.CorpID, h.CharID)
 	}
@@ -364,7 +365,7 @@ func (m *Mod) chairPlaceMember(ctx context.Context, corpID, charID int64, arm co
 	found := false
 	for _, x := range members {
 		if x.CharID == charID {
-			cm, found = x, true
+			cm, found = m.asSeated(x), true
 			break
 		}
 	}

@@ -437,7 +437,7 @@ func (m *Mod) writeWhereAndOrders(ctx context.Context, b *strings.Builder, pg ig
 		Align: []string{"", ""}, Width: []string{"36", ""},
 		Empty: "No standing orders &mdash; fleets pick their own ground."}
 	for _, o := range m.listFleetOrders(ctx, corpID) {
-		text := fleetOrderText(o.Dept, m.nameOfSystem(ctx, o.SystemID), strings.Join(o.OreNames, ", "), o.Reason)
+		text := fleetOrderText(o.Dept, m.placeName(ctx, o.Place()), strings.Join(o.OreNames, ", "), o.Reason)
 		orders.Rows = append(orders.Rows, []string{roleIcon(fleetOrderRole(o.Dept)),
 			igbF3(esp.IGBText(text)) + "<br>" + pg.soft("until "+igbWhen(o.ExpiresAt))})
 	}

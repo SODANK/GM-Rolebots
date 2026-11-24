@@ -52,7 +52,8 @@ type cmdHeadPayload struct {
 type cmdStandingPayload struct {
 	Dept       string `json:"dept"`
 	SystemID   int64  `json:"systemID,omitempty"`
-	SystemName string `json:"systemName,omitempty"`
+	AreaID     int64  `json:"areaID,omitempty"`
+	SystemName string `json:"systemName,omitempty"` // the system's, constellation's or region's
 	Ores       string `json:"ores,omitempty"`
 	Hours      int    `json:"hours"`
 }
@@ -69,7 +70,7 @@ type cmdBoardPayload struct {
 	Flag          int64   `json:"flag,omitempty"`
 	FromFlag      int64   `json:"fromFlag,omitempty"`
 	ItemID        int64   `json:"itemID,omitempty"`
-	SystemID      int64   `json:"systemID,omitempty"`
+	SystemID      int64   `json:"systemID,omitempty"` // a patrol's may be a constellation or region (corpplace.go)
 	CharID        int64   `json:"charID,omitempty"`
 	WorkID        int64   `json:"workID,omitempty"`
 	Days          int     `json:"days,omitempty"`
@@ -205,6 +206,12 @@ func (c corpCommand) boardSummary(m *Mod, ctx context.Context) (string, bool) {
 		}
 		return systemNameOf(ctx, m, id)
 	}
+	place := func(id int64) string {
+		if m == nil || !isArea(id) {
+			return system(id)
+		}
+		return "the " + m.placeName(ctx, id)
+	}
 	typeName := func(id int64) string {
 		if m == nil {
 			return fmt.Sprintf("type %d", id)
@@ -223,7 +230,7 @@ func (c corpCommand) boardSummary(m *Mod, ctx context.Context) (string, bool) {
 		case assignDeliver:
 			return fmt.Sprintf("deliver %s %s to %s for %s", fmtUnits(p.Qty), typeName(p.TypeID), station(p.StationID), iskString(p.Reward)), true
 		case assignPatrol:
-			return fmt.Sprintf("kill %d pirates in %s for %s", p.Qty, system(p.SystemID), iskString(p.Reward)), true
+			return fmt.Sprintf("kill %d pirates in %s for %s", p.Qty, place(p.SystemID), iskString(p.Reward)), true
 		}
 		return fmt.Sprintf("build %d run(s) of %s for a bonus of %s", p.Qty, typeName(p.TypeID), iskString(p.Reward)), true
 	case cmdKindBid:
@@ -313,7 +320,7 @@ func (m *Mod) postedLine(ctx context.Context, c corpCommand) string {
 
 // orderLetter tells a person they were assigned, from whoever assigned them.
 func (m *Mod) orderLetter(ctx context.Context, c corpCommand, charID int64, subject, body string) {
-	if charID == 0 || charID == c.PosterID || m.isSynthetic(charID) {
+	if charID == 0 || charID == c.PosterID || m.botFlown(charID) {
 		return
 	}
 	m.mailPilot(ctx, charID, c.PosterID, subject, body+

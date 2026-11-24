@@ -65,7 +65,7 @@ type assignment struct {
 	Progress   int64
 	StationID  int64
 	Division   int
-	SystemID   int64
+	SystemID   int64 // a patrol's may be a constellation or region (corpplace.go)
 	WorkID     int64
 	Reward     float64
 	PaidISK    float64
@@ -123,7 +123,7 @@ func (m *Mod) assignmentText(ctx context.Context, a assignment) string {
 	case assignPatrol:
 		where := "wherever you hunt"
 		if a.SystemID != 0 {
-			where = "— Security wants " + m.nameOfSystem(ctx, a.SystemID) + " swept"
+			where = "— Security wants " + m.placeName(ctx, a.SystemID) + " swept"
 		}
 		return fmt.Sprintf("Kill %d pirates and collect their bounties %s", a.Qty, where)
 	case assignFuel:

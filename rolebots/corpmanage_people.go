@@ -26,7 +26,7 @@ func (m *Mod) directorsOf(ctx context.Context, corpID int64) []corpMember {
 	}
 	var out []corpMember
 	for _, cm := range members {
-		if cm.Eligible() && holdsDirector(cm.Roles) {
+		if cm = m.asSeated(cm); cm.Eligible() && holdsDirector(cm.Roles) {
 			out = append(out, cm)
 		}
 	}
@@ -108,6 +108,7 @@ func (p *mgPage) writeHeads(b *strings.Builder) {
 		return
 	}
 	heads := p.m.corpHeads(p.ctx, p.corpID)
+	pr := p.m.portalRosterFor(p.ctx, p.corpID)
 	directors := p.m.directorsOf(p.ctx, p.corpID)
 	pendingArm, pendingChar := p.m.pendingHeads(p.ctx, p.corpID)
 	p.masthead(b, esp.UIIcon("12_01", 48, ""), p.pg.pal.Title, "Division heads",
@@ -131,9 +132,16 @@ func (p *mgPage) writeHeads(b *strings.Builder) {
 			if h.DeputyID != 0 {
 				who += "<br>" + p.pg.soft("deputy "+esp.IGBText(p.m.charNameOr(p.ctx, h.DeputyID)))
 			}
-			if flag, label := headFlagOf(a); flag != 0 && h.Flags&flag != 0 {
+			if flag, label := headFlagOf(a); flag != 0 && h.Flags&flag != 0 && p.m.botFlown(h.CharID) {
 				who += "<br>" + p.pg.soft(label)
 			}
+		} else if id := p.headOf(a, pr, heads); id != 0 {
+			// Nobody appointed, but the corporation's posts name a head, the one the desk's cards
+			// show: list it, or this page says nobody heads a division somebody does.
+			verb = "replace"
+			face = esp.Portrait(id, 64)
+			who = igbF3("<b>"+esp.IGBText(p.m.charNameOr(p.ctx, id))+"</b>") + " " + p.pg.dim(p.kindOf(id)) +
+				"<br>" + p.pg.soft("posted by the corporation, not appointed")
 		}
 		if id, ok := pendingArm[a]; ok {
 			// Ordered, not yet carried out: say so, or the order looks lost.
@@ -256,7 +264,7 @@ func parseHeadForm(p *mgPage, _ corpArm, hidden map[string]string) ([]corpComman
 			return nil, "", "The deputy is not a member."
 		}
 	}
-	bot := p.m.isSynthetic(id)
+	bot := p.m.botFlown(id)
 	flag, label := headFlagOf(a)
 	if flag != 0 && bot && p.q.Get("extra") == "1" {
 		pay.Flags = flag

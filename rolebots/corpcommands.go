@@ -70,12 +70,15 @@ func (c corpCommand) Open() bool {
 	return false
 }
 
-// cmdFleetPayload is a fleet order: send a fleet of this kind to this
-// system, this big, for this long.
+// cmdFleetPayload is a fleet order: send a fleet of this kind to this place, this big, for this long.
+// The place is a system (SystemID) or a constellation or region (AreaID); SystemName is its name
+// either way. LeaderID is who commands it, 0 for whoever is best placed.
 type cmdFleetPayload struct {
 	Activity    string  `json:"activity"`
 	SystemID    int64   `json:"systemID"`
+	AreaID      int64   `json:"areaID,omitempty"`
 	SystemName  string  `json:"systemName,omitempty"`
+	LeaderID    int64   `json:"leaderID,omitempty"`
 	Size        int     `json:"size"`
 	DurationMin int     `json:"durationMin"`
 	Ores        []int64 `json:"ores,omitempty"`
@@ -156,6 +159,9 @@ func (c corpCommand) Summary(m *Mod, ctx context.Context) string {
 	case cmdKindFleet:
 		if p, ok := c.fleet(); ok {
 			s := fmt.Sprintf("%d pilots to %s for %s", p.Size, p.SystemName, durationWords(p.DurationMin))
+			if p.LeaderID != 0 && m != nil {
+				s += ", led by " + m.charNameOr(ctx, p.LeaderID)
+			}
 			if p.OreNames != "" {
 				s += " — " + strings.ReplaceAll(p.OreNames, ",", ", ")
 			}

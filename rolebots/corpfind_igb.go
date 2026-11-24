@@ -12,7 +12,7 @@ import (
 // a system) has a Find button, which lists what the letters could mean; a click puts the name in.
 
 // line is one labelled field: label, box, hint. find is the field's kind ("item", "system",
-// "blueprint") when it has a Find button, "" for none.
+// "location", "blueprint") when it has a Find button, "" for none.
 func (p *mgPage) line(label, name, value string, size int, hint, find string) string {
 	s := `<font size=3><b>` + esp.IGBText(label) + `</b></font><br>` +
 		`<input type="text" name="` + name + `" size="` + strconv.Itoa(size) + `" value="` + attrEsc(value) + `"> `
@@ -58,7 +58,7 @@ func (p *mgPage) offerHits(field string, hits []findHit, pic func(id int64) stri
 
 // findField is the field whose Find button was pressed, "" for none.
 func (p *mgPage) findField() string {
-	for _, f := range []string{"item", "system"} {
+	for _, f := range []string{"item", "system", "place"} {
 		if p.q.Has("find_" + f) {
 			return f
 		}
@@ -78,6 +78,12 @@ func (p *mgPage) findPage(field, form string) (string, bool) {
 	var pic func(int64) string
 	what := "items"
 	switch {
+	case field == "place":
+		_, clear, places := resolvePlace(words, p.m.placeEntries(p.ctx), 2*mgSuggestMax)
+		if clear {
+			return "", false
+		}
+		hits, what = places, "places"
 	case field == "system":
 		hits, what = p.m.findSystems(p.ctx, words, 2*mgSuggestMax), "systems"
 	case form == "printbuy":
@@ -90,10 +96,14 @@ func (p *mgPage) findPage(field, form string) (string, bool) {
 	if len(hits) == 0 {
 		return p.pg.ordersBanner("Nothing looks like \""+words+"\". Try fewer letters, or another part of the name.", true), true
 	}
-	if findClear(hits) {
-		return "", false
+	if field == "place" {
+		p.offerPlaces(hits)
+	} else {
+		if findClear(hits) {
+			return "", false
+		}
+		p.offerHits(field, hits, pic)
 	}
-	p.offerHits(field, hits, pic)
 	var b strings.Builder
 	b.WriteString(igbF3("These "+what+" could be <b>"+esp.IGBText(words)+"</b>. Click the one you mean:") + "<br>\n")
 	b.WriteString(strings.Join(p.suggest, "<br>\n") + "<br><br>\n")
