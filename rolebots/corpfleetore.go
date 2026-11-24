@@ -14,6 +14,7 @@ package rolebots
 import (
 	"context"
 	"fmt"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -77,7 +78,10 @@ func (m *Mod) loadCorpOreSettings(ctx context.Context) {
 // where: the corporation, the station and the office itemID. ok=false for
 // anything that keeps the co-op hand-back.
 func (m *Mod) corpOreRun(ctx context.Context, g *Gang) (corpID, stationID, officeID int64, ok bool) {
-	if g == nil || !corpOreDeliveryOn() || g.Activity != ActMining || g.CorpID == 0 || !payrollManaged(g.CorpID) {
+	if g == nil || !corpOreDeliveryOn() || g.Activity != ActMining || g.CorpID == 0 {
+		return 0, 0, 0, false
+	}
+	if !payrollManaged(g.CorpID) && !m.chairTakesOre(ctx, g.CorpID) {
 		return 0, 0, 0, false
 	}
 	corpID, stationID, officeID = m.corpDepositTarget(ctx, g.CorpID)
@@ -85,6 +89,37 @@ func (m *Mod) corpOreRun(ctx context.Context, g *Gang) (corpID, stationID, offic
 		return 0, 0, 0, false
 	}
 	return corpID, stationID, officeID, true
+}
+
+// corpOreChairMinISK is what a human chair's wallet must hold above its reserve before its fleets
+// deliver to it: the miners are paid in cash as the load lands.
+const corpOreChairMinISK = 25e6
+
+// chairTakesOre reports whether a human chair's fleets deliver to the corporation: it has ordered a
+// drop-off, the order is in force, and there is money to pay for the ore.
+func (m *Mod) chairTakesOre(ctx context.Context, corpID int64) bool {
+	if _, ok := humanChaired(corpID); !ok {
+		return false
+	}
+	c := m.humanHold(ctx, corpID, cmdKindOreDrop)
+	if c == nil {
+		return false
+	}
+	p, ok := c.oreDrop()
+	return ok && p.StationID != 0 && m.chairFree(ctx, corpID) >= corpOreChairMinISK
+}
+
+// payOreLabour pays an ore drop's shares in cash: a human chair's corporation runs no payroll.
+func (m *Mod) payOreLabour(ctx context.Context, corpID int64, labour []labourRow) {
+	total := map[int64]float64{}
+	for _, l := range labour {
+		total[l.CharID] += l.Credit
+	}
+	for id, isk := range total {
+		if math.Floor(isk) >= 1 {
+			m.payCorpWage(ctx, corpID, id, isk, "fleet ore")
+		}
+	}
 }
 
 // corpOreRunDispatch sends a corp run's loaded hauler to the office station.
@@ -249,7 +284,11 @@ func (m *Mod) corpOreDrop(ctx context.Context, b *botRun, g *Gang, corpID, offic
 	var labour []labourRow
 	var hauls []gangHaulRow
 	defer func() {
-		m.creditLabourBatch(ctx, corpID, labour)
+		if payrollManaged(corpID) {
+			m.creditLabourBatch(ctx, corpID, labour)
+		} else {
+			m.payOreLabour(ctx, corpID, labour)
+		}
 		m.noteGangHaulBatch(ctx, g.GangID, hauls)
 	}()
 	for _, lot := range lots {

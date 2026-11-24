@@ -53,6 +53,9 @@ func corpOrderPressure(corpID int64) int {
 // when there is one (corpstaff_dept.go): trading is its department, and it holds the Director role, which the
 // core's market account accepts in place of Trader.
 func (m *Mod) corpOrderPlacer(ctx context.Context, corpID, ceoID int64) int64 {
+	if _, human := humanChaired(corpID); human {
+		return m.chairOrderPlacer(ctx, corpID, ceoID)
+	}
 	if head := m.commerceHead(ctx, corpID); head != 0 && head != ceoID &&
 		m.freeOrderSlots(ctx, head) > corpOrderSlotKeep {
 		if info, err := evedb.GetCorporationMemberInfo(ctx, m.db, head); err == nil && info != nil &&

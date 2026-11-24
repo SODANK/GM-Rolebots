@@ -223,13 +223,12 @@ func (m *Mod) allianceOrderSubmit(ctx context.Context, pg igbPage, charID, corpI
 				b.WriteString(`<input type="hidden" name="` + k + `" value="` + attrEsc(v) + `">`)
 			}
 		}
-		b.WriteString(keyField(q))
+		b.WriteString(mgText("Portal key:", "key", q.Get("key"), 22, "") + "<br>")
 		b.WriteString(`<input type="submit" value="Give the order"></form><br>`)
 		return b.String()
 	}
 	if err := m.verifyPortalKey(ctx, charID, corpID, strings.TrimSpace(q.Get("key"))); err != nil {
-		return pg.ordersBanner("That portal key is not yours, or has lapsed. "+
-			`<a href="`+esp.IGBHost()+ordersPath+`?key=request">Request a key</a> on the Orders page.`, true)
+		return pg.keyAskBanner()
 	}
 	now := clock.Unix()
 	note := "ordered on the Corporate Portal by " + m.charNameOr(ctx, charID)

@@ -465,7 +465,7 @@ func (m *Mod) corpBidStations(ctx context.Context, corpID int64, typeIDs []int64
 	if corpID == 0 || len(typeIDs) == 0 {
 		return out
 	}
-	if _, ok := managedCEO(corpID); !ok {
+	if !corpDeskRun(corpID) {
 		return out
 	}
 	for _, t := range typeIDs {
@@ -513,7 +513,7 @@ func loyalSell(stops []marketStop, tn Tuning, corpStations map[int64]bool) *mark
 // corpWantsMemberOre reports whether a member's corporation is bidding for
 // ore it would rather its members sold it than the market.
 func (m *Mod) corpWantsMemberOre(ctx context.Context, corpID int64) bool {
-	if _, ok := managedCEO(corpID); !ok {
+	if !corpDeskRun(corpID) {
 		return false
 	}
 	if m.corpOreShare(ctx, corpID) < corpOreDeskBidsAbove && !m.corpFlipsOre(ctx, corpID) {
@@ -538,8 +538,7 @@ func (m *Mod) corpRefineChore(ctx context.Context, b *botRun) {
 	if b == nil || b.CorpID == 0 {
 		return
 	}
-	c, _ := getCEO(ctx, m.db, b.CorpID)
-	if c == nil {
+	if !corpDeskRun(b.CorpID) {
 		return
 	}
 	p, err := m.loadCorpPolicy(ctx, b.CorpID)
@@ -570,10 +569,18 @@ func (m *Mod) corpRefineChore(ctx context.Context, b *botRun) {
 		}
 	}
 	rows.Close()
+	c := m.deskCEO(ctx, b.CorpID)
+	if c == nil {
+		return
+	}
 	holds := m.loadOreHolds(ctx, b.CorpID)
 	for _, s := range stacks {
-		// Only what the desk is keeping: the kept quantity of this stack.
+		// Only what the desk is keeping: the kept quantity of this stack. Under a human chair no
+		// listing pass splits the stacks, so a chair that keeps it all means the stack.
 		keep := holds[[2]int64{stationID, s.typeID}].keep
+		if c.Origin == ceoOriginHuman && p.OreShare >= 1 {
+			keep = s.qty
+		}
 		if keep < corpRefineMinUnits {
 			continue
 		}
@@ -885,8 +892,8 @@ func (m *Mod) retireResaleBids(ctx context.Context, c *corpCEO, stationID int64,
 		  JOIN market_orders o ON o.orderID = r.orderID
 		  JOIN invTypes t ON t.typeID = o.typeID
 		  JOIN invGroups g ON g.groupID = t.groupID
-		 WHERE r.corporationID = ? AND r.bid = 1 AND r.stationID = ? AND g.categoryID = 25
-		   AND o.orderState = 1 AND o.volRemaining > 0`, c.CorpID, stationID)
+		 WHERE r.corporationID = ? AND r.bid = 1 AND r.stationID = ? AND g.categoryID = 25 AND r.kind <> ?
+		   AND o.orderState = 1 AND o.volRemaining > 0`, c.CorpID, stationID, corpOrderHuman)
 	if err != nil {
 		return
 	}
@@ -950,8 +957,8 @@ func (m *Mod) retireBuybackBids(ctx context.Context, c *corpCEO, ch Charter, sta
 		  JOIN market_orders o ON o.orderID = r.orderID
 		  JOIN invTypes t ON t.typeID = o.typeID
 		  JOIN invGroups g ON g.groupID = t.groupID
-		 WHERE r.corporationID = ? AND r.bid = 1 AND r.stationID = ?
-		   AND o.orderState = 1 AND o.volRemaining > 0`, c.CorpID, stationID)
+		 WHERE r.corporationID = ? AND r.bid = 1 AND r.stationID = ? AND r.kind <> ?
+		   AND o.orderState = 1 AND o.volRemaining > 0`, c.CorpID, stationID, corpOrderHuman)
 	if err != nil {
 		return
 	}

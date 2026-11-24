@@ -148,7 +148,7 @@ func (m *Mod) opsBody(ctx context.Context, r *http.Request, corpID, viewer int64
 		b.WriteString("<table width=100% bgcolor=" + pg.pal.Panel + "><tr><td>" + pg.accent(esp.IGBText(banner)) + "</td></tr></table><br>\n")
 	}
 	b.WriteString(pg.soft("What the corporation is doing right now. Fleets are raised by the heads of Security and Mining, "+
-		`or by the chair on the <a href="`+host+`/corp/orders">Orders</a> page; <b>Request a seat</b> sends a fleet invitation `+
+		`or by the chair on the Management page; <b>Request a seat</b> sends a fleet invitation `+
 		`to your client. Which department you work in is chosen on the <a href="`+host+`/corp/">Overview</a>.`) + "<br><br>\n")
 
 	// The figures: who is out, by department.
@@ -473,7 +473,7 @@ func (m *Mod) writeDirectiveBand(ctx context.Context, b *strings.Builder, pg igb
 // writeCommandsPanel is what members with a chair have ordered, and what
 // became of it.
 func (m *Mod) writeCommandsPanel(ctx context.Context, b *strings.Builder, pg igbPage, commands []corpCommand, viewer int64) {
-	p := esp.Panel{Title: "Orders from the chair", Note: "posted by directors on the Orders page",
+	p := esp.Panel{Title: "Orders from the chair", Note: "given by the CEO and the division heads",
 		Align: []string{"", "", "", ""}, Width: []string{"30", "", "150", "170"},
 		Empty: "No orders have been posted."}
 	for _, c := range commands {

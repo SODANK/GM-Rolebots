@@ -123,7 +123,7 @@ func reqRequesterArm(r requisition) corpArm {
 // all: not the Trade desk's merchandise (it is bought to be resold), not the
 // work board's own raw material, and not a line already moving. Pure.
 func reqBuildable(r requisition) bool {
-	if r.Requester == reqTrade || r.RefKind == reqWorkboard {
+	if r.Requester == reqTrade || r.RefKind == reqWorkboard || r.Requester == reqChairBuy {
 		return false
 	}
 	return r.Status == "open" && r.OrderID == 0 && r.BuyerID == 0 && r.left() > 0

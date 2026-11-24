@@ -239,7 +239,7 @@ func (m *Mod) tendDeepBids(ctx context.Context, c *corpCEO, ch Charter) {
 		SELECT r.orderID, r.typeID, r.stationID, r.price, r.placedAt, r.repricedAt, o.charID, o.price, o.volRemaining
 		  FROM rolebot_corp_orders r
 		  JOIN market_orders o ON o.orderID = r.orderID
-		 WHERE r.corporationID = ? AND r.bid = 1 AND o.orderState = 1 AND o.volRemaining > 0
+		 WHERE r.corporationID = ? AND r.bid = 1 AND r.kind <> 'human' AND o.orderState = 1 AND o.volRemaining > 0
 		   AND r.typeID IN (`+placeholders(len(deepPricedTypes))+`)`, args...)
 	if err != nil {
 		return
@@ -339,7 +339,7 @@ func (m *Mod) sellInToCorpBids(ctx context.Context, b *botRun) {
 	if b == nil || b.CorpID == 0 || b.State == nil || b.State.Data.IndTypeID != 0 {
 		return
 	}
-	if _, ok := managedCEO(b.CorpID); !ok {
+	if !corpDeskRun(b.CorpID) {
 		return
 	}
 	// Any office of the corporation's, not only the factory: members live at the

@@ -437,7 +437,12 @@ func assignNoticeDue(lastAt int64, unanswered int, now int64) bool {
 // with the board and a take link for each. A member holding as much work as they may take
 // hears nothing.
 func (m *Mod) assignNotice(ctx context.Context, c *corpCEO, fresh []assignment) {
-	members, err := m.corpMembers(ctx, c.CorpID, c.CharID)
+	// The chair is not offered its own work; a human chair's c.CharID is the bot acting for it.
+	chair := c.CharID
+	if c.Origin == ceoOriginHuman {
+		chair = m.corpCEOID(ctx, c.CorpID)
+	}
+	members, err := m.corpMembers(ctx, c.CorpID, chair)
 	if err != nil {
 		return
 	}
@@ -842,7 +847,7 @@ func (m *Mod) assignExpire(ctx context.Context, c *corpCEO) error {
 		}
 	}
 	for _, a := range posted {
-		if now < a.ExpiresAt && (a.Kind != assignPatrol || a.SystemID == patrolSys) {
+		if now < a.ExpiresAt && (a.Kind != assignPatrol || a.SystemID == patrolSys || m.assignedByChair(ctx, c.CorpID, a.ID)) {
 			continue
 		}
 		if _, err := m.db.ExecContext(ctx, `
@@ -867,6 +872,16 @@ func (m *Mod) assignExpire(ctx context.Context, c *corpCEO) error {
 		 WHERE a.corporationID = ? AND a.status IN ('offered', 'accepted') AND ch.corporationID <> a.corporationID`,
 		asExpired, now, c.CorpID)
 	return nil
+}
+
+// assignedByChair reports whether a posted job is a live order of the chair's
+// (corpcommanddesk_board.go): it stands whatever Security's own order says.
+func (m *Mod) assignedByChair(ctx context.Context, corpID, id int64) bool {
+	var n int
+	_ = m.db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM rolebot_corp_commands
+		 WHERE corporationID = ? AND kind = ? AND refID = ? AND status IN ('claimed','live')`, corpID, cmdKindAssign, id).Scan(&n)
+	return n > 0
 }
 
 // settlePay is the pure half: what an assignment pays when it closes. Done pays in full; an
@@ -920,14 +935,10 @@ func (m *Mod) settleAssignment(ctx context.Context, a assignment, final string) 
 			paid = isk
 		}
 	} else if isk >= 1 {
-		_, bal, err := m.corpWithdraw(ctx, a.CorpID, a.CharID, isk,
-			evedb.JournalReason("Corporation assignment"))
-		if err == nil {
+		if m.payCorpWage(ctx, a.CorpID, a.CharID, isk, "assignment") {
 			paid = isk
-			m.pushBalance(a.CharID, bal)
-			m.corpBook(ctx, a.CorpID, lineWages, -isk, a.CharID, "assignment: "+m.assignmentText(ctx, a))
 		} else {
-			rlogf("rolebots: pay assignment %d: %v", a.ID, err)
+			rlogf("rolebots: assignment %d went unpaid", a.ID)
 		}
 	}
 	m.spendCommit(ctx, "assign", a.ID, paid)

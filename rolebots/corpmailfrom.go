@@ -34,13 +34,20 @@ var mailFromDefaultHat = map[string]string{
 // letterFrom is the writer of a letter about topic, and the hat they sign
 // with. The CEO when nobody the module flies holds the office.
 func (m *Mod) letterFrom(ctx context.Context, c *corpCEO, topic string) (int64, string) {
-	const ceoHat = "Chief Executive Officer"
+	ceoHat := "Chief Executive Officer"
 	if c == nil {
 		return 0, ceoHat
 	}
+	// A human chair's c.CharID is the bot acting for it: an officer like any other, and one that
+	// never signs as the CEO.
+	human := c.Origin == ceoOriginHuman
+	if human {
+		ceoHat = "for the Chief Executive"
+		ctx = m.withChairStaff(ctx, c)
+	}
 	s := m.staffFor(ctx, c)
 	pick := func(h *staffMember, hat string) (int64, string, bool) {
-		if h == nil || h.Human || !h.Enabled || h.CharID == c.CharID {
+		if h == nil || h.Human || !h.Enabled || (h.CharID == c.CharID && !human) {
 			return 0, "", false
 		}
 		return h.CharID, m.writerHat(ctx, h.CharID, hat), true
@@ -67,7 +74,7 @@ func (m *Mod) letterFrom(ctx context.Context, c *corpCEO, topic string) (int64, 
 		}
 	case mailFromIndustry:
 		if p, err := m.loadCorpPolicy(ctx, c.CorpID); err == nil && p.DirectorID != 0 &&
-			p.DirectorID != c.CharID && m.isSynthetic(p.DirectorID) {
+			(p.DirectorID != c.CharID || human) && m.isSynthetic(p.DirectorID) {
 			id, hat, ok = p.DirectorID, m.writerHat(ctx, p.DirectorID, corpIndustryDirector), true
 		}
 	}

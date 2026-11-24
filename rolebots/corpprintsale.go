@@ -72,11 +72,11 @@ func surplusCopiesKeeping(copies []libraryCopy, onBoard, keepOne map[int64]bool,
 
 // printSaleRemarkable reports whether a print with a sale row in this state
 // may be marked again: one that sold (and has come back to the library), one
-// whose listing defaulted, or one back from an expired listing a week ago.
+// whose listing defaulted, one the chair took back before it was listed, or one back from an expired listing a week ago.
 // Never one still out. Pure.
 func printSaleRemarkable(status string, returnedAt, now int64) bool {
 	switch status {
-	case printSaleSold, printSaleDefault:
+	case printSaleSold, printSaleDefault, printSaleWithdrawn:
 		return true
 	case printSaleReturned:
 		return now-returnedAt >= corpPrintRelistSec

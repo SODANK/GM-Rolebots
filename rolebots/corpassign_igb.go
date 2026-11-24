@@ -80,7 +80,7 @@ func (m *Mod) handleIGBCorpAssignments(w http.ResponseWriter, r *http.Request) {
 			igbF3("Open this page from your own terminal to see your corporation's work."))
 		return
 	}
-	c, _ := getCEO(ctx, m.db, corpID)
+	c := m.deskCEO(ctx, corpID)
 	if c == nil || !assignmentsOn() {
 		esp.WriteCorpPortalPage(w, r, "assignments",
 			igbF3("Your corporation does not post assignments."))

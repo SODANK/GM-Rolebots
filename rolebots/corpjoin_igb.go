@@ -153,7 +153,7 @@ func (m *Mod) mailCarryConfirm(ctx context.Context, corpID, charID, moveID int64
 	if !claimJoinMail(charID, fmt.Sprintf("carry:%d", moveID)) {
 		return "A letter about this print is already in your inbox &mdash; open it and click the link.", false
 	}
-	c, _ := getCEO(ctx, m.db, corpID)
+	c := m.deskCEO(ctx, corpID)
 	if c == nil {
 		return "This corporation keeps no member desks.", true
 	}
@@ -166,7 +166,7 @@ func (m *Mod) mailCarryConfirm(ctx context.Context, corpID, charID, moveID int64
 	line(&b, "You offered to carry the %s %s from our office at %s to our office at %s (%d jump(s)).",
 		mv.Kind, esp.IGBText(name), esp.IGBText(stationNameOf(ctx, m, mv.From)),
 		esp.IGBText(stationNameOf(ctx, m, mv.To)), mv.Jumps)
-	if mv.Kind == moveOriginal {
+	if mv.Kind == moveOriginal && c.Origin != ceoOriginHuman {
 		line(&b, "It is locked down in the Blueprint Library. Clicking the link below lifts the lock for you to take it.")
 	}
 	line(&b, "Put it into the corporation hangar at %s, any division. You are paid %s the moment it lands.",

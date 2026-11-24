@@ -27,8 +27,8 @@ const (
 	cmdCancelled = "cancelled"
 )
 
-// The kinds. Each has a payload shape (the cmd*Payload structs below) and a
-// form on the Orders page.
+// The kinds. Each has a payload shape (the cmd*Payload structs below, and those of
+// corpcommands_org.go and corpcommands_board.go) and a form on the Management page.
 const (
 	cmdKindFleet     = "fleet"
 	cmdKindDirective = "directive"
@@ -54,6 +54,11 @@ type corpCommand struct {
 	RefID     int64
 	Result    string
 	Attempts  int
+	// Arm is the division the order was given to ("" for the corporation's own settings), and
+	// PosterCEO that the CEO gave it: a division head neither sees past its own arm nor
+	// overrules the CEO (corpscope.go).
+	Arm       string
+	PosterCEO bool
 }
 
 // Open reports whether the order is still being acted on.
@@ -93,6 +98,12 @@ type cmdWorkPayload struct {
 	Runs          int     `json:"runs"`
 	WagePerRun    float64 `json:"wagePerRun"`
 	Kind          string  `json:"kind,omitempty"`
+	// BPItemID pins the one original a research or copy order is for; Priority is the board's (0 =
+	// first); RequesterArm and DestFlag say whose it is and where it goes (corprequest.go).
+	BPItemID     int64  `json:"bpItemID,omitempty"`
+	Priority     int    `json:"priority,omitempty"`
+	RequesterArm string `json:"requesterArm,omitempty"`
+	DestFlag     int64  `json:"destFlag,omitempty"`
 }
 
 func (c corpCommand) fleet() (cmdFleetPayload, bool) {
@@ -131,7 +142,7 @@ func (c corpCommand) Title(m *Mod, ctx context.Context) string {
 		return "Directive"
 	case cmdKindWork:
 		if p, ok := c.work(); ok {
-			return "Build " + m.typeNameOr(ctx, p.ProductTypeID)
+			return workKindWords(p.Kind) + " " + m.typeNameOr(ctx, p.ProductTypeID)
 		}
 		return "Work order"
 	case cmdKindChat:
@@ -156,7 +167,7 @@ func (c corpCommand) Summary(m *Mod, ctx context.Context) string {
 		}
 	case cmdKindWork:
 		if p, ok := c.work(); ok {
-			return fmt.Sprintf("%d run(s) at %s per run", p.Runs, iskString(p.WagePerRun))
+			return fmt.Sprintf("%d %s at %s each", p.Runs, workUnit(p.Kind), iskString(p.WagePerRun))
 		}
 	case cmdKindChat:
 		return c.Note
@@ -179,13 +190,13 @@ func durationWords(mins int) string {
 // ── table access ────────────────────────────────────────────────────────────
 
 const cmdCols = `commandID, corporationID, posterID, posterHat, kind, payload, note, postedAt, expiresAt,
-	status, claimedBy, claimedAt, closedAt, refKind, refID, result, attempts`
+	status, claimedBy, claimedAt, closedAt, refKind, refID, result, attempts, arm, posterCEO`
 
 func scanCommand(sc interface{ Scan(...any) error }) (corpCommand, error) {
 	var c corpCommand
 	err := sc.Scan(&c.CommandID, &c.CorpID, &c.PosterID, &c.PosterHat, &c.Kind, &c.Payload, &c.Note,
 		&c.PostedAt, &c.ExpiresAt, &c.Status, &c.ClaimedBy, &c.ClaimedAt, &c.ClosedAt,
-		&c.RefKind, &c.RefID, &c.Result, &c.Attempts)
+		&c.RefKind, &c.RefID, &c.Result, &c.Attempts, &c.Arm, &c.PosterCEO)
 	return c, err
 }
 
@@ -224,9 +235,10 @@ func (m *Mod) postCorpCommand(ctx context.Context, c corpCommand) (int64, error)
 	now := clock.Unix()
 	res, err := m.db.ExecContext(ctx, `
 		INSERT INTO rolebot_corp_commands
-			(corporationID, posterID, posterHat, kind, payload, note, postedAt, expiresAt, status)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending')`,
-		c.CorpID, c.PosterID, c.PosterHat, c.Kind, c.Payload, c.Note, now, c.ExpiresAt)
+			(corporationID, posterID, posterHat, kind, payload, note, postedAt, expiresAt, arm, posterCEO, status)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')`,
+		c.CorpID, c.PosterID, clampText(c.PosterHat, 16), c.Kind, c.Payload, clampText(c.Note, 255), now, c.ExpiresAt,
+		c.Arm, c.PosterCEO)
 	if err != nil {
 		return 0, fmt.Errorf("postCorpCommand: %w", err)
 	}
@@ -243,7 +255,7 @@ func (m *Mod) setCommandStatus(ctx context.Context, id int64, status string, res
 	}
 	_, err := m.db.ExecContext(ctx, `
 		UPDATE rolebot_corp_commands SET status = ?, result = ?, closedAt = IF(? > 0, ?, closedAt)
-		 WHERE commandID = ?`, status, result, closed, closed, id)
+		 WHERE commandID = ?`, status, clampText(result, 255), closed, closed, id)
 	if err != nil {
 		return fmt.Errorf("setCommandStatus: %w", err)
 	}
@@ -255,7 +267,7 @@ func (m *Mod) claimCommand(ctx context.Context, id, claimedBy int64, refKind str
 	_, err := m.db.ExecContext(ctx, `
 		UPDATE rolebot_corp_commands
 		   SET status = 'claimed', claimedBy = ?, claimedAt = ?, refKind = ?, refID = ?, result = ?
-		 WHERE commandID = ?`, claimedBy, clock.Unix(), refKind, refID, result, id)
+		 WHERE commandID = ?`, claimedBy, clock.Unix(), refKind, refID, clampText(result, 255), id)
 	if err != nil {
 		return fmt.Errorf("claimCommand: %w", err)
 	}
@@ -265,6 +277,6 @@ func (m *Mod) claimCommand(ctx context.Context, id, claimedBy int64, refKind str
 // noteCommandAttempt counts a failed try and keeps why.
 func (m *Mod) noteCommandAttempt(ctx context.Context, id int64, why string) error {
 	_, err := m.db.ExecContext(ctx, `
-		UPDATE rolebot_corp_commands SET attempts = attempts + 1, result = ? WHERE commandID = ?`, why, id)
+		UPDATE rolebot_corp_commands SET attempts = attempts + 1, result = ? WHERE commandID = ?`, clampText(why, 255), id)
 	return err
 }

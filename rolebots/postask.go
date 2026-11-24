@@ -64,15 +64,15 @@ func detailPosSurvey(m *Mod, ctx context.Context, st *SimState) string {
 	return fmt.Sprintf("%s: %d moon(s) surveyed", systemNameOf(ctx, m, so.SystemID), so.MoonsDone)
 }
 
-// posErrandDue is plan()'s pre-emption for the corporation's boards: a pilot of a bot-run
-// corporation with errands posted and nothing in hand carries a leg, makes a buy trip or runs a
+// posErrandDue is plan()'s pre-emption for the corporation's boards: a pilot of a bot-run or
+// human-chaired corporation with errands posted and nothing in hand carries a leg, makes a buy trip or runs a
 // survey before its own appetites get a say; for everybody else it is a map read. Only the
 // tower-specific errands (staging, tower jobs, surveys) are behind StarbasePower.
 func (m *Mod) posErrandDue(ctx context.Context, b *botRun) (bool, error) {
 	if b == nil || b.CorpID == 0 || b.State == nil {
 		return false, nil
 	}
-	if _, ok := managedCEO(b.CorpID); !ok {
+	if !corpDeskRun(b.CorpID) {
 		return false, nil
 	}
 	// A leg in hand is finished whatever the marks say.

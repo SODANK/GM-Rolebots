@@ -341,11 +341,20 @@ func (m *Mod) ceoLog(ctx context.Context, c *corpCEO, power, verb string, subjec
 		actorID = a.CharID
 	}
 	at := clock.Unix()
+	ceoID := c.CharID
+	if c.Origin == ceoOriginHuman {
+		// The chair is a person and c.CharID the bot acting for it (corpchair.go).
+		ceoID = m.corpCEOID(ctx, c.CorpID)
+		if actorID == 0 {
+			actorID = c.CharID
+			detail = m.charNameOr(ctx, c.CharID) + " " + detail
+		}
+	}
 	if _, err := m.db.ExecContext(ctx, `
 		INSERT INTO rolebot_ceo_actions
 			(corporationID, ceoID, actorID, at, power, verb, subjectID, amount, detail)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		c.CorpID, c.CharID, actorID, at, power, verb, subjectID, amount, truncate(detail, 255)); err != nil {
+		c.CorpID, ceoID, actorID, at, power, verb, subjectID, amount, truncate(detail, 255)); err != nil {
 		rlogf("rolebots: CEO ledger corp %d: %v", c.CorpID, err)
 	}
 	if tc := thinkCacheOf(ctx, c.CorpID); tc != nil {
@@ -358,6 +367,10 @@ func (m *Mod) ceoLog(ctx context.Context, c *corpCEO, power, verb string, subjec
 	m.logBot(c.CharID, logInfo, "ceo", "%s", detail)
 	if actorID != 0 && actorID != c.CharID {
 		m.logBot(actorID, logInfo, "corp", "%s", detail)
+	}
+	// A human chair speaks for itself: the ledger line is the whole record.
+	if c.Origin == ceoOriginHuman {
+		return
 	}
 	// An NPC chair (npcchair.go) keeps its ledger and its chat line, but
 	// sends no bulletins and has no alliance.
@@ -600,7 +613,13 @@ func (m *Mod) installCEO(ctx context.Context, charID, corpID int64, origin, by s
 	if err := saveCEO(ctx, m.db, c); err != nil {
 		return err
 	}
+	if _, was := humanChaired(corpID); was {
+		m.closeChairOrders(ctx, corpID, charID)
+	}
 	m.refreshCEOIndex(ctx)
+	m.refreshHumanChairIndex(ctx)
+	// A bot CEO deals its own division heads.
+	m.dropHeads(ctx, corpID)
 	forgetCorpHome(charID)
 	m.syncPresence()
 
@@ -667,7 +686,13 @@ func (m *Mod) removeCEO(ctx context.Context, corpID int64, why string) error {
 		 WHERE clientCorpID = ? AND status IN ('open', 'haggling')`, clock.Unix(), corpID); err != nil {
 		return fmt.Errorf("removeCEO merc jobs: %w", err)
 	}
+	// The weekly envelopes were the bot CEO's budget (corpenvelope.go); left behind they would
+	// refuse a human chair's requisitions.
+	if _, err := m.db.ExecContext(ctx, `DELETE FROM rolebot_corp_envelope WHERE corporationID = ?`, corpID); err != nil {
+		rlogf("rolebots: removeCEO envelopes of corp %d: %v", corpID, err)
+	}
 	m.refreshCEOIndex(ctx)
+	m.refreshHumanChairIndex(ctx)
 	return nil
 }
 
@@ -858,6 +883,7 @@ var (
 // only. Each pass first runs reconcileCEOSeats.
 func (m *Mod) startCEOSweep() {
 	m.refreshCEOIndex(context.Background())
+	m.refreshHumanChairIndex(context.Background())
 	m.registerPeriodic("rolebot-ceo-think", ceoSweepEveryTicks, func(uint64) bool {
 		if !Master() {
 			return true
@@ -885,6 +911,7 @@ func (m *Mod) ceoThinkPass(ctx context.Context) {
 		m.refreshArmIndex(ctx)
 		m.refreshPostIndex(ctx)
 		m.reconcileCEOSeats(ctx)
+		m.refreshHumanChairIndex(ctx)
 	}
 	if now-ceoPrunedAt.Load() >= ceoPruneEverySec {
 		ceoPrunedAt.Store(now)

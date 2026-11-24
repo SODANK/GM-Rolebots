@@ -82,7 +82,8 @@ func (m *Mod) outsourceStaleLegs(ctx context.Context, c *corpCEO) {
 			continue
 		}
 		half := l.PostedAt + (l.Deadline-l.PostedAt)/2
-		if now < half || l.FromKind != haulFromOffice || l.ToKind != haulToOffice {
+		// The chair's own haul stays on its board: a contract would leave in a bot's name.
+		if now < half || l.FromKind != haulFromOffice || l.ToKind != haulToOffice || l.PostedBy == haulByChair {
 			continue
 		}
 		if err := m.issueLegContract(ctx, c, l); err != nil {

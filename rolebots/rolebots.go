@@ -409,6 +409,7 @@ func (m *Mod) Init(ctx *modapi.Context) error {
 	m.reconcileCorpTitlesAtBoot(bctx)
 	// Its officers (corpstaff.go): treasurer, recruitment, departments.
 	m.startStaffDeskSweep()
+	m.startHumanChairSweep()
 	// NPC chairs (npcchair.go): an NPC corporation run by its own NPC CEO.
 	// The index loads now so the directive term reads it from the first plan.
 	m.refreshNPCChairIndex(bctx)

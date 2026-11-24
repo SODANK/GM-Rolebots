@@ -204,7 +204,13 @@ type divNeeds struct {
 	HumanNamed map[int]bool
 	// Occupied is a division holding anything at all in any office.
 	Occupied map[int]bool
+	// Pin is the chair's own choice per purpose (corphangars.go): a division to hold it, or
+	// pinNone for no division at all. A purpose with no entry is the allocator's to place.
+	Pin map[divPurpose]int
 }
+
+// pinNone is a pin that keeps a purpose out of every division.
+const pinNone = -1
 
 // divMove is a war chest that must leave its division: everything in From
 // moves to To (0 = Materials, when there is nowhere better).
@@ -225,6 +231,14 @@ func assignDivisions(in divNeeds) (map[divPurpose]int, []divMove) {
 	evicted := map[divPurpose]int{}
 
 	for _, pur := range warChestOrder {
+		// The chair's pin first. A pinned division a desk or a human has claimed since is no
+		// pin: the purpose is then placed as if nothing had been pinned.
+		if pin := in.Pin[pur]; pin > 0 && !claimed(pin) {
+			out[pur] = pin
+			continue
+		} else if pin == pinNone {
+			continue
+		}
 		d := in.Have[pur]
 		if d == 0 {
 			continue
@@ -266,7 +280,7 @@ func assignDivisions(in divNeeds) (map[divPurpose]int, []divMove) {
 	}
 
 	for _, pur := range warChestOrder {
-		if _, ok := out[pur]; ok {
+		if _, ok := out[pur]; ok || in.Pin[pur] == pinNone {
 			continue
 		}
 		from, wasEvicted := evicted[pur]
@@ -278,6 +292,21 @@ func assignDivisions(in divNeeds) (map[divPurpose]int, []divMove) {
 			out[pur] = to
 		}
 		if wasEvicted {
+			moves = append(moves, divMove{Purpose: pur, From: from, To: to})
+		}
+	}
+	// A purpose pinned away from the division it stood in takes its stock along, unless another
+	// purpose still lives there.
+	for _, pur := range warChestOrder {
+		from, to := in.Have[pur], out[pur]
+		if in.Pin[pur] <= 0 || from == 0 || to == 0 || from == to {
+			continue
+		}
+		stays := false
+		for other, d := range out {
+			stays = stays || (other != pur && d == from && in.Have[other] == from)
+		}
+		if !stays {
 			moves = append(moves, divMove{Purpose: pur, From: from, To: to})
 		}
 	}
@@ -472,9 +501,18 @@ func (m *Mod) ensureCorpDivisions(ctx context.Context, c *corpCEO, facts *CorpFa
 		return fmt.Errorf("divisions names: %w", err)
 	}
 
+	pins, err := m.divPins(ctx, c.CorpID)
+	if err != nil {
+		return fmt.Errorf("divisions pins: %w", err)
+	}
 	borrowed := map[int]bool{}
 	for _, d := range have.div {
 		borrowed[d] = true
+	}
+	for _, d := range pins {
+		if d > 0 {
+			borrowed[d] = true // the chair chose it for the war chest, whatever it holds
+		}
 	}
 	claimed := legacyDeskNeeds(facts.Policy.Tags)
 	for d := range occ {
@@ -495,6 +533,7 @@ func (m *Mod) ensureCorpDivisions(ctx context.Context, c *corpCEO, facts *CorpFa
 		DeskClaimed: claimed,
 		HumanNamed:  human,
 		Occupied:    occ,
+		Pin:         pins,
 	})
 
 	for _, mv := range moves {
@@ -542,6 +581,29 @@ func (m *Mod) ensureCorpDivisions(ctx context.Context, c *corpCEO, facts *CorpFa
 	p := &divProfile{CorpID: c.CorpID, div: next}
 	m.nameWarChestDivisions(ctx, c.CorpID, facts.Name, p, names, human)
 	return nil
+}
+
+// divPins is the chair's own choices (corphangars.go): purpose to a division, or pinNone. A purpose
+// the allocator places has no entry.
+func (m *Mod) divPins(ctx context.Context, corpID int64) (map[divPurpose]int, error) {
+	out := map[divPurpose]int{}
+	rows, err := m.db.QueryContext(ctx,
+		`SELECT purpose, division FROM rolebot_corp_div_pins WHERE corporationID = ?`, corpID)
+	if err != nil {
+		return out, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var pur string
+		var d int
+		if err := rows.Scan(&pur, &d); err != nil {
+			return out, err
+		}
+		if d == pinNone || (d >= 1 && d <= 7) {
+			out[divPurpose(pur)] = d
+		}
+	}
+	return out, rows.Err()
 }
 
 // moveDivisionStock moves everything in one division to another across every

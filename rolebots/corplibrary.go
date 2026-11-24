@@ -36,7 +36,6 @@ const (
 // reconcileLibrary brings rolebot_corp_library in line with the offices, and
 // files any loose print into the library division.
 func (m *Mod) reconcileLibrary(ctx context.Context, corpID int64) (int, error) {
-	now := clock.Unix()
 	// Prints left in Materials or Production go on the shelf where builders
 	// look for them. Never one in a job (flag 111): its flag is the job's.
 	if _, err := m.db.ExecContext(ctx, `
@@ -48,6 +47,13 @@ func (m *Mod) reconcileLibrary(ctx context.Context, corpID int64) (int, error) {
 		corpDivLibrary, corpID, corpDivMaterials, corpDivProduct); err != nil {
 		return 0, fmt.Errorf("library shelve: %w", err)
 	}
+	return m.indexLibrary(ctx, corpID)
+}
+
+// indexLibrary brings rolebot_corp_library in line with the offices and moves nothing: a human
+// chair's prints stay in the division its members put them in.
+func (m *Mod) indexLibrary(ctx context.Context, corpID int64) (int, error) {
+	now := clock.Unix()
 	res, err := m.db.ExecContext(ctx, `
 		INSERT INTO rolebot_corp_library (itemID, corporationID, bpTypeID, stationID, source, acquiredAt, lastSeenAt)
 		SELECT e.itemID, o.corporationID, e.typeID, o.stationID, 'found', ?, ?
@@ -500,7 +506,7 @@ func (m *Mod) fundPO(ctx context.Context, po *corpPO, ask float64) error {
 	}
 	// Checked again at the counter, hours after posting, because the treasury may have been spent. This
 	// order's own reservation is added back. A fund-backed order (corpfund.go) is measured against the wallet alone.
-	if c, _ := getCEO(ctx, m.db, po.CorpID); c != nil && !m.poFundBacked(ctx, po.POID) {
+	if c := m.deskCEO(ctx, po.CorpID); c != nil && !m.poFundBacked(ctx, po.POID) {
 		ch := poCharterOf(ctx, m, c)
 		free, _, ferr := m.corpFreeCapital(ctx, po.CorpID, ch)
 		if ferr != nil {

@@ -18,6 +18,11 @@ func (m *Mod) takeOrgCommand(ctx context.Context, c corpCommand) bool {
 	who := m.charNameOr(ctx, c.PosterID)
 	hold := func(days int) int64 { return clock.Unix() + int64(days)*86400 }
 	live := func(holdUntil int64, refKind string, refID int64, result string) {
+		// One order of a setting is in force at a time: the newest.
+		_, _ = m.db.ExecContext(ctx, `
+			UPDATE rolebot_corp_commands SET status = ?, result = 'replaced by a newer order', closedAt = ?
+			 WHERE corporationID = ? AND kind = ? AND status = ? AND commandID <> ?`,
+			cmdDone, clock.Unix(), c.CorpID, c.Kind, cmdLive, c.CommandID)
 		_ = m.claimCommand(ctx, c.CommandID, c.PosterID, refKind, refID, result)
 		_, _ = m.db.ExecContext(ctx, `UPDATE rolebot_corp_commands SET status = 'live', expiresAt = ? WHERE commandID = ?`,
 			holdUntil, c.CommandID)
@@ -45,6 +50,8 @@ func (m *Mod) takeOrgCommand(ctx context.Context, c corpCommand) bool {
 		}
 		pol := facts.Policy
 		pol.CorpID = c.CorpID
+		p.Prev, p.Saved = append([]string(nil), pol.Tags...), true
+		m.keepPayload(ctx, c.CommandID, p)
 		pol.Tags = append([]string(nil), p.Tags...)
 		if err := saveCorpPolicy(ctx, m.db, &pol); err != nil {
 			refuse("the policy could not be written")
@@ -61,8 +68,12 @@ func (m *Mod) takeOrgCommand(ctx context.Context, c corpCommand) bool {
 			refuse("no member named")
 			return true
 		}
-		if !m.isSynthetic(p.CharID) || m.charCorpID(ctx, p.CharID) != c.CorpID {
-			refuse("that pilot is not a member the module flies")
+		if m.charCorpID(ctx, p.CharID) != c.CorpID {
+			refuse("that pilot is not a member")
+			return true
+		}
+		if why := m.ceoHasSaid(ctx, m.commandScopeOf(ctx, c.CorpID, c.PosterID), c.CorpID, cmdKindSeat, p.CharID); why != "" {
+			refuse(strings.TrimSuffix(strings.ToLower(why[:1])+why[1:], "."))
 			return true
 		}
 		now := clock.Unix()
@@ -84,6 +95,8 @@ func (m *Mod) takeOrgCommand(ctx context.Context, c corpCommand) bool {
 		m.humanLog(ctx, c.CorpID, c.PosterID, "seat", p.CharID, 0, "%s seated %s as %s fleet commander", who,
 			m.charNameOr(ctx, p.CharID), p.Activity)
 		m.logBot(p.CharID, logInfo, "corp", "seated as %s fleet commander by the chair (%s)", p.Activity, who)
+		m.orderLetter(ctx, c, p.CharID, "You command "+strings.ToLower(activityLabel(p.Activity))+" fleets",
+			"You have been made a "+strings.ToLower(activityLabel(p.Activity))+" fleet commander of the corporation.<br>")
 		return true
 
 	case cmdKindIndustry:
@@ -122,39 +135,42 @@ func (m *Mod) takeOrgCommand(ctx context.Context, c corpCommand) bool {
 			refuse("no member named")
 			return true
 		}
-		if !m.isSynthetic(p.CharID) || m.charCorpID(ctx, p.CharID) != c.CorpID {
-			refuse("that pilot is not a member the module flies")
+		if m.charCorpID(ctx, p.CharID) != c.CorpID {
+			refuse("that pilot is not a member")
+			return true
+		}
+		if p.Arm != "" && !validArm(corpArm(p.Arm)) {
+			refuse("no division called " + p.Arm)
+			return true
+		}
+		// The rule the form was held to, asked again: the pilot may have been placed since.
+		rows, _ := m.loadArmRows(ctx, c.CorpID)
+		pos := m.armPositions(ctx, c.CorpID)[p.CharID]
+		cur := rows[p.CharID]
+		if why := placementRefusal(m.commandScopeOf(ctx, c.CorpID, c.PosterID), cur.Arm, corpArm(p.Arm), pos.Tier == armTierHead,
+			cur.AssignedBy != 0 && cur.AssignedBy == m.corpCEOID(ctx, c.CorpID)); why != "" {
+			refuse(strings.TrimSuffix(strings.ToLower(why[:1])+why[1:], "."))
+			return true
+		}
+		// A seat held in that division keeps its tier; roles move with the pilot.
+		tier := armTierMember
+		if pos.Arm == corpArm(p.Arm) {
+			tier = pos.Tier
+		}
+		if err := m.chairPlaceMember(ctx, c.CorpID, p.CharID, corpArm(p.Arm), tier, c.PosterID); err != nil {
+			rlogf("rolebots: place %d in %q: %v", p.CharID, p.Arm, err)
+			refuse("the division could not be written")
 			return true
 		}
 		if p.Arm == "" {
-			m.deleteArmRow(ctx, p.CharID)
-			m.refreshArmIndex(ctx)
 			done("arm", p.CharID, m.charNameOr(ctx, p.CharID)+" released to the pool")
 			m.humanLog(ctx, c.CorpID, c.PosterID, "arm", p.CharID, 0, "%s released %s to the pool", who, m.charNameOr(ctx, p.CharID))
+			m.orderLetter(ctx, c, p.CharID, "You are in no division", "You have been released from your division.<br>")
 			return true
 		}
-		valid := false
-		for _, a := range armOrder {
-			if string(a) == p.Arm {
-				valid = true
-			}
-		}
-		if !valid {
-			refuse("no arm called " + p.Arm)
-			return true
-		}
-		rows, _ := m.loadArmRows(ctx, c.CorpID)
-		row := rows[p.CharID]
-		row.CharID, row.CorpID = p.CharID, c.CorpID
-		if row.Arm != corpArm(p.Arm) {
-			row.Since = clock.Unix()
-		}
-		row.Arm, row.AssignedBy, row.SetBy = corpArm(p.Arm), c.PosterID, postSetHuman
-		if err := m.saveArmRow(ctx, row); err != nil {
-			refuse("the arm could not be written")
-			return true
-		}
-		m.refreshArmIndex(ctx)
+		m.orderLetter(ctx, c, p.CharID, "You work in "+armLabel(corpArm(p.Arm)),
+			"You have been assigned to <b>"+esp.IGBText(armLabel(corpArm(p.Arm)))+"</b>. What your division does, and who is in it, is on the "+
+				igbLink("/corp/", "Corporate Portal")+".<br>")
 		done("arm", p.CharID, m.charNameOr(ctx, p.CharID)+" to "+armLabel(corpArm(p.Arm)))
 		m.humanLog(ctx, c.CorpID, c.PosterID, "arm", p.CharID, 0, "%s placed %s in %s", who, m.charNameOr(ctx, p.CharID), armLabel(corpArm(p.Arm)))
 		m.logBot(p.CharID, logInfo, "corp", "placed in %s by the chair (%s)", armLabel(corpArm(p.Arm)), who)
@@ -166,8 +182,12 @@ func (m *Mod) takeOrgCommand(ctx context.Context, c corpCommand) bool {
 			refuse("no member or office named")
 			return true
 		}
-		if !m.isSynthetic(p.CharID) || m.charCorpID(ctx, p.CharID) != c.CorpID {
-			refuse("that pilot is not a member the module flies")
+		if m.charCorpID(ctx, p.CharID) != c.CorpID {
+			refuse("that pilot is not a member")
+			return true
+		}
+		if why := m.ceoHasSaid(ctx, m.commandScopeOf(ctx, c.CorpID, c.PosterID), c.CorpID, cmdKindPosting, p.CharID); why != "" {
+			refuse(strings.TrimSuffix(strings.ToLower(why[:1])+why[1:], "."))
 			return true
 		}
 		if !m.corpHasOfficeAt(ctx, c.CorpID, p.StationID) {
@@ -186,6 +206,23 @@ func (m *Mod) takeOrgCommand(ctx context.Context, c corpCommand) bool {
 		m.humanLog(ctx, c.CorpID, c.PosterID, "basepost", p.CharID, 0, "%s posted %s to %s", who,
 			m.charNameOr(ctx, p.CharID), m.stationLabel(ctx, p.StationID))
 		m.logBot(p.CharID, logInfo, "corp", "posted to %s by the chair (%s)", m.stationLabel(ctx, p.StationID), who)
+		m.orderLetter(ctx, c, p.CharID, "You are posted to "+m.stationLabel(ctx, p.StationID),
+			"Your base is now the corporation's office at <b>"+esp.IGBText(m.stationLabel(ctx, p.StationID))+"</b>.<br>")
+		return true
+
+	case cmdKindHangars:
+		p, ok := c.hangars()
+		if !ok {
+			refuse("the hangars could not be read")
+			return true
+		}
+		result, err := m.applyHangars(ctx, c, p)
+		if err != nil {
+			refuse(err.Error())
+			return true
+		}
+		done("hangars", c.CorpID, result)
+		m.humanLog(ctx, c.CorpID, c.PosterID, "hangars", c.CorpID, 0, "%s set the hangars: %s", who, result)
 		return true
 
 	case cmdKindBudget:
@@ -208,6 +245,8 @@ func (m *Mod) takeOrgCommand(ctx context.Context, c corpCommand) bool {
 			refuse("the corporation has no office at " + m.stationLabel(ctx, p.StationID))
 			return true
 		}
+		p.Prev, p.Saved = m.corpFleetOreStation(ctx, c.CorpID), true
+		m.keepPayload(ctx, c.CommandID, p)
 		if err := m.setCorpFleetOreStation(ctx, c.CorpID, p.StationID); err != nil {
 			refuse("the drop-off could not be written")
 			return true
@@ -227,6 +266,8 @@ func (m *Mod) takeOrgCommand(ctx context.Context, c corpCommand) bool {
 			refuse("the policy could not be read")
 			return true
 		}
+		p.Prev, p.Saved = pol.OreShare, true
+		m.keepPayload(ctx, c.CommandID, p)
 		pol.OreShare, pol.OreTarget, pol.OreAt = p.Share, p.Share, clock.Unix()
 		pol.OreWhy = "set by the chair (" + who + ")"
 		if err := m.saveCorpPolicyRow(ctx, pol); err != nil {
@@ -238,6 +279,57 @@ func (m *Mod) takeOrgCommand(ctx context.Context, c corpCommand) bool {
 		return true
 	}
 	return false
+}
+
+// keepPayload rewrites an order's payload: a setting remembers what it replaced.
+func (m *Mod) keepPayload(ctx context.Context, id int64, payload any) {
+	if _, err := m.db.ExecContext(ctx, `UPDATE rolebot_corp_commands SET payload = ? WHERE commandID = ?`,
+		encodeCommandPayload(payload), id); err != nil {
+		rlogf("rolebots: order payload %d: %v", id, err)
+	}
+}
+
+// undoOrgCommand puts back what a live setting or board order changed. Answers why it cannot, ""
+// when it has. The budget needs nothing: it is read off the live order.
+func (m *Mod) undoOrgCommand(ctx context.Context, c corpCommand) string {
+	if why, ok := m.undoBoardCommand(ctx, c); ok {
+		return why
+	}
+	const failed = "The setting could not be put back. Try again shortly."
+	switch c.Kind {
+	case cmdKindTags:
+		p, ok := c.tags()
+		facts, err := getAnyCorpFacts(ctx, m.db, c.CorpID)
+		if !ok || !p.Saved || err != nil || facts == nil {
+			return ""
+		}
+		pol := facts.Policy
+		pol.CorpID, pol.Tags = c.CorpID, p.Prev
+		if err := saveCorpPolicy(ctx, m.db, &pol); err != nil {
+			return failed
+		}
+		forgetCorp(c.CorpID)
+	case cmdKindOreDrop:
+		if p, ok := c.oreDrop(); ok && p.Saved {
+			if err := m.setCorpFleetOreStation(ctx, c.CorpID, p.Prev); err != nil {
+				return failed
+			}
+		}
+	case cmdKindOreDesk:
+		p, ok := c.oreDesk()
+		if !ok || !p.Saved {
+			return ""
+		}
+		pol, err := m.loadCorpPolicy(ctx, c.CorpID)
+		if err != nil {
+			return failed
+		}
+		pol.OreShare, pol.OreTarget, pol.OreAt, pol.OreWhy = p.Prev, p.Prev, clock.Unix(), "the chair's setting was withdrawn"
+		if err := m.saveCorpPolicyRow(ctx, pol); err != nil {
+			return failed
+		}
+	}
+	return ""
 }
 
 // followOrgCommand lets a held setting go when its hold runs out. Reports

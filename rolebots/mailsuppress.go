@@ -37,7 +37,7 @@ func (m *Mod) installMailSuppression() {
 	// The corporation desk's link signer (corpdesk.go) reads its secret through the
 	// module; wired here because this runs at every Init.
 	deskMod = m
-	evedb.MailboxSuppressed = m.isSynthetic
+	evedb.MailboxSuppressed = m.mailSuppressed
 	// The R&D patent lottery (db/rndlottery.go) scales a synthetic pilot's tickets.
 	// It shares the mail gate's predicate and cache, so one invalidation clears both.
 	evedb.SyntheticPilot = m.isSynthetic
@@ -96,6 +96,63 @@ func invalidateBotMailboxes() {
 	botMailboxMu.Lock()
 	botMailboxAt = time.Time{}
 	botMailboxMu.Unlock()
+	personSeatMu.Lock()
+	personSeatAt = time.Time{}
+	personSeatMu.Unlock()
+}
+
+// A roster character the operator switched off (enabled = 0) is one a person plays: isSynthetic still
+// counts it (it has a roster row), but it must get its mail and its own corporation's Management.
+// Same TTL cache as the roster; a failed reload keeps the last answer.
+var (
+	personSeatMu  sync.RWMutex
+	personSeatSet map[int64]struct{}
+	personSeatAt  time.Time
+)
+
+// personSeat reports whether charID is a switched-off roster character on an account that is not a
+// generated RoleBot<N> one.
+func (m *Mod) personSeat(charID int64) bool {
+	if charID == 0 || m.db == nil {
+		return false
+	}
+	personSeatMu.RLock()
+	if !personSeatAt.IsZero() && clock.Now().Sub(personSeatAt) < botMailboxTTL {
+		_, ok := personSeatSet[charID]
+		personSeatMu.RUnlock()
+		return ok
+	}
+	personSeatMu.RUnlock()
+
+	personSeatMu.Lock()
+	defer personSeatMu.Unlock()
+	if !personSeatAt.IsZero() && clock.Now().Sub(personSeatAt) < botMailboxTTL {
+		_, ok := personSeatSet[charID]
+		return ok
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	set := make(map[int64]struct{})
+	if err := scanIDSet(ctx, m.db, set, `
+		SELECT r.characterID
+		  FROM rolebot_characters r
+		  JOIN character_ c ON c.characterID = r.characterID
+		  LEFT JOIN account a ON a.accountID = c.accountID
+		 WHERE r.enabled = 0
+		   AND (a.accountName IS NULL OR LOWER(a.accountName) NOT REGEXP '^rolebot[0-9]+$')`); err != nil {
+		rlogf("rolebots: person-seat roster reload: %v", err)
+		_, ok := personSeatSet[charID]
+		return ok
+	}
+	personSeatSet, personSeatAt = set, clock.Now()
+	_, ok := set[charID]
+	return ok
+}
+
+// mailSuppressed is the mail gate: a bot's mailbox is skipped, a person's is not, even when the
+// person plays a character that has a (switched off) roster row.
+func (m *Mod) mailSuppressed(charID int64) bool {
+	return m.isSynthetic(charID) && !m.personSeat(charID)
 }
 
 func loadBotMailboxes(db *sql.DB) (map[int64]struct{}, error) {

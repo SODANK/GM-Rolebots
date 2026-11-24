@@ -658,12 +658,22 @@ func (m *Mod) armPositions(ctx context.Context, corpID int64) map[int64]armPlace
 		}
 		out[id] = armPlacement{a, tier}
 	}
-	staff := m.loadStaffRows(ctx, corpID)
-	for id, r := range staff {
-		put(id, armOfPortfolio(r.Portfolio), armTierHead)
+	// Under a human CEO the heads are the appointments (corpheads.go) and nothing else: a portfolio
+	// left over from a bot CEO's day heads nothing.
+	_, human := humanChaired(corpID)
+	if human {
+		for a, h := range m.corpHeads(ctx, corpID) {
+			put(h.CharID, a, armTierHead)
+		}
+	} else {
+		for id, r := range m.loadStaffRows(ctx, corpID) {
+			put(id, armOfPortfolio(r.Portfolio), armTierHead)
+		}
 	}
 	if p, err := m.loadCorpPolicy(ctx, corpID); err == nil {
-		put(p.DirectorID, armIndustry, armTierHead)
+		if !human {
+			put(p.DirectorID, armIndustry, armTierHead)
+		}
 		put(p.DeputyID, armIndustry, armTierJunior)
 	}
 	// The Treasurer and the Personnel Managers, off their role bits.

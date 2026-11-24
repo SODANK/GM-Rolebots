@@ -814,7 +814,7 @@ func chainBackhaulOK(l *haulLeg, planID, systemID, now int64, room float64, vol 
 // returnLeftovers posts the cargo still in the carrier's hold back to the
 // staging office it came from.
 func (m *Mod) returnLeftovers(ctx context.Context, b *botRun, l *haulLeg) {
-	c, _ := getCEO(ctx, m.db, b.CorpID)
+	c := m.deskCEO(ctx, b.CorpID)
 	if c == nil {
 		return
 	}

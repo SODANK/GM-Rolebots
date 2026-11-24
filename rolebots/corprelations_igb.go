@@ -6,7 +6,7 @@ package rolebots
 // officer the letters on the desk with the answer to give. Public information only: an
 // identity header is a display hint, never authorization, so it shows tiers, never numbers.
 // The answer is the one write and takes the portal key (portalkey.go) through the
-// preview-then-confirm shape of the Orders page, with GET forms each outside any table.
+// preview-then-confirm shape of the Management page, with GET forms each outside any table.
 
 import (
 	"context"
@@ -184,13 +184,12 @@ func (m *Mod) relationsAnswerSubmit(ctx context.Context, pg igbPage, charID, cor
 		for k, v := range map[string]string{"form": "answer", "letter": strconv.FormatInt(l.ID, 10), "do": q.Get("do"), "confirm": "1"} {
 			b.WriteString(`<input type="hidden" name="` + k + `" value="` + attrEsc(v) + `">`)
 		}
-		b.WriteString(keyField(q))
+		b.WriteString(mgText("Portal key:", "key", q.Get("key"), 22, "") + "<br>")
 		b.WriteString(`<input type="submit" value="` + strings.ToUpper(verb[:1]) + verb[1:] + ` the proposal"></form><br>`)
 		return b.String()
 	}
 	if err := m.verifyPortalKey(ctx, charID, corpID, strings.TrimSpace(q.Get("key"))); err != nil {
-		return pg.ordersBanner("That portal key is not yours, or has lapsed. "+
-			`<a href="`+esp.IGBHost()+ordersPath+`?key=request">Request a key</a> on the Orders page.`, true)
+		return pg.keyAskBanner()
 	}
 	why := "answered on the Corporate Portal by " + m.charNameOr(ctx, charID)
 	if err := m.answerLetter(ctx, l, charID, accept, why); err != nil {

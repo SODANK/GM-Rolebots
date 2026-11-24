@@ -261,7 +261,17 @@ func (m *Mod) printMoveDesk(ctx context.Context, c *corpCEO, ch Charter, factory
 		return
 	}
 	moving := m.movingItems(ctx, c.CorpID)
-	m.planOriginalMoves(ctx, c, ch, labBases, moving)
+	if c.Origin == ceoOriginHuman {
+		// A human chair's originals stay where it keeps them unless it orders one moved, and a print
+		// under the chair's own order is not taken from under it.
+		if ws, err := m.queryWork(ctx, `WHERE corporationID = ? AND status = 'open' AND bpItemID <> 0 AND source = 'human'`, c.CorpID); err == nil {
+			for _, w := range ws {
+				moving[w.BPItemID] = true
+			}
+		}
+	} else {
+		m.planOriginalMoves(ctx, c, ch, labBases, moving)
+	}
 	if factory != 0 {
 		m.planCopyMoves(ctx, c, ch, factory, moving)
 	}
@@ -505,7 +515,8 @@ func (m *Mod) postPrintMove(ctx context.Context, c *corpCEO, ch Charter, itemID,
 	// it was posted any more.
 	if ws, err := m.queryWork(ctx, `WHERE corporationID = ? AND status = 'open' AND bpItemID = ?`, c.CorpID, itemID); err == nil {
 		for _, w := range ws {
-			if !m.workHasClaims(ctx, w.WorkID) {
+			// The chair's own order stands until the chair withdraws it.
+			if w.Source != fleetOrderHuman && !m.workHasClaims(ctx, w.WorkID) {
 				m.closeWork(ctx, w.WorkID, workVoid)
 			}
 		}
@@ -671,6 +682,9 @@ func (m *Mod) humanClaimPrintMove(ctx context.Context, moveID, charID int64) (*p
 		}
 		return nil, errors.New("a copy goes with a member posted at the office it leaves")
 	}
+	if m.lockedByVote(ctx, mv.CorpID, mv.ItemID) {
+		return nil, errors.New("the print is locked down")
+	}
 	now := clock.Unix()
 	res, err := m.db.ExecContext(ctx, `
 		UPDATE rolebot_corp_print_moves SET status = 'claimed', carrierID = ?, human = 1, claimedAt = ?, note = ''
@@ -731,7 +745,7 @@ func (m *Mod) printMoveDue(ctx context.Context, b *botRun) (bool, error) {
 	if b == nil || b.CorpID == 0 || b.State == nil {
 		return false, nil
 	}
-	if _, ok := managedCEO(b.CorpID); !ok || !printMovesOn() {
+	if !corpDeskRun(b.CorpID) || !printMovesOn() {
 		return false, nil
 	}
 	if b.State.Data.IndPrintMove != 0 {
@@ -827,6 +841,10 @@ func (m *Mod) printMoveStep(ctx context.Context, b *botRun) error {
 		if _, ok := m.ensureRunabout(ctx, b, "carrying a print"); !ok {
 			m.reopenPrintMove(ctx, mv)
 			return finish("had no ship to carry its corporation's print in")
+		}
+		if m.lockedByVote(ctx, mv.CorpID, mv.ItemID) {
+			m.closePrintMove(ctx, mv, moveVoid, "the print was locked down")
+			return finish("found the print it came for locked down")
 		}
 		res, err := m.db.ExecContext(ctx, `
 			UPDATE entity SET locationID = ?, flag = 5

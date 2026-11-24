@@ -91,6 +91,10 @@ func (m *Mod) registerESP() {
 	// The desk pages are sections of the core's Corporate Portal (/corp/). The /ig/
 	// addresses stay registered with the same handlers because sent letters carry them.
 	esp.CorpPortalSections = append(esp.CorpPortalSections,
+		// The desk of a human CEO and the division heads (corpmanage_igb.go), beside Overview and in
+		// nobody else's menu.
+		esp.CorpPortalSection{Key: "management", Label: "Management", Path: managePath, Order: 1, Handler: m.handleIGBCorpManagement,
+			Visible: m.managementVisible},
 		esp.CorpPortalSection{Key: "bulletins", Label: "Bulletins", Path: "/corp/bulletins", Order: 2, Handler: m.handleIGBCorpNews},
 		// The job board (corpassign_igb.go): work the departments post for a pilot to take.
 		esp.CorpPortalSection{Key: "assignments", Label: "Assignments", Path: assignBoardPortalPath, Order: 2, Handler: m.handleIGBCorpAssignments},
@@ -104,7 +108,6 @@ func (m *Mod) registerESP() {
 		esp.CorpPortalSection{Key: "trade", Label: "Trade", Path: "/corp/trade", Order: 8, Handler: m.handleIGBCorpTrade},
 		esp.CorpPortalSection{Key: "shares", Label: "Shares", Path: "/corp/shares", Order: 9, Handler: m.handleIGBCorpShares},
 		esp.CorpPortalSection{Key: "ops", Label: "Operations", Path: "/corp/ops", Order: 10, Handler: m.handleIGBCorpOps},
-		esp.CorpPortalSection{Key: "orders", Label: "Orders", Path: "/corp/orders", Order: 11, Handler: m.handleIGBCorpOrders},
 		esp.CorpPortalSection{Key: "relations", Label: "Relations", Path: relationsPath, Order: 12, Handler: m.handleIGBCorpRelations},
 		esp.CorpPortalSection{Key: "alliance", Label: "Alliance", Path: alliancePortalPath, Order: 13, Handler: m.handleIGBCorpAlliance},
 		// Every department's requests of the others, and the hangar each goes
@@ -117,7 +120,9 @@ func (m *Mod) registerESP() {
 	esp.CorpPortalChartered = npcChaired
 	esp.IGBModuleHandlers["/ig/corprelations"] = m.handleIGBCorpRelations
 	esp.IGBModuleHandlers["/ig/corpops"] = m.handleIGBCorpOps
-	esp.IGBModuleHandlers["/ig/corporders"] = m.handleIGBCorpOrders
+	// Management's old addresses, which sent letters carry.
+	esp.IGBModuleHandlers["/corp/orders"] = m.handleIGBCorpManagement
+	esp.IGBModuleHandlers["/ig/corporders"] = m.handleIGBCorpManagement
 	// Work-order addresses in sent letters serve the Industry page directly.
 	esp.IGBModuleHandlers["/ig/corpwork"] = m.handleIGBCorpIndustry
 	esp.IGBModuleHandlers["/corp/work"] = m.handleIGBCorpIndustry

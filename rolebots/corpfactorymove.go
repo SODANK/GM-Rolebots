@@ -170,6 +170,16 @@ func (m *Mod) movableStock(ctx context.Context, corpID, officeID int64) ([]moveS
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
+	if _, human := humanChaired(corpID); human {
+		// What its members voted locked down stays (corpvault.go lockedByVote).
+		kept := out[:0]
+		for _, s := range out {
+			if !s.Print || !m.lockedByVote(ctx, corpID, s.ItemID) {
+				kept = append(kept, s)
+			}
+		}
+		out = kept
+	}
 	if len(ids) > 0 {
 		if vals, err := evedb.TypeValues(ctx, m.db, ids); err == nil {
 			for i := range out {
@@ -240,7 +250,7 @@ func (m *Mod) corpMoveDue(ctx context.Context, b *botRun) (bool, error) {
 	if b == nil || b.CorpID == 0 || b.State == nil || b.State.Data.IndTypeID != 0 {
 		return false, nil
 	}
-	if _, ok := managedCEO(b.CorpID); !ok {
+	if !corpDeskRun(b.CorpID) {
 		return false, nil
 	}
 	// Which corporations have a move open at all, shared for a minute: every

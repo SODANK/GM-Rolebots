@@ -106,7 +106,7 @@ const tmplGangs = gangTabs + `{{define "content"}}` + castTabsStyle + `
     <label class="row">Invitation lapses after (s) <input type="number" name="seatTTL" value="{{.SeatTTL}}" min="60" style="width:80px"></label>
     <br>
     <p><label><input type="checkbox" name="orders" {{if .CorpOrdersOn}}checked{{end}}> The chair gives orders on the portal</label>
-      <span class="gf-note">&mdash; a human CEO or Director posts fleet orders on the Orders page.</span></p>
+      <span class="gf-note">&mdash; a human CEO or division head posts fleet orders on the Management page.</span></p>
     <label class="row">Order lapses after (h) <input type="number" name="orderTTL" value="{{.OrderTTLHours}}" min="1" style="width:70px"></label>
     <label class="row">Tries before refusing <input type="number" name="orderRetries" value="{{.OrderRetries}}" min="1" style="width:70px"></label>
     <label class="row">Fleet orders in hand per corp <input type="number" name="fleetMaxOpen" value="{{.FleetMaxOpen}}" min="1" style="width:70px"></label>

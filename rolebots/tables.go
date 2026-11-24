@@ -1490,6 +1490,15 @@ func ensureTables(ctx context.Context, db *sql.DB) error {
 			assignedAt    BIGINT NOT NULL DEFAULT 0,
 			PRIMARY KEY (corporationID, purpose)
 		)`,
+		// The hangar a chair chose for a war-chest purpose (corphangars.go): division 1..7, or -1 for none. No row is the allocator's to place.
+		`CREATE TABLE IF NOT EXISTS rolebot_corp_div_pins (
+			corporationID BIGINT NOT NULL,
+			purpose       VARCHAR(12) NOT NULL,
+			division      TINYINT NOT NULL,
+			setBy         BIGINT NOT NULL DEFAULT 0,
+			since         BIGINT NOT NULL DEFAULT 0,
+			PRIMARY KEY (corporationID, purpose)
+		)`,
 		// The Armory and the Fleet Yard (corparmory.go): one row per kit the quartermaster planned or assembled.
 		// shipItemID is the assembled corporation hull (0 while planned); status planned | ready | issued.
 		`CREATE TABLE IF NOT EXISTS rolebot_corp_kit (
@@ -1624,7 +1633,7 @@ func ensureTables(ctx context.Context, db *sql.DB) error {
 			KEY idx_rbcpm_carrier (carrierID, status)
 		)`,
 		// The corporate portal key (portalkey.go): the secret a pilot pastes
-		// into the Orders page to prove the terminal is theirs. Hash only.
+		// into the Management page to prove the terminal is theirs. Hash only.
 		`CREATE TABLE IF NOT EXISTS rolebot_portal_keys (
 			characterID   BIGINT NOT NULL,
 			corporationID BIGINT NOT NULL,
@@ -2321,6 +2330,13 @@ func ensureTables(ctx context.Context, db *sql.DB) error {
 	if err := ensureArmTables(ctx, db); err != nil {
 		return err
 	}
+	// Who a human CEO put in charge of each division (corpheads.go), and the pay its wallet owes (corpowed.go).
+	if err := ensureHeadTables(ctx, db); err != nil {
+		return err
+	}
+	if err := ensureOwedTable(ctx, db); err != nil {
+		return err
+	}
 	// Finance's weekly envelopes per arm (corpenvelope.go).
 	if err := ensureEnvelopeTables(ctx, db); err != nil {
 		return err
@@ -2558,6 +2574,9 @@ func migrateCorpFleetColumns(ctx context.Context, db *sql.DB) error {
 		{"rolebot_corp_work", "destFlag", "BIGINT NOT NULL DEFAULT 0"},
 		{"rolebot_corp_work", "destStationID", "BIGINT NOT NULL DEFAULT 0"},
 		{"rolebot_corp_work", "reqID", "BIGINT NOT NULL DEFAULT 0"},
+		// The division an order was given to, and whether the CEO gave it (corpscope.go).
+		{"rolebot_corp_commands", "arm", "VARCHAR(16) NOT NULL DEFAULT ''"},
+		{"rolebot_corp_commands", "posterCEO", "TINYINT NOT NULL DEFAULT 0"},
 	} {
 		if err := addColumn(c.table, c.column, c.ddl); err != nil {
 			return err

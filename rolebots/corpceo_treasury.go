@@ -72,6 +72,10 @@ func (m *Mod) corpSigner(ctx context.Context, corpID int64) int64 {
 	if c, err := getCEO(ctx, m.db, corpID); err == nil && c != nil {
 		return c.CharID
 	}
+	// A person's chair: what its desk pays is paid by its order.
+	if id, ok := humanChaired(corpID); ok {
+		return id
+	}
 	return 0
 }
 

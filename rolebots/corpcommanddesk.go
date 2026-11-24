@@ -14,7 +14,7 @@ import (
 )
 
 // The order desk: what carries an order from the chair (corpcommands.go) out to
-// the bots and reports back. A human CEO or Director posts on the Orders page,
+// the bots and reports back. A human CEO or division head posts on the Management page,
 // which writes only a row. Every minute this lane takes each pending row, finds
 // the member that can carry it out (a commander for a fleet order, the board for
 // a work order, the directive table for a directive), follows it until done and
@@ -38,6 +38,7 @@ const (
 
 	commandDeskEveryTicks  = 60
 	commandDeskLaneTimeout = 90 * time.Second
+	commandOneTimeout      = 60 * time.Second
 	// workDeskMemoSec is how long "does this corporation run a work board"
 	// is remembered per corporation: the planner asks it per member per pass.
 	workDeskMemoSec = 60
@@ -130,12 +131,20 @@ func (m *Mod) commandDeskPass(ctx context.Context) {
 		lk.Lock()
 		func() {
 			defer lk.Unlock()
-			ctx := withOpLockHeld(ctx)
-			switch c.Status {
+			// An order may have been withdrawn while the lock was waited for.
+			cur, err := m.getCorpCommand(ctx, c.CommandID)
+			if err != nil || !cur.Open() {
+				return
+			}
+			// An order once begun is finished: the lane running out of time must not leave a row on
+			// a board with no order following it.
+			cctx, cancel := context.WithTimeout(context.WithoutCancel(withOpLockHeld(ctx)), commandOneTimeout)
+			defer cancel()
+			switch cur.Status {
 			case cmdPending:
-				m.commandTake(ctx, c)
+				m.commandTake(cctx, *cur)
 			default:
-				m.commandFollow(ctx, c)
+				m.commandFollow(cctx, *cur)
 			}
 		}()
 	}
@@ -153,6 +162,14 @@ func (m *Mod) commandTake(ctx context.Context, c corpCommand) {
 		m.mailCommandOutcome(ctx, c, "Order lapsed: "+c.Title(m, ctx), why)
 		return
 	}
+	why, err := m.chairAllowed(ctx, c)
+	if err != nil {
+		return // the database could not say; next pass
+	}
+	if why != "" {
+		m.refuseCommand(ctx, c, why)
+		return
+	}
 	switch c.Kind {
 	case cmdKindFleet:
 		m.takeFleetCommand(ctx, c)
@@ -161,7 +178,7 @@ func (m *Mod) commandTake(ctx context.Context, c corpCommand) {
 	case cmdKindWork:
 		m.takeWorkCommand(ctx, c)
 	default:
-		if !m.takeOrgCommand(ctx, c) {
+		if !m.takeOrgCommand(ctx, c) && !m.takeBoardCommand(ctx, c) {
 			_ = m.setCommandStatus(ctx, c.CommandID, cmdRefused, "an order of a kind the desk does not know")
 		}
 	}
@@ -170,7 +187,7 @@ func (m *Mod) commandTake(ctx context.Context, c corpCommand) {
 // commandFollow moves a claimed or live order along with what it became.
 func (m *Mod) commandFollow(ctx context.Context, c corpCommand) {
 	now := clock.Unix()
-	if m.followOrgCommand(ctx, c) {
+	if m.followOrgCommand(ctx, c) || m.followBoardCommand(ctx, c) {
 		return
 	}
 	switch c.Kind {
@@ -207,12 +224,16 @@ func (m *Mod) commandFollow(ctx context.Context, c corpCommand) {
 		}
 		switch {
 		case status == workDone || done >= wanted:
-			_ = m.setCommandStatus(ctx, c.CommandID, cmdDone, fmt.Sprintf("%d run(s) delivered", done))
-			m.mailCommandOutcome(ctx, c, "Work order delivered: "+c.Title(m, ctx), fmt.Sprintf("%d of %d run(s) delivered.", done, wanted))
+			unit := workUnit(workKindBuild)
+			if p, ok := c.work(); ok {
+				unit = workUnit(p.Kind)
+			}
+			_ = m.setCommandStatus(ctx, c.CommandID, cmdDone, fmt.Sprintf("%d %s delivered", done, unit))
+			m.mailCommandOutcome(ctx, c, "Work order delivered: "+c.Title(m, ctx), fmt.Sprintf("%d of %d %s delivered.", done, wanted, unit))
 		case status != "open":
 			_ = m.setCommandStatus(ctx, c.CommandID, cmdRefused, "the board withdrew it ("+status+")")
 		case done > 0 && c.Status == cmdClaimed:
-			_ = m.setCommandStatus(ctx, c.CommandID, cmdLive, fmt.Sprintf("%d of %d run(s) delivered", done, wanted))
+			_ = m.setCommandStatus(ctx, c.CommandID, cmdLive, fmt.Sprintf("%d of %d delivered", done, wanted))
 		}
 	}
 }
@@ -467,6 +488,10 @@ func (m *Mod) takeWorkCommand(ctx context.Context, c corpCommand) {
 		m.commandRetry(ctx, c, "the corporation has no factory office to build at")
 		return
 	}
+	kind := p.Kind
+	if kind == "" {
+		kind = workKindBuild
+	}
 	prints, err := m.libraryPrints(ctx, c.CorpID, stationID)
 	if err != nil {
 		m.commandRetry(ctx, c, "the library could not be read")
@@ -474,37 +499,81 @@ func (m *Mod) takeWorkCommand(ctx context.Context, c corpCommand) {
 	}
 	have := false
 	for _, pr := range prints {
-		if pr.BPTypeID == p.BPTypeID {
+		if pr.BPTypeID == p.BPTypeID && (p.BPItemID == 0 || pr.ItemID == p.BPItemID) {
 			have = true
 			break
+		}
+	}
+	if !have && kind == workKindBuild {
+		// A build runs on a copy as well.
+		if copies, cerr := m.libraryCopies(ctx, c.CorpID, stationID); cerr == nil {
+			for _, pr := range copies {
+				have = have || pr.BPTypeID == p.BPTypeID
+			}
 		}
 	}
 	if !have {
 		_ = m.setCommandStatus(ctx, c.CommandID, cmdRefused,
 			"the library at "+m.stationLabel(ctx, stationID)+" holds no "+m.typeNameOr(ctx, p.BPTypeID))
 		m.mailCommandOutcome(ctx, c, "Work order refused: "+c.Title(m, ctx),
-			"The library at "+m.stationLabel(ctx, stationID)+" holds no original of that print.")
+			"The library at "+m.stationLabel(ctx, stationID)+" does not hold that print any more.")
 		return
 	}
-	kind := p.Kind
-	if kind == "" {
-		kind = workKindBuild
+	if p.BPItemID != 0 {
+		if why := m.printBusy(ctx, c.CorpID, p.BPItemID); why != "" {
+			m.refuseCommand(ctx, c, why)
+			return
+		}
+	}
+	if why := m.afford(ctx, c.CorpID, p.WagePerRun*float64(p.Runs)); why != "" {
+		m.commandRetry(ctx, c, why)
+		return
+	}
+	if kind != workKindBuild {
+		m.ensureLabBase(ctx, c.CorpID, stationID)
+	}
+	priority := p.Priority
+	if priority == 0 {
+		priority = 100
+	}
+	note := m.postedLine(ctx, c)
+	if kind == workKindCopy {
+		if f, ferr := m.printFactsFor(ctx, p.BPTypeID); ferr == nil {
+			note = clampText(fmt.Sprintf("%d-run copies, %s", f.CopyRuns, note), 255)
+		}
 	}
 	workID, err := m.postWork(ctx, corpWork{
 		CorpID: c.CorpID, Kind: kind, BPTypeID: p.BPTypeID, ProductTypeID: p.ProductTypeID, StationID: stationID,
-		RunsWanted: p.Runs, WagePerRun: p.WagePerRun, Purpose: "human", Priority: 100,
-		Note:     truncate("ordered by "+m.charNameOr(ctx, c.PosterID), 255),
+		RunsWanted: p.Runs, WagePerRun: p.WagePerRun, Purpose: "human", Priority: priority,
+		Note: note, BPItemID: p.BPItemID, RequesterArm: p.RequesterArm, DestFlag: p.DestFlag,
 		PostedBy: c.PosterID, Source: fleetOrderHuman,
 	})
-	if err != nil {
+	if err != nil && workID == 0 {
 		m.commandRetry(ctx, c, "the board refused it: "+err.Error())
 		return
 	}
 	forgetWorkDesk(c.CorpID)
 	_ = m.claimCommand(ctx, c.CommandID, c.PosterID, "work", workID, "on the board at "+m.stationLabel(ctx, stationID))
 	m.humanLog(ctx, c.CorpID, c.PosterID, "work", p.ProductTypeID, p.WagePerRun*float64(p.Runs),
-		"%s posted work: %d run(s) of %s at %s per run", m.charNameOr(ctx, c.PosterID), p.Runs,
-		m.typeNameOr(ctx, p.ProductTypeID), iskString(p.WagePerRun))
+		"%s posted work: %s %s, %d %s at %s each", m.charNameOr(ctx, c.PosterID), workKindWords(kind),
+		m.typeNameOr(ctx, p.ProductTypeID), p.Runs, workUnit(kind), iskString(p.WagePerRun))
+}
+
+// ensureLabBase makes an office an R&D base, so the members based there are offered its research
+// (corpWorkStation reads the purposes).
+func (m *Mod) ensureLabBase(ctx context.Context, corpID, stationID int64) {
+	for _, st := range m.armBaseStations(ctx, corpID, armResearch) {
+		if st == stationID {
+			return
+		}
+	}
+	if stationID == m.corpFactoryStation(ctx, corpID) {
+		return
+	}
+	m.claimOfficePurpose(ctx, corpID, stationID, officeLab)
+	if _, err := m.syncOfficePurposes(ctx, corpID); err != nil {
+		rlogf("rolebots: lab base %d of corp %d: %v", stationID, corpID, err)
+	}
 }
 
 // ── the work desk test ──────────────────────────────────────────────────────
@@ -524,12 +593,12 @@ func forgetWorkDesk(corpID int64) {
 }
 
 // corpHasWorkDesk reports whether a corporation runs a Production Board: a
-// bot CEO's always, any corporation's while the chair has work posted.
+// bot CEO's and a human chair's always, any other's while somebody has work posted.
 func (m *Mod) corpHasWorkDesk(ctx context.Context, corpID int64) bool {
 	if corpID == 0 {
 		return false
 	}
-	if _, ok := managedCEO(corpID); ok {
+	if corpDeskRun(corpID) {
 		return true
 	}
 	now := clock.Unix()
@@ -552,19 +621,22 @@ func (m *Mod) corpHasWorkDesk(ctx context.Context, corpID int64) bool {
 	return n > 0
 }
 
-// workDeskCorpIDs is every corporation with human-posted work open: the wage
-// sweep's scope beside the bot-run corporations.
+// workDeskCorpIDs is every corporation with a person's work open, or under a human chair with any:
+// the wage sweep's scope beside the bot-run corporations.
 func (m *Mod) workDeskCorpIDs(ctx context.Context) []int64 {
 	rows, err := m.db.QueryContext(ctx,
-		`SELECT DISTINCT corporationID FROM rolebot_corp_work WHERE status = 'open' AND source = 'human'`)
+		`SELECT corporationID, MAX(source = 'human') FROM rolebot_corp_work WHERE status = 'open' GROUP BY corporationID`)
 	if err != nil {
 		return nil
 	}
 	defer rows.Close()
 	var out []int64
 	for rows.Next() {
-		var id int64
-		if rows.Scan(&id) == nil {
+		var id, person int64
+		if rows.Scan(&id, &person) != nil {
+			continue
+		}
+		if _, human := humanChaired(id); human || person != 0 {
 			out = append(out, id)
 		}
 	}
@@ -590,7 +662,7 @@ func (m *Mod) humanLog(ctx context.Context, corpID, posterID int64, verb string,
 // corporation.
 func (m *Mod) mailCommandOutcome(ctx context.Context, c corpCommand, subject, body string) {
 	m.mailPilot(ctx, c.PosterID, c.CorpID, subject, body+
-		"<br><br>The order is on your Corporate Portal's Operations page.")
+		"<br><br>Your orders are on the "+igbLink(managePath, "Management page")+" of the Corporate Portal.")
 }
 
 // esp_YC words a unix time as a YC date for a result sentence.

@@ -3,7 +3,6 @@ package rolebots
 import (
 	"context"
 	"fmt"
-	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -12,21 +11,19 @@ import (
 	"gurimoon/esp"
 )
 
-// The Orders page's organisation forms (corpcommands_org.go): who commands,
-// who runs the industry desk, which arm and which office each member is
-// in, the corporation's identity, its budget, and what its fleets do with
-// their ore. Same shape as the fleet, directive and work forms
-// (corporders_igb.go): one GET form each outside any table, a preview, the
-// key, a confirm.
+// The Management page's settings (corpcommands_org.go), the CEO's alone: where the corporation's
+// effort goes, what it is, its budget, and what its fleets do with their ore. Also the field helpers
+// the page's forms share.
 
 func unixTime(unix int64) time.Time { return time.Unix(unix, 0) }
 
-// orgMember is a member the chair may place: a bot of the corporation.
+// orgMember is a member the chair may place or name.
 type orgMember struct {
 	CharID int64
 	Name   string
 }
 
+// orgMembers is the corporation's active bots, by name.
 func (m *Mod) orgMembers(ctx context.Context, corpID int64) []orgMember {
 	rows, err := m.db.QueryContext(ctx, `
 		SELECT ch.characterID, ch.characterName
@@ -85,334 +82,189 @@ func holdField(cur string, def string) string {
 	return ` <font size=3>held for </font><input type="text" name="days" size="3" value="` + attrEsc(cur) + `"><font size=3> day(s)</font>`
 }
 
-// writeOrgForms is the organisation half of the page.
-func (m *Mod) writeOrgForms(ctx context.Context, b *strings.Builder, pg igbPage, corpID int64, q url.Values) {
-	cur := func(form, k string) string {
-		if q.Get("form") == form {
-			return q.Get(k)
-		}
-		return ""
+// parseHold reads a hold's days.
+func (p *mgPage) parseHold(hidden map[string]string, def int) (int, string) {
+	v := strings.TrimSpace(p.q.Get("days"))
+	if v == "" {
+		return def, ""
 	}
-	host := esp.IGBHost()
-	open := func(form string) string {
-		return `<form action="` + host + ordersPath + `" method="get"><input type="hidden" name="form" value="` + form + `">`
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 1 || int64(n) > directiveHoldMax.Load() {
+		return 0, fmt.Sprintf("A setting is held for 1 to %d day(s).", directiveHoldMax.Load())
 	}
-	members := m.orgMembers(ctx, corpID)
-	heldLine := func(kind string) string {
-		if c := m.humanHold(ctx, corpID, kind); c != nil {
-			return pg.dim3("In force: "+esp.IGBText(orgHoldLine(c, m, ctx))) + "<br>"
-		}
-		return ""
-	}
+	hidden["days"] = v
+	return n, ""
+}
 
-	// Who commands.
-	esp.Section(b, pg.pal, "Fleet commanders")
-	b.WriteString(pg.dim3("A seated commander raises fleets of that kind on the formation sweep. A seat you give is kept until you release it.") + "<br>")
-	b.WriteString(open("seat"))
-	b.WriteString(`<font size=3>Member: </font>` + memberSelect("member", members, cur("seat", "member"), "") + ` `)
-	b.WriteString(`<font size=3>commands </font><select name="activity">`)
-	for _, a := range []struct{ slug, label string }{{ActMining, "Mining"}, {ActCombat, "Hunting"}, {ActSecurity, "Security"}, {ActPiracy, "Raiding"}} {
-		b.WriteString(selOpt(a.slug, a.label, cur("seat", "activity") == a.slug))
+// heldLine says what of a setting is in force.
+func (p *mgPage) heldLine(kind string) string {
+	if c := p.m.humanHold(p.ctx, p.corpID, kind); c != nil {
+		return p.pg.dim3("In force: "+esp.IGBText(orgHoldLine(c, p.m, p.ctx))) + "<br>"
 	}
-	b.WriteString(`</select> <font size=3>fleets</font> <select name="release">` +
-		selOpt("", "seat", cur("seat", "release") == "") + selOpt("1", "release", cur("seat", "release") == "1") + `</select><br>`)
-	b.WriteString(keyField(q) + `<input type="submit" value="Preview seat"></form><br>`)
+	return ""
+}
 
-	// Arms and postings.
-	esp.Section(b, pg.pal, "Arms and postings")
-	b.WriteString(pg.dim3("An arm is what a member's work leans toward; a posting is the office they live and work at. "+
-		"A placement you make is kept by the CEO's own passes.") + "<br>")
-	b.WriteString(open("arm"))
-	b.WriteString(`<font size=3>Member: </font>` + memberSelect("member", members, cur("arm", "member"), "") + ` `)
-	b.WriteString(`<font size=3>arm: </font><select name="arm">` + selOpt("", "the pool (no arm)", cur("arm", "arm") == ""))
-	for _, a := range lineArms {
-		b.WriteString(selOpt(string(a), armLabel(a), cur("arm", "arm") == string(a)))
+func (p *mgPage) settingPreview(line, note string) string {
+	return igbF3(line) + "<br>" + p.pg.dim3(note) + "<br><br>"
+}
+
+// settingForms is the corporation's own settings, on the CEO's Corporation page.
+func settingForms() []mgForm {
+	return []mgForm{
+		{Form: "directive", Icon: uiTile("07_07"), Title: "Set the directive", Short: "where effort goes",
+			Note: "Where the corporation's effort goes. Shares are relative; the push is how hard members lean toward it. " +
+				"Held for the days you say.",
+			Write: writeDirectiveForm, Parse: parseDirectiveForm},
+		{Form: "tags", Icon: logoTile, Title: "Identity", Short: "what the corporation is",
+			Note:  "What the corporation is, in up to three words the members act on: what its fleets do, what it recruits for, what it builds.",
+			Write: writeTagsForm, Parse: parseTagsForm},
+		{Form: "budget", Icon: uiTile("07_12"), Title: "Budget", Short: "reserve, stipends, levy",
+			Note: "The reserve is months of office rent no division spends below; stipends are the share of the week's surplus handed to members; " +
+				"the store markup and the buyback fraction price the company store and the ore bought from members; the levy takes a cut of members' harvest sales.",
+			Write: writeBudgetForm, Parse: parseBudgetForm},
+		{Form: "hangars", Icon: uiTile("17_01"), Title: "Hangars", Short: "where the war chest stands",
+			Note: "Which hangar the Armory, the Fleet Yard and Spoils stand in. Left automatic, the corporation places them where its fleets " +
+				"need them; choose one to put it somewhere yourself, or none to go without. Each division's members get the hangar roles " +
+				"for the hangars it owns.",
+			Write: writeHangarsForm, Parse: parseHangarsForm},
+		{Form: "oredrop", Icon: typeTile(17480), Title: "Fleet ore", Short: "where miners deliver",
+			Note:  "Where a mining fleet drops its ore: a corporation office, where each miner and hauler is paid for what was delivered, else each miner keeps its own.",
+			Write: writeOreDropForm, Parse: parseOreDropForm},
+		{Form: "oredesk", Icon: uiTile("17_01"), Title: "Ore desk", Short: "keep it or sell it",
+			Note:  "How much of the corporation's ore is kept for production rather than sold.",
+			Write: writeOreDeskForm, Parse: parseOreDeskForm},
 	}
-	b.WriteString(`</select><br>` + keyField(q) + `<input type="submit" value="Preview arm"></form>`)
-	offSel, offices := m.officeSelect(ctx, "station", corpID, cur("posting", "station"), "")
-	if offices > 0 {
-		b.WriteString(open("posting"))
-		b.WriteString(`<font size=3>Member: </font>` + memberSelect("member", members, cur("posting", "member"), "") + ` `)
-		b.WriteString(`<font size=3>posted to </font>` + offSel + `<br>` + keyField(q) + `<input type="submit" value="Preview posting"></form>`)
-	}
-	b.WriteString("<br>")
+}
 
-	// The industry desk.
-	esp.Section(b, pg.pal, "Industry desk")
-	b.WriteString(heldLine(cmdKindIndustry))
-	b.WriteString(pg.dim3(corpIndustryDirector+" runs the Production Board and the library; the deputy stands in.") + "<br>")
-	b.WriteString(open("industry"))
-	b.WriteString(`<font size=3>Director: </font>` + memberSelect("director", members, cur("industry", "director"), "") + ` `)
-	b.WriteString(`<font size=3>deputy: </font>` + memberSelect("deputy", members, cur("industry", "deputy"), "none"))
-	b.WriteString(holdField(cur("industry", "days"), "30") + `<br>` + keyField(q) + `<input type="submit" value="Preview desk"></form><br>`)
+// ── identity ────────────────────────────────────────────────────────────────
 
-	// Identity.
-	esp.Section(b, pg.pal, "Identity")
-	b.WriteString(heldLine(cmdKindTags))
-	b.WriteString(pg.dim3("What the corporation is, in up to three words the members act on: what its fleets do, what it recruits for, what it builds.") + "<br>")
-	b.WriteString(open("tags"))
+func writeTagsForm(p *mgPage, b *strings.Builder, _ corpArm) {
+	b.WriteString(p.heldLine(cmdKindTags) + p.open("tags"))
 	for i := 1; i <= ceoTagMax; i++ {
 		k := "tag" + strconv.Itoa(i)
-		b.WriteString(`<select name="` + k + `">` + selOpt("", "—", cur("tags", k) == ""))
+		b.WriteString(`<select name="` + k + `">` + selOpt("", "—", p.cur("tags", k, "") == ""))
 		for _, t := range ceoTagPool {
-			b.WriteString(selOpt(t, corpTagLabel(t), cur("tags", k) == t))
+			b.WriteString(selOpt(t, corpTagLabel(t), p.cur("tags", k, "") == t))
 		}
 		b.WriteString(`</select> `)
 	}
-	b.WriteString(holdField(cur("tags", "days"), "30") + `<br>` + keyField(q) + `<input type="submit" value="Preview identity"></form><br>`)
-
-	// The budget.
-	esp.Section(b, pg.pal, "Budget")
-	b.WriteString(heldLine(cmdKindBudget))
-	b.WriteString(pg.dim3("The reserve is months of office rent the corporation never spends below; stipends are the share of the week's surplus handed to members; "+
-		"the store markup and the buyback fraction price the company store and the ore it buys from members; the levy takes a cut of members' harvest sales.") + "<br>")
-	b.WriteString(open("budget"))
-	b.WriteString(`<font size=3>Reserve: </font><input type="text" name="reserve" size="4" value="` + attrEsc(cur("budget", "reserve")) + `"><font size=3> months</font> `)
-	b.WriteString(`<font size=3>Stipends: </font><input type="text" name="stipend" size="3" value="` + attrEsc(cur("budget", "stipend")) + `"><font size=3> %</font> `)
-	b.WriteString(`<font size=3>Store: cost + </font><input type="text" name="store" size="3" value="` + attrEsc(cur("budget", "store")) + `"><font size=3> %</font> `)
-	b.WriteString(`<font size=3>Buyback: </font><input type="text" name="buyback" size="3" value="` + attrEsc(cur("budget", "buyback")) + `"><font size=3> % of value</font> `)
-	b.WriteString(`<font size=3>Levy: </font><select name="levy">` + selOpt("", "off", cur("budget", "levy") == "") + selOpt("1", "on", cur("budget", "levy") == "1") + `</select>`)
-	b.WriteString(holdField(cur("budget", "days"), "30") + `<br>` + keyField(q) + `<input type="submit" value="Preview budget"></form><br>`)
-
-	// Ore.
-	esp.Section(b, pg.pal, "Ore")
-	b.WriteString(heldLine(cmdKindOreDrop) + heldLine(cmdKindOreDesk))
-	b.WriteString(pg.dim3("Where a mining fleet drops its ore (a corporation office, else each miner keeps its own), and how much of the corporation's ore the desk keeps for production rather than selling.") + "<br>")
-	dropSel, _ := m.officeSelect(ctx, "station", corpID, cur("oredrop", "station"), "fleets sell their own ore")
-	b.WriteString(open("oredrop"))
-	b.WriteString(`<font size=3>Fleet ore to: </font>` + dropSel + holdField(cur("oredrop", "days"), "30") + `<br>` + keyField(q) + `<input type="submit" value="Preview drop-off"></form>`)
-	b.WriteString(open("oredesk"))
-	b.WriteString(`<font size=3>Ore desk keeps </font><select name="share">`)
-	for _, s := range []struct{ v, l string }{{"0", "nothing — sell it all"}, {"25", "a quarter"}, {"50", "half"}, {"75", "three quarters"}, {"100", "all of it for production"}} {
-		b.WriteString(selOpt(s.v, s.l, cur("oredesk", "share") == s.v))
-	}
-	b.WriteString(`</select>` + holdField(cur("oredesk", "days"), "30") + `<br>` + keyField(q) + `<input type="submit" value="Preview ore desk"></form>`)
+	b.WriteString(holdField(p.cur("tags", "days", ""), "30") + `<br>` + p.submit("Preview identity"))
 }
 
-// parseOrgOrder validates one organisation form. Reports whether the form
-// was one of these.
-func (m *Mod) parseOrgOrder(ctx context.Context, pg igbPage, corpID int64, q url.Values, hidden map[string]string) (corpCommand, string, string, bool) {
-	days := func(def int) (int, string) {
-		v := strings.TrimSpace(q.Get("days"))
+func parseTagsForm(p *mgPage, _ corpArm, hidden map[string]string) ([]corpCommand, string, string) {
+	var tags []string
+	seen := map[string]bool{}
+	for i := 1; i <= ceoTagMax; i++ {
+		t := p.q.Get("tag" + strconv.Itoa(i))
+		if t == "" || seen[t] {
+			continue
+		}
+		if !containsStr(ceoTagPool, t) {
+			return nil, "", "That is not a word the corporation can be."
+		}
+		seen[t] = true
+		tags = append(tags, t)
+		hidden["tag"+strconv.Itoa(i)] = t
+	}
+	if len(tags) == 0 {
+		return nil, "", "Pick at least one word."
+	}
+	d, bad := p.parseHold(hidden, 30)
+	if bad != "" {
+		return nil, "", bad
+	}
+	return []corpCommand{{Kind: cmdKindTags, Payload: encodeCommandPayload(cmdTagsPayload{Tags: tags, HoldDays: d})}},
+		p.settingPreview(fmt.Sprintf("Declare the corporation a <b>%s</b> outfit, held %d day(s).", esp.IGBText(strings.Join(tags, " / ")), d),
+			"Fleets, recruiting and the desks read these."), ""
+}
+
+// ── the budget ──────────────────────────────────────────────────────────────
+
+func writeBudgetForm(p *mgPage, b *strings.Builder, _ corpArm) {
+	b.WriteString(p.heldLine(cmdKindBudget) + p.open("budget"))
+	b.WriteString(mgText("Reserve:", "reserve", p.cur("budget", "reserve", ""), 4, "months"))
+	b.WriteString(mgText("Stipends:", "stipend", p.cur("budget", "stipend", ""), 3, "%"))
+	b.WriteString(mgText("Store: cost +", "store", p.cur("budget", "store", ""), 3, "%"))
+	b.WriteString(mgText("Buyback:", "buyback", p.cur("budget", "buyback", ""), 3, "% of value"))
+	b.WriteString(`<font size=3>Levy: </font><select name="levy">` + selOpt("", "off", p.cur("budget", "levy", "") == "") +
+		selOpt("1", "on", p.cur("budget", "levy", "") == "1") + `</select>`)
+	b.WriteString(holdField(p.cur("budget", "days", ""), "30") + `<br>` + p.submit("Preview budget"))
+}
+
+func parseBudgetForm(p *mgPage, _ corpArm, hidden map[string]string) ([]corpCommand, string, string) {
+	bad := ""
+	num := func(field string, def, most float64) float64 {
+		v := strings.TrimSpace(p.q.Get(field))
 		if v == "" {
-			return def, ""
+			return def
 		}
-		n, err := strconv.Atoi(v)
-		if err != nil || n < 1 || int64(n) > directiveHoldMax.Load() {
-			return 0, fmt.Sprintf("A setting is held for 1 to %d day(s).", directiveHoldMax.Load())
+		f, err := strconv.ParseFloat(v, 64)
+		if err != nil || !(f >= 0 && f <= most) {
+			bad = "Stipends and buyback are percentages, store markup up to 200%, reserve up to 36 months."
+			return 0
 		}
-		hidden["days"] = v
-		return n, ""
+		hidden[field] = v
+		return f
 	}
-	member := func(field string) (int64, string) {
-		id, _ := strconv.ParseInt(q.Get(field), 10, 64)
-		if id == 0 {
-			return 0, "Pick a member."
-		}
-		if !m.isSynthetic(id) || m.charCorpID(ctx, id) != corpID {
-			return 0, "That pilot is not a member the module flies."
-		}
-		hidden[field] = q.Get(field)
-		return id, ""
+	reserve, stipend := num("reserve", 3, 36), num("stipend", 10, 100)
+	store, buyback := num("store", 5, 200), num("buyback", 85, 100)
+	if bad != "" {
+		return nil, "", bad
 	}
-	preview := func(line, note string) string {
-		return igbF3(line) + "<br>" + pg.dim3(note) + "<br><br>"
+	d, bad := p.parseHold(hidden, 30)
+	if bad != "" {
+		return nil, "", bad
 	}
-	ttl := clock.Unix() + 3600
+	hidden["levy"] = p.q.Get("levy")
+	pay := cmdBudgetPayload{ReserveMonths: reserve, StipendShare: stipend / 100, StoreMarkup: store / 100,
+		BuybackFrac: buyback / 100, LevyOn: p.q.Get("levy") == "1", HoldDays: d}
+	cmd := corpCommand{Kind: cmdKindBudget, Payload: encodeCommandPayload(pay)}
+	return []corpCommand{cmd}, p.settingPreview("Budget: <b>"+esp.IGBText(cmd.orgSummary(p.m, p.ctx))+"</b>.",
+		"The divisions, the store, the buyback and the levy read these for the hold."), ""
+}
 
-	switch q.Get("form") {
-	case "seat":
-		id, bad := member("member")
-		if bad != "" {
-			return corpCommand{}, "", bad, true
-		}
-		act := q.Get("activity")
-		switch act {
-		case ActMining, ActCombat, ActSecurity, ActPiracy:
-		default:
-			return corpCommand{}, "", "Pick what the commander raises.", true
-		}
-		release := q.Get("release") == "1"
-		hidden["activity"], hidden["release"] = act, q.Get("release")
-		p := cmdSeatPayload{CharID: id, Activity: act, Release: release}
-		cmd := corpCommand{Kind: cmdKindSeat, Payload: encodeCommandPayload(p), ExpiresAt: ttl}
-		if release {
-			return cmd, preview(fmt.Sprintf("Release <b>%s</b> from command.", esp.IGBText(m.charNameOr(ctx, id))),
-				"They keep flying; they raise no more fleets."), "", true
-		}
-		return cmd, preview(fmt.Sprintf("Seat <b>%s</b> as <b>%s</b> fleet commander.", esp.IGBText(m.charNameOr(ctx, id)), strings.ToLower(activityLabel(act))),
-			"They raise fleets of that kind on the formation sweep, when they have a hull for the seat and crew to recruit."), "", true
+// ── ore ─────────────────────────────────────────────────────────────────────
 
-	case "arm":
-		id, bad := member("member")
-		if bad != "" {
-			return corpCommand{}, "", bad, true
-		}
-		arm := q.Get("arm")
-		if arm != "" {
-			ok := false
-			for _, a := range lineArms {
-				if string(a) == arm {
-					ok = true
-				}
-			}
-			if !ok {
-				return corpCommand{}, "", "Pick an arm.", true
-			}
-		}
-		hidden["arm"] = arm
-		p := cmdArmPayload{CharID: id, Arm: arm}
-		cmd := corpCommand{Kind: cmdKindArm, Payload: encodeCommandPayload(p), ExpiresAt: ttl}
-		if arm == "" {
-			return cmd, preview(fmt.Sprintf("Release <b>%s</b> to the pool.", esp.IGBText(m.charNameOr(ctx, id))), "The CEO's own pass may place them again."), "", true
-		}
-		return cmd, preview(fmt.Sprintf("Place <b>%s</b> in <b>%s</b>.", esp.IGBText(m.charNameOr(ctx, id)), armLabel(corpArm(arm))),
-			"Their work leans that way from their next plan; the placement is kept until you release it."), "", true
+func writeOreDropForm(p *mgPage, b *strings.Builder, _ corpArm) {
+	sel, _ := p.m.officeSelect(p.ctx, "station", p.corpID, p.cur("oredrop", "station", ""), "fleets keep their own ore")
+	b.WriteString(p.heldLine(cmdKindOreDrop) + p.open("oredrop") + `<font size=3>Fleet ore to: </font>` + sel +
+		holdField(p.cur("oredrop", "days", ""), "30") + `<br>` + p.submit("Preview drop-off"))
+}
 
-	case "posting":
-		id, bad := member("member")
-		if bad != "" {
-			return corpCommand{}, "", bad, true
-		}
-		st, _ := strconv.ParseInt(q.Get("station"), 10, 64)
-		if st == 0 || !m.corpHasOfficeAt(ctx, corpID, st) {
-			return corpCommand{}, "", "Pick one of the corporation's offices.", true
-		}
-		hidden["station"] = q.Get("station")
-		p := cmdPostingPayload{CharID: id, StationID: st}
-		cmd := corpCommand{Kind: cmdKindPosting, Payload: encodeCommandPayload(p), ExpiresAt: ttl}
-		return cmd, preview(fmt.Sprintf("Post <b>%s</b> to <b>%s</b>.", esp.IGBText(m.charNameOr(ctx, id)), esp.IGBText(m.stationLabel(ctx, st))),
-			"They live and work from that office; the CEO's posting pass leaves a posting you made alone."), "", true
-
-	case "industry":
-		dir, bad := member("director")
-		if bad != "" {
-			return corpCommand{}, "", bad, true
-		}
-		var dep int64
-		if q.Get("deputy") != "" {
-			if dep, bad = member("deputy"); bad != "" {
-				return corpCommand{}, "", bad, true
-			}
-			if dep == dir {
-				return corpCommand{}, "", "The deputy is somebody else.", true
-			}
-		}
-		d, bad := days(30)
-		if bad != "" {
-			return corpCommand{}, "", bad, true
-		}
-		p := cmdIndustryPayload{DirectorID: dir, DeputyID: dep, HoldDays: d}
-		cmd := corpCommand{Kind: cmdKindIndustry, Payload: encodeCommandPayload(p), ExpiresAt: ttl}
-		return cmd, preview(fmt.Sprintf("Name <b>%s</b> %s%s, held %d day(s).", esp.IGBText(m.charNameOr(ctx, dir)), corpIndustryDirector,
-			map[bool]string{true: " with " + esp.IGBText(m.charNameOr(ctx, dep)) + " as deputy", false: ""}[dep != 0], d),
-			"The CEO's staffing pass keeps them in the chair for the hold."), "", true
-
-	case "tags":
-		var tags []string
-		seen := map[string]bool{}
-		for i := 1; i <= ceoTagMax; i++ {
-			t := q.Get("tag" + strconv.Itoa(i))
-			if t == "" || seen[t] {
-				continue
-			}
-			ok := false
-			for _, p := range ceoTagPool {
-				if p == t {
-					ok = true
-				}
-			}
-			if !ok {
-				return corpCommand{}, "", "That is not a word the corporation can be.", true
-			}
-			seen[t] = true
-			tags = append(tags, t)
-			hidden["tag"+strconv.Itoa(i)] = t
-		}
-		if len(tags) == 0 {
-			return corpCommand{}, "", "Pick at least one word.", true
-		}
-		d, bad := days(30)
-		if bad != "" {
-			return corpCommand{}, "", bad, true
-		}
-		p := cmdTagsPayload{Tags: tags, HoldDays: d}
-		cmd := corpCommand{Kind: cmdKindTags, Payload: encodeCommandPayload(p), ExpiresAt: ttl}
-		return cmd, preview(fmt.Sprintf("Declare the corporation a <b>%s</b> outfit, held %d day(s).", esp.IGBText(strings.Join(tags, " / ")), d),
-			"Fleets, recruiting and the ore desk read these; the CEO's identity pass leaves them alone for the hold."), "", true
-
-	case "budget":
-		num := func(field string, def float64) (float64, string) {
-			v := strings.TrimSpace(q.Get(field))
-			if v == "" {
-				return def, ""
-			}
-			f, err := strconv.ParseFloat(v, 64)
-			if err != nil || f < 0 {
-				return 0, "Budget figures are plain numbers."
-			}
-			hidden[field] = v
-			return f, ""
-		}
-		reserve, bad := num("reserve", 3)
-		if bad != "" {
-			return corpCommand{}, "", bad, true
-		}
-		stipend, bad := num("stipend", 10)
-		if bad != "" {
-			return corpCommand{}, "", bad, true
-		}
-		store, bad := num("store", 5)
-		if bad != "" {
-			return corpCommand{}, "", bad, true
-		}
-		buyback, bad := num("buyback", 85)
-		if bad != "" {
-			return corpCommand{}, "", bad, true
-		}
-		if stipend > 100 || store > 200 || buyback > 100 || reserve > 36 {
-			return corpCommand{}, "", "Stipends and buyback are percentages, store markup up to 200%, reserve up to 36 months.", true
-		}
-		d, bad := days(30)
-		if bad != "" {
-			return corpCommand{}, "", bad, true
-		}
-		hidden["levy"] = q.Get("levy")
-		p := cmdBudgetPayload{ReserveMonths: reserve, StipendShare: stipend / 100, StoreMarkup: store / 100,
-			BuybackFrac: buyback / 100, LevyOn: q.Get("levy") == "1", HoldDays: d}
-		cmd := corpCommand{Kind: cmdKindBudget, Payload: encodeCommandPayload(p), ExpiresAt: ttl}
-		return cmd, preview("Budget: <b>"+esp.IGBText(cmd.orgSummary(m, ctx))+"</b>.",
-			"The treasury, the store, the buyback and the levy read these for the hold."), "", true
-
-	case "oredrop":
-		st, _ := strconv.ParseInt(q.Get("station"), 10, 64)
-		if st != 0 && !m.corpHasOfficeAt(ctx, corpID, st) {
-			return corpCommand{}, "", "Pick one of the corporation's offices.", true
-		}
-		hidden["station"] = q.Get("station")
-		d, bad := days(30)
-		if bad != "" {
-			return corpCommand{}, "", bad, true
-		}
-		p := cmdOreDropPayload{StationID: st, HoldDays: d}
-		cmd := corpCommand{Kind: cmdKindOreDrop, Payload: encodeCommandPayload(p), ExpiresAt: ttl}
-		return cmd, preview("Fleet ore: <b>"+esp.IGBText(cmd.orgSummary(m, ctx))+"</b>.",
-			"A mining fleet's haulers deliver into the corporation hangar there; nothing, and each miner keeps its own rock."), "", true
-
-	case "oredesk":
-		share, err := strconv.ParseFloat(q.Get("share"), 64)
-		if err != nil || share < 0 || share > 100 {
-			return corpCommand{}, "", "Pick how much the desk keeps.", true
-		}
-		hidden["share"] = q.Get("share")
-		d, bad := days(30)
-		if bad != "" {
-			return corpCommand{}, "", bad, true
-		}
-		p := cmdOreDeskPayload{Share: share / 100, HoldDays: d}
-		cmd := corpCommand{Kind: cmdKindOreDesk, Payload: encodeCommandPayload(p), ExpiresAt: ttl}
-		return cmd, preview("Ore desk: <b>"+esp.IGBText(cmd.orgSummary(m, ctx))+"</b>.",
-			"The business pass stops moving the share for the hold."), "", true
+func parseOreDropForm(p *mgPage, _ corpArm, hidden map[string]string) ([]corpCommand, string, string) {
+	st, _ := strconv.ParseInt(p.q.Get("station"), 10, 64)
+	if st != 0 && !p.m.corpHasOfficeAt(p.ctx, p.corpID, st) {
+		return nil, "", "Pick one of the corporation's offices."
 	}
-	return corpCommand{}, "", "", false
+	hidden["station"] = p.q.Get("station")
+	d, bad := p.parseHold(hidden, 30)
+	if bad != "" {
+		return nil, "", bad
+	}
+	cmd := corpCommand{Kind: cmdKindOreDrop, Payload: encodeCommandPayload(cmdOreDropPayload{StationID: st, HoldDays: d})}
+	return []corpCommand{cmd}, p.settingPreview("Fleet ore: <b>"+esp.IGBText(cmd.orgSummary(p.m, p.ctx))+"</b>.",
+		"A mining fleet's haulers deliver into the corporation hangar there; nothing, and each miner keeps its own rock."), ""
+}
+
+func writeOreDeskForm(p *mgPage, b *strings.Builder, _ corpArm) {
+	b.WriteString(p.heldLine(cmdKindOreDesk) + p.open("oredesk") + `<font size=3>Keep </font><select name="share">`)
+	for _, s := range []struct{ v, l string }{{"0", "nothing — sell it all"}, {"25", "a quarter"}, {"50", "half"}, {"75", "three quarters"}, {"100", "all of it for production"}} {
+		b.WriteString(selOpt(s.v, s.l, p.cur("oredesk", "share", "50") == s.v))
+	}
+	b.WriteString(`</select>` + holdField(p.cur("oredesk", "days", ""), "30") + `<br>` + p.submit("Preview ore desk"))
+}
+
+func parseOreDeskForm(p *mgPage, _ corpArm, hidden map[string]string) ([]corpCommand, string, string) {
+	share, err := strconv.ParseFloat(p.q.Get("share"), 64)
+	if err != nil || !(share >= 0 && share <= 100) {
+		return nil, "", "Pick how much the desk keeps."
+	}
+	hidden["share"] = p.q.Get("share")
+	d, bad := p.parseHold(hidden, 30)
+	if bad != "" {
+		return nil, "", bad
+	}
+	cmd := corpCommand{Kind: cmdKindOreDesk, Payload: encodeCommandPayload(cmdOreDeskPayload{Share: share / 100, HoldDays: d})}
+	return []corpCommand{cmd}, p.settingPreview("Ore desk: <b>"+esp.IGBText(cmd.orgSummary(p.m, p.ctx))+"</b>.",
+		"The business pass stops moving the share for the hold."), ""
 }

@@ -171,7 +171,7 @@ func (m *Mod) makeBayRoom(ctx context.Context, b *botRun, l *haulLeg) int64 {
 	if p == nil || p.TowerID == 0 || p.TowerID != l.ToID {
 		return 0
 	}
-	c, _ := getCEO(ctx, m.db, b.CorpID)
+	c := m.deskCEO(ctx, b.CorpID)
 	if c == nil {
 		return 0
 	}

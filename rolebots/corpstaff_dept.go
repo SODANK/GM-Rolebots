@@ -243,13 +243,6 @@ func (m *Mod) clearFleetOrder(ctx context.Context, corpID int64, dept string) {
 		corpID, dept, clock.Unix())
 }
 
-// clearFleetOrderAny withdraws an order whoever posted it (the chair
-// cancelling its own).
-func (m *Mod) clearFleetOrderAny(ctx context.Context, corpID int64, dept string) {
-	_, _ = m.db.ExecContext(ctx,
-		`DELETE FROM rolebot_corp_fleet_orders WHERE corporationID = ? AND activity = ?`, corpID, dept)
-}
-
 // corpFleetOrderFor is the live order a department has out, nil for none.
 func (m *Mod) corpFleetOrderFor(ctx context.Context, corpID int64, dept string) *corpFleetOrder {
 	if corpID == 0 {

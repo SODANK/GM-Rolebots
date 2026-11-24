@@ -226,7 +226,10 @@ func (m *Mod) handleIGBCorpDesk(w http.ResponseWriter, r *http.Request) {
 
 	c, _ := getCEO(ctx, m.db, corpID)
 	if c == nil {
-		esp.WriteCorpPortalPage(w, r, "", "<font size=3>This corporation keeps no member desks.</font>")
+		if notice == "" {
+			notice = "This corporation keeps no member desks."
+		}
+		esp.WriteCorpPortalPage(w, r, "", igbF3(esp.IGBText(notice)))
 		return
 	}
 	if notice != "" {

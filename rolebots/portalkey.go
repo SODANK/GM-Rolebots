@@ -19,7 +19,7 @@ import (
 // is theirs. The browser's identity headers can be forged (esp/igbmodule.go), so a page that
 // acts for a pilot needs a secret only that pilot holds.
 // It twins the SCC brokerage key (db/sccaccount.go): the corporation mails the key to the
-// pilot's own inbox, the pilot pastes it into the Orders page, and the module keeps a hash,
+// pilot's own inbox, the pilot pastes it into the Management page, and the module keeps a hash,
 // compares in constant time and locks the key after five wrong tries.
 // The key proves the terminal, not the rank: every order re-reads the pilot's corporation
 // and roles (isCorpOfficer), and a key stops working when its holder leaves the corporation
@@ -156,7 +156,7 @@ func (m *Mod) mailPortalKey(ctx context.Context, charID, corpID int64) string {
 	}
 	corpName := corpNameOf(ctx, m.db, corpID)
 	body := "Your corporate portal key for " + corpName + " is<br><br><b>" + key + "</b><br><br>" +
-		"Paste it into the Orders page of your Corporate Portal to post orders in the corporation's name. " +
+		"Paste it into the " + igbLink(managePath, "Management page") + " of your Corporate Portal to open your desk. " +
 		"Anyone holding this key can give orders in your name, so keep the letter to yourself; " +
 		"requesting a new key retires this one. The key is tied to this corporation and lapses if you leave it."
 	if m.mailPilot(ctx, charID, corpID, "Your corporate portal key", body) == 0 {

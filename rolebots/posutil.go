@@ -291,12 +291,18 @@ func (m *Mod) payCorpWage(ctx context.Context, corpID, charID int64, amount floa
 		m.creditLabour(ctx, corpID, charID, labourKindOf(why), amount, why+" — "+m.charNameOr(ctx, charID))
 		return true
 	}
+	// A human chair's corporation owes the wage and its Treasury pays it (corppayroll_human.go).
+	if _, human := humanChaired(corpID); human && m.oweWage(ctx, corpID, charID, amount, why) {
+		return true
+	}
 	_, bal, err := m.corpWithdraw(ctx, corpID, charID, amount, "Corporation pay: "+why)
 	if err != nil {
 		if !errors.Is(err, evedb.ErrInsufficientFunds) {
 			rlogf("rolebots: pay %d for %s: %v", charID, why, err)
+			return false
 		}
-		return false
+		// A human chair's wallet ran short: the work is done, so the pay is owed (corpowed.go).
+		return m.oweWage(ctx, corpID, charID, amount, why)
 	}
 	m.pushBalance(charID, bal)
 	m.corpBook(ctx, corpID, lineWages, -amount, charID, why+" — "+m.charNameOr(ctx, charID))

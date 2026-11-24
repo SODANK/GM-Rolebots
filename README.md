@@ -108,6 +108,13 @@ and behavior.
   Rival corporations may even lay siege to them.
 - On Galnet's **Corporate Portal** page, a player can see work orders and other
   ways to help a corporation they belong to that is run by a Rolebot CEO.
+- A player who is CEO of a corporation with Rolebots in it runs them from the
+  portal's **Management** tab, shown to the CEO and the Directors only: build,
+  research and copy orders, requisitions, hauls, buy orders, fleets, assignments
+  and the rest of what a Rolebot CEO would ask of its members. The CEO puts a
+  Director, bot or player, in charge of each division and assigns every
+  character. A bot head runs its division's desk; a player head sees and orders
+  that division alone.
 
 ## Getting started
 

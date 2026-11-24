@@ -395,10 +395,11 @@ func (m *Mod) towerCapitalOK(ctx context.Context, c *corpCEO, ch Charter, hq int
 	if len(keep) == 0 {
 		_, _ = m.db.ExecContext(ctx, `
 			UPDATE rolebot_corp_survey SET status = 'void', closedAt = ?
-			 WHERE corporationID = ? AND status = 'open'`, clock.Unix(), c.CorpID)
+			 WHERE corporationID = ? AND status = 'open' AND surveyID NOT IN (`+m.chairSurveys(ctx, c.CorpID)+`)`, clock.Unix(), c.CorpID)
 	} else if open, err := int64Column(ctx, m, `
 		SELECT surveyID FROM rolebot_corp_survey
-		 WHERE corporationID = ? AND status = 'open' AND systemID NOT IN (`+int64CSV(setIDs(keep))+`)`,
+		 WHERE corporationID = ? AND status = 'open' AND systemID NOT IN (`+int64CSV(setIDs(keep))+`)
+		   AND surveyID NOT IN (`+m.chairSurveys(ctx, c.CorpID)+`)`,
 		c.CorpID); err == nil && len(open) > 0 {
 		_, _ = m.db.ExecContext(ctx, `
 			UPDATE rolebot_corp_survey SET status = 'void', closedAt = ?

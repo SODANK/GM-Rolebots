@@ -534,8 +534,9 @@ func (m *Mod) pruneCorpRanks(ctx context.Context, corpID int64) (int64, error) {
 
 // promoteCorp runs one corporation's promotion pass and answers a short summary
 // (the slash command and the panel both print it). It covers NPC corporations and
-// player corporations run by a bot CEO (corpceo_roles.go); for any other player
-// corporation it only prunes departed pilots.
+// player corporations run by a bot CEO (corpceo_roles.go), and the divisions a human chair has put
+// a bot in charge of (corpchair_desks.go); for any other player corporation it only prunes departed
+// pilots.
 func (m *Mod) promoteCorp(ctx context.Context, corpID int64) (string, error) {
 	facts, err := getAnyCorpFacts(ctx, m.db, corpID)
 	if err != nil {
@@ -545,7 +546,10 @@ func (m *Mod) promoteCorp(ctx context.Context, corpID int64) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if _, managed := managedCEO(corpID); facts.Player && !managed {
+	_, managed := managedCEO(corpID)
+	// Under a human chair a bot head deals its own division's fleet seats and no other's.
+	chairActs := m.chairSeatActivities(ctx, corpID)
+	if facts.Player && !managed && len(chairActs) == 0 {
 		return fmt.Sprintf("%s is a player corporation — its commanders are appointed by hand (%d departed seat(s) cleared).",
 			facts.Name, pruned), nil
 	}
@@ -557,12 +561,15 @@ func (m *Mod) promoteCorp(ctx context.Context, corpID int64) (string, error) {
 		return "", err
 	}
 	activities := corpFleetActivities(facts.Policy)
+	if facts.Player && !managed {
+		activities = chairActs
+	}
 	seats := len(cands) / FCSeatDivisor()
 	now := clock.Unix()
 	// A bot-run or NPC-chaired corporation's seats follow its departments' demand
 	// (corpstaff_dept.go); a war footing adds seats, dealt mostly to the security wing.
 	rotation := fleetSeatRotation(activities)
-	if _, _, chaired := chairOf(corpID); chaired {
+	if _, _, chaired := chairOf(corpID); chaired || (facts.Player && !managed) {
 		demand, war := corpSeatDemand(corpID)
 		rotation = demandRotation(activities, demand)
 		seats += warSurgeSeats(seats, war, activities)

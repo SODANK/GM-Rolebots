@@ -57,17 +57,9 @@ func anchorNeedFor(kind string) int {
 // isCorpOfficer reports whether charID is its corporation's CEO or holds the
 // Director role in it.
 func (m *Mod) isCorpOfficer(ctx context.Context, corpID, charID int64) bool {
-	var ceo int64
-	var roles sql.NullInt64
-	err := m.db.QueryRowContext(ctx, `
-		SELECT COALESCE(c.ceoID, 0), r.corprole
-		  FROM corporation c
-		  LEFT JOIN chrCorporationRoles r ON r.characterID = ?
-		 WHERE c.corporationID = ?`, charID, corpID).Scan(&ceo, &roles)
-	if err != nil {
-		return false
-	}
-	return ceo == charID || (roles.Valid && uint64(roles.Int64)&corp.RoleDirector != 0)
+	// Read off the pilot's own corporation: role bits are kept per pilot, so a Director of
+	// another corporation would pass otherwise.
+	return m.memberRankIn(ctx, corpID, charID).Director
 }
 
 // anchorClaimOK is the deploy/rig claim rule: whether this pilot may take a
@@ -129,7 +121,7 @@ func (p *skillPlanner) anchorCorp() int64 {
 		 WHERE ch.characterID = ?`, p.charID).Scan(&corpID, &roles); err != nil {
 		return v
 	}
-	if _, managed := managedCEO(corpID); managed &&
+	if corpDeskRun(corpID) &&
 		((roles.Valid && uint64(roles.Int64)&corp.RoleDirector != 0) || infraRigger(p.charID, corpID)) {
 		v = corpID
 	}

@@ -34,7 +34,7 @@ func (m *Mod) handleIGBCorpIndustry(w http.ResponseWriter, r *http.Request) {
 	c, _ := getCEO(ctx, m.db, corpID)
 	if corpID == 0 || !m.corpHasWorkDesk(ctx, corpID) {
 		esp.WriteCorpPortalPage(w, r, "industry", "<font size=3>Your corporation posts no build orders. "+
-			"Corporations with an industry desk post paid work here; the chair posts it on the Orders page.</font>")
+			"Corporations with an industry desk post paid work here; the chair posts it on the Management page.</font>")
 		return
 	}
 	if c != nil {
@@ -192,6 +192,11 @@ func ceoCharterOf(ctx context.Context, m *Mod, c *corpCEO) Charter {
 			return e.ch
 		}
 	}
+	if c.Origin == ceoOriginHuman {
+		ch := m.humanChairCharter(ctx, c.CorpID)
+		ceoCharterMemo.Store(c.CorpID, ceoCharterEntry{ch: ch, at: now})
+		return ch
+	}
 	traits, err := getTraits(ctx, m.db, c.CharID)
 	if err != nil {
 		traits = map[string]int{}
@@ -225,15 +230,23 @@ func init() {
 
 // onOfficeDeposit is esp.OfficeDepositHook: runs off the RPC goroutine.
 func (m *Mod) onOfficeDeposit(corpID, charID, itemID, typeID, flag int64) {
-	if _, ok := managedCEO(corpID); !ok {
+	if !corpDeskRun(corpID) {
 		return
 	}
+	_, managed := managedCEO(corpID)
 	goSafe("office deposit", func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
 		// A print carried between bases is a delivery, not a donation
 		// (corpprintmove.go).
-		if !m.noteMoveDeposit(ctx, corpID, charID, itemID) {
+		moved := m.noteMoveDeposit(ctx, corpID, charID, itemID)
+		// Under a human chair a deposit is only ever a delivery: nothing is paid for in shares,
+		// nothing is locked and no gear is out on loan.
+		if !managed {
+			m.noteAssignmentDeposit(ctx, corpID, charID, itemID, typeID, flag)
+			return
+		}
+		if !moved {
 			m.creditPrintDeposit(ctx, corpID, charID, itemID, typeID)
 		}
 		// An original in the corporation's keeping is locked at once, paid for or not (corpvault.go). Copies stay

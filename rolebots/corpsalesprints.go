@@ -41,7 +41,7 @@ func (m *Mod) salesPrintChore(ctx context.Context, b *botRun) {
 	if s, ok := armOf(b.CharID, b.CorpID); !ok || s.Arm != armSales {
 		return
 	}
-	if _, ok := managedCEO(b.CorpID); !ok || !salesPrintChoreDue(b.CharID, clock.Unix()) {
+	if !corpDeskRun(b.CorpID) || !salesPrintChoreDue(b.CharID, clock.Unix()) {
 		return
 	}
 	officeID := m.officeAt(ctx, b.CorpID, b.StationID)

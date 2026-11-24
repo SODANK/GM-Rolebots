@@ -196,6 +196,9 @@ func (m *Mod) relFlushCorp(ctx context.Context, c *corpCEO, ch Charter, actorID 
 // ceoCharterFor resolves a managed corporation's charter outside its think:
 // the CEO's traits through resolveCharter, then the chair's standing orders.
 func (m *Mod) ceoCharterFor(ctx context.Context, c *corpCEO) (Charter, error) {
+	if c.Origin == ceoOriginHuman {
+		return m.humanChairCharter(ctx, c.CorpID), nil
+	}
 	traits, err := getTraits(ctx, m.db, c.CharID)
 	if err != nil {
 		return Charter{}, err

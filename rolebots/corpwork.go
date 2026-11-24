@@ -329,6 +329,7 @@ type deliveredCorpJob struct {
 	BPTypeID                                            int64 // the print's type, 0 when it is gone
 	BPItemID                                            int64 // the print the job ran on
 	ActivityID, Runs                                    int
+	InstalledAt                                         int64 // unix
 }
 
 // matchWork finds the open order a delivered job was carrying out, or nil. An order pinned
@@ -377,13 +378,14 @@ func wageFor(w corpWork, jobRuns int) (runs int, wage float64) {
 // corpWageSweep reads every newly delivered corporation job and credits or pays it.
 func (m *Mod) corpWageSweep(ctx context.Context) error {
 	corps := managedCorpIDs()
-	// Plus any corporation whose chair has work posted (corpcommanddesk.go).
+	// Plus any other corporation with work open on its board (corpcommanddesk.go).
 	seen := map[int64]bool{}
 	for _, id := range corps {
 		seen[id] = true
 	}
 	for _, id := range m.workDeskCorpIDs(ctx) {
 		if !seen[id] {
+			seen[id] = true
 			corps = append(corps, id)
 		}
 	}
@@ -399,7 +401,7 @@ func (m *Mod) corpWageSweep(ctx context.Context) error {
 	}
 	rows, err := m.db.QueryContext(ctx, `
 		SELECT j.jobID, j.ownerID, j.installerID, j.containerID, j.outputTypeID, j.activityID, j.runs,
-		       COALESCE(e.typeID, 0), j.installedItemID
+		       COALESCE(e.typeID, 0), j.installedItemID, COALESCE(j.installTime, 0)
 		  FROM ramJobs j
 		  LEFT JOIN entity e ON e.itemID = j.installedItemID
 		  LEFT JOIN rolebot_corp_wages w ON w.jobID = j.jobID
@@ -413,7 +415,8 @@ func (m *Mod) corpWageSweep(ctx context.Context) error {
 	for rows.Next() {
 		var j deliveredCorpJob
 		if rows.Scan(&j.JobID, &j.CorpID, &j.InstallerID, &j.StationID, &j.OutputTypeID, &j.ActivityID, &j.Runs,
-			&j.BPTypeID, &j.BPItemID) == nil {
+			&j.BPTypeID, &j.BPItemID, &j.InstalledAt) == nil {
+			j.InstalledAt = win32ToUnix(j.InstalledAt)
 			jobs = append(jobs, j)
 		}
 	}
@@ -434,6 +437,11 @@ func (m *Mod) corpWageSweep(ctx context.Context) error {
 		}
 		ws := open[j.CorpID]
 		w := matchWork(j, ws)
+		if _, bot := managedCEO(j.CorpID); w != nil && !bot && j.InstalledAt > 0 && j.InstalledAt < w.PostedAt {
+			// A human chair's board pays in cash for what it asked for, not for a job that was
+			// running before it asked.
+			w = nil
+		}
 		if err := m.payCorpJob(jctx, j, w); err != nil {
 			if errors.Is(err, evedb.ErrInsufficientFunds) {
 				continue // the wallet recovers; the job is read again next pass
@@ -469,8 +477,9 @@ func (m *Mod) payCorpJob(ctx context.Context, j deliveredCorpJob, w *corpWork) e
 		}
 		m.dropJobClaim(ctx, j.JobID)
 		// Only the corporation's own library print, run at one of its Industry bases, is policed.
-		// Other corporation jobs never earn a strike.
-		if m.isIndustryBase(ctx, j.CorpID, j.StationID) && j.BPTypeID != 0 &&
+		// Other corporation jobs never earn a strike, and a human corporation's members
+		// answer to their CEO for what they build.
+		if c != nil && m.isIndustryBase(ctx, j.CorpID, j.StationID) && j.BPTypeID != 0 &&
 			m.libraryHas(ctx, j.CorpID, j.BPTypeID) &&
 			!m.assignmentCovers(ctx, j.CorpID, j.InstallerID, j.OutputTypeID) {
 			m.strikeOffPlan(ctx, c, j)

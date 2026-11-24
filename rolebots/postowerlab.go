@@ -192,7 +192,7 @@ func (m *Mod) returnArrayOutput(ctx context.Context, c *corpCEO, p *towerPlan, a
 // office into a hold, unlocking it first (corpvault.go): a tower cannot hold
 // a lock, and the keeper locks it again once it is home.
 func (m *Mod) takeOriginalFromOffice(ctx context.Context, corpID, officeID, itemID, shipID int64) (int64, error) {
-	if itemID == 0 {
+	if itemID == 0 || m.lockedByVote(ctx, corpID, itemID) {
 		return 0, nil
 	}
 	if _, err := m.unlockPrint(ctx, corpID, itemID); err != nil {

@@ -82,6 +82,9 @@ type requisition struct {
 	// StallFrom is not a column: when the desk last took the line back for a stall (reqStallFrom),
 	// so the next buyer gets a full window.
 	ProgressAt, StallFrom int64
+	// PastEnvelope opens the line whatever the asking arm's weekly envelope holds: the CEO set the
+	// budget. Not a column.
+	PastEnvelope bool
 }
 
 func (r requisition) left() int64 { return max(0, r.Qty-r.QtyDone) }
@@ -215,7 +218,7 @@ func (m *Mod) postRequisition(ctx context.Context, c *corpCEO, r requisition) (i
 	budget := math.Ceil(float64(r.Qty) * unit * markup)
 	// The asking arm pays out of its own envelope (corpenvelope.go). A line it cannot afford this
 	// week is not opened; the desk asks again next pass.
-	if why := m.envelopeRefusal(ctx, c.CorpID, reqRequesterArm(r), budget); why != "" {
+	if why := m.envelopeRefusal(ctx, c.CorpID, reqRequesterArm(r), budget); why != "" && !r.PastEnvelope {
 		if clock.Unix()-m.lastCEOActionAt(ctx, c.CorpID, "overbudget") >= 3600 {
 			m.ceoLog(ctx, c, powerBusiness, "overbudget", r.TypeID, budget,
 				"held %d× %s for %s (%s): %s", r.Qty, m.typeNameOr(ctx, r.TypeID),

@@ -34,8 +34,8 @@ func (m *Mod) workboardSweep(ctx context.Context, c *corpCEO) {
 		SELECT r.orderID, r.stationID, r.typeID, o.volRemaining, o.charID
 		  FROM rolebot_corp_orders r
 		  JOIN market_orders o ON o.orderID = r.orderID
-		 WHERE r.corporationID = ? AND r.bid = 1 AND r.placedAt < ? AND o.orderState = 1 AND o.volRemaining > 0`,
-		c.CorpID, cutoff)
+		 WHERE r.corporationID = ? AND r.bid = 1 AND r.placedAt < ? AND r.kind <> ? AND o.orderState = 1 AND o.volRemaining > 0`,
+		c.CorpID, cutoff, corpOrderHuman)
 	if err != nil {
 		return
 	}

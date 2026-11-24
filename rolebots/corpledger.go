@@ -103,15 +103,15 @@ var corpLineLabel = map[string]string{
 // not earnings, so the share desk reads earnings with them left out.
 var capitalLines = []string{lineDonation, lineShares, lineRedeem, lineDividend, lineCapital, lineCapex}
 
-// corpBook records one flow on a managed corporation's books. A no-op for any
-// corporation without a managed CEO. Best effort: the money has already moved
+// corpBook records one flow on the books of a corporation whose desks run (a bot CEO's or a human
+// chair's). A no-op for any other. Best effort: the money has already moved
 // by the time this is called, and a lost ledger row costs an explanation, not
 // ISK.
 func (m *Mod) corpBook(ctx context.Context, corpID int64, line string, amount float64, counterID int64, detail string) {
 	if corpID == 0 || amount == 0 {
 		return
 	}
-	if _, ok := managedCEO(corpID); !ok {
+	if !corpDeskRun(corpID) {
 		return
 	}
 	if _, err := m.db.ExecContext(ctx, `

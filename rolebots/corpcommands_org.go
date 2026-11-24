@@ -8,7 +8,7 @@ import (
 )
 
 // The organisation orders: the rest of what a bot CEO decides, given to the
-// chair as orders on the Corporate Portal (corporders_org.go) and carried out by
+// chair as orders on the Management page (corporders_org.go, corpmanage_people.go) and carried out by
 // the order desk (corpcommanddesk_org.go). A placement (seat, arm, posting)
 // writes the member's row with its set-by-the-chair mark and is done: the passes
 // that deal those rows keep a chair's placement. A setting (tags, industry desk,
@@ -26,6 +26,7 @@ const (
 	cmdKindBudget   = "budget"
 	cmdKindOreDrop  = "oredrop"
 	cmdKindOreDesk  = "oredesk"
+	cmdKindHangars  = "hangars"
 )
 
 // cmdHoldKinds are the settings that stay live for their hold.
@@ -36,6 +37,9 @@ var cmdHoldKinds = map[string]bool{
 type cmdTagsPayload struct {
 	Tags     []string `json:"tags"`
 	HoldDays int      `json:"holdDays"`
+	// Prev is what the setting was, put back when the order is withdrawn (undoOrgCommand).
+	Prev  []string `json:"prev,omitempty"`
+	Saved bool     `json:"saved,omitempty"`
 }
 
 type cmdSeatPayload struct {
@@ -72,11 +76,39 @@ type cmdBudgetPayload struct {
 type cmdOreDropPayload struct {
 	StationID int64 `json:"stationID"` // 0 = sell as usual
 	HoldDays  int   `json:"holdDays"`
+	Prev      int64 `json:"prev,omitempty"`
+	Saved     bool  `json:"saved,omitempty"`
 }
 
 type cmdOreDeskPayload struct {
 	Share    float64 `json:"share"` // of ore kept for production, 0..1
 	HoldDays int     `json:"holdDays"`
+	Prev     float64 `json:"prev,omitempty"`
+	Saved    bool    `json:"saved,omitempty"`
+}
+
+// cmdHangarsPayload is the chair's choice of hangar for each war-chest purpose (corphangars.go): 0
+// leaves it to the allocator, pinNone gives it none, 2..5 puts it there.
+type cmdHangarsPayload struct {
+	Armory int `json:"armory"`
+	Yard   int `json:"yard"`
+	Spoils int `json:"spoils"`
+}
+
+// pin is the payload's choice for one purpose.
+func (p cmdHangarsPayload) pin(pur divPurpose) int {
+	switch pur {
+	case purArmory:
+		return p.Armory
+	case purYard:
+		return p.Yard
+	}
+	return p.Spoils
+}
+
+func (c corpCommand) hangars() (cmdHangarsPayload, bool) {
+	var p cmdHangarsPayload
+	return p, c.Kind == cmdKindHangars && json.Unmarshal([]byte(c.Payload), &p) == nil
 }
 
 func (c corpCommand) tags() (cmdTagsPayload, bool) {
@@ -135,6 +167,11 @@ func (c corpCommand) orgTitle(m *Mod, ctx context.Context) string {
 		return "Ore drop-off"
 	case cmdKindOreDesk:
 		return "Ore desk"
+	case cmdKindHangars:
+		return "Hangars"
+	}
+	if t, ok := c.boardTitle(m, ctx); ok {
+		return t
 	}
 	return strings.ToUpper(c.Kind[:1]) + c.Kind[1:]
 }
@@ -203,6 +240,13 @@ func (c corpCommand) orgSummary(m *Mod, ctx context.Context) string {
 		if p, ok := c.oreDesk(); ok {
 			return fmt.Sprintf("%.0f%% of ore kept for production, held %d day(s)", p.Share*100, p.HoldDays)
 		}
+	case cmdKindHangars:
+		if p, ok := c.hangars(); ok {
+			return hangarsWords(p)
+		}
+	}
+	if s, ok := c.boardSummary(m, ctx); ok {
+		return s
 	}
 	return c.Note
 }

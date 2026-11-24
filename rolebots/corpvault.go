@@ -63,6 +63,10 @@ func (m *Mod) lockPrint(ctx context.Context, corpID, itemID int64) (bool, error)
 	if !lockdownEnabled() || corpID == 0 || itemID == 0 {
 		return false, nil
 	}
+	// A human corporation's lockdowns are its members' votes.
+	if _, human := humanChaired(corpID); human {
+		return false, nil
+	}
 	if _, ok, err := evedb.GetLockedItem(ctx, m.db, corpID, itemID); err != nil || ok {
 		return false, err
 	}
@@ -80,12 +84,25 @@ func (m *Mod) unlockPrint(ctx context.Context, corpID, itemID int64) (bool, erro
 	if corpID == 0 || itemID == 0 {
 		return false, nil
 	}
+	if _, human := humanChaired(corpID); human {
+		return false, nil
+	}
 	li, refusal, err := evedb.UnlockItem(ctx, m.db, corpID, itemID)
 	if err != nil || refusal != "" {
 		return false, err
 	}
 	pushLockChange(li, false)
 	return true, nil
+}
+
+// lockedByVote reports whether a human corporation's members voted an item locked down: nothing the
+// desks do moves it. A read that fails counts as locked.
+func (m *Mod) lockedByVote(ctx context.Context, corpID, itemID int64) bool {
+	if _, human := humanChaired(corpID); !human {
+		return false
+	}
+	_, locked, err := evedb.GetLockedItem(ctx, m.db, corpID, itemID)
+	return err != nil || locked
 }
 
 // ── the plan (pure) ──────────────────────────────────────────────────────────

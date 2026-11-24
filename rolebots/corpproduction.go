@@ -235,22 +235,54 @@ func (m *Mod) ceoProduction(ctx context.Context, c *corpCEO, ch Charter) error {
 			m.logBot(c.CharID, logInfo, "ceo", "the production review took %.0fs", d.Seconds())
 		}
 	}()
-	facts, err := getAnyCorpFacts(ctx, m.db, c.CorpID)
+	w, err := m.prodOpen(ctx, c, ch)
+	if err != nil || w == nil {
+		return err
+	}
+	m.prodResearch(ctx, c, ch, w, m.prodBuild(ctx, c, ch, w))
+	m.prodProcure(ctx, c, ch, w)
+	p, err := m.loadCorpPolicy(ctx, c.CorpID)
 	if err != nil {
 		return err
+	}
+	m.corpBoardMail(ctx, c, &p, m.boardExtras(ctx, c.CorpID, ch))
+	return m.saveCorpPolicyRow(ctx, p)
+}
+
+// prodWindow is one production review's state, handed from stage to stage: a bot CEO runs them all
+// in a row, a human chair's Industry head builds and procures and its R&D head researches
+// (corpchair_desks.go).
+type prodWindow struct {
+	facts       *CorpFacts
+	open        []corpWork
+	stationID   int64
+	labBases    []int64
+	budget      float64
+	saleReserve float64
+	researchLed bool
+}
+
+// prodOpen is the review's first stage: what is on the board and the shelf, and what may be spent.
+// Nil when the corporation builds nothing.
+func (m *Mod) prodOpen(ctx context.Context, c *corpCEO, ch Charter) (*prodWindow, error) {
+	human := c.Origin == ceoOriginHuman
+	facts, err := getAnyCorpFacts(ctx, m.db, c.CorpID)
+	if err != nil {
+		return nil, err
 	}
 	open, err := m.openWorkFor(ctx, c.CorpID)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	if !hasIndustryDesk(facts.Policy.Tags) {
+	// A human chair's desk is its appointment, not its tags.
+	if !human && !hasIndustryDesk(facts.Policy.Tags) {
 		for _, w := range open {
 			if w.Source == fleetOrderHuman {
 				continue // the chair's own order stands whatever the CEO's desks are
 			}
 			m.closeWork(ctx, w.WorkID, workVoid)
 		}
-		return nil
+		return nil, nil
 	}
 	stationID, _ := m.corpFactoryOffice(ctx, c.CorpID)
 	if stationID == 0 {
@@ -258,14 +290,21 @@ func (m *Mod) ceoProduction(ctx context.Context, c *corpCEO, ch Charter) error {
 			m.ceoLog(ctx, c, powerProduction, "nofactory", 0, 0,
 				"has no office at a station with manufacturing lines — nothing can be built for the corporation yet")
 		}
-		return nil
+		return nil, nil
 	}
-	if _, err := m.reconcileLibrary(ctx, c.CorpID); err != nil {
-		return err
+	if human {
+		// The prints are where the members put them, and locked only by their vote.
+		if _, err := m.indexLibrary(ctx, c.CorpID); err != nil {
+			return nil, err
+		}
+	} else {
+		if _, err := m.reconcileLibrary(ctx, c.CorpID); err != nil {
+			return nil, err
+		}
+		// The originals just shelved are locked before anything plans on them
+		// (corpvault.go); the staff-desk pass covers corporations with no factory.
+		m.vaultDesk(ctx, c)
 	}
-	// The originals just shelved are locked before anything plans on them
-	// (corpvault.go); the staff-desk pass covers corporations with no factory.
-	m.vaultDesk(ctx, c)
 	m.sweepPOs(ctx, c.CorpID)
 	// Research and copies run at every R&D base (corpbases.go); builds at every Industry base
 	// (corpbuildbases.go). A base with no research lines is not an R&D base.
@@ -273,13 +312,16 @@ func (m *Mod) ceoProduction(ctx context.Context, c *corpCEO, ch Charter) error {
 	m.sweepStaleWork(ctx, c, open, stationID, labBases, m.industryBaseStations(ctx, c.CorpID))
 	// What the factory already made goes down the ladder before anything
 	// new is planned: replacements owed, the store, the market (corpstore.go).
-	if err := m.ceoOutput(ctx, c, ch); err != nil {
-		m.logBot(c.CharID, logError, "ceo", "output: %v", err)
+	// A human chair's stock is its own to give out.
+	if !human {
+		if err := m.ceoOutput(ctx, c, ch); err != nil {
+			m.logBot(c.CharID, logError, "ceo", "output: %v", err)
+		}
 	}
 
 	free, _, err := m.corpFreeCapital(ctx, c.CorpID, ch)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	// Turnover, not inflow, sizes what production may commit (corppayback.go).
 	budget := m.productionGovernor(ctx, c, ch.CapitalRisk*free)
@@ -287,47 +329,66 @@ func (m *Mod) ceoProduction(ctx context.Context, c *corpCEO, ch Charter) error {
 	// without it the for-sale stage met a budget of 0 and posted nothing (corplibplan.go).
 	saleReserve := researchSaleReserve(budget, hasTag(facts.Policy.Tags, "research"))
 	budget -= saleReserve
+	return &prodWindow{
+		facts: facts, open: open, stationID: stationID, labBases: labBases, budget: budget, saleReserve: saleReserve,
+		// Every house with a copy line copies for sale what the roster buys from NPCs (corpcopydemand.go);
+		// one that leads with the research tag also copies every researched print (corpprintsale.go).
+		researchLed: len(facts.Policy.Tags) > 0 && facts.Policy.Tags[0] == "research",
+	}, nil
+}
 
+// prodBuild posts the build orders and answers the types the board can build. A human chair's head
+// commits nothing that takes weeks: no print fund, no capital program, no ship replacements.
+func (m *Mod) prodBuild(ctx context.Context, c *corpCEO, ch Charter, w *prodWindow) map[int64]bool {
+	human := c.Origin == ceoOriginHuman
 	// Internal demand first: replacements owed, the store's shelf, then what the roster near the bases
 	// cannot buy (ledgerDemand). Ledger claims are renewed for open orders and released for the rest.
-	m.keepCorpDemandClaims(ctx, c.CorpID, open)
-	internal := m.srpDemand(ctx, c.CorpID)
-	internal = append(internal, m.storeDemand(ctx, c.CorpID)...)
+	m.keepCorpDemandClaims(ctx, c.CorpID, w.open)
+	var internal []buildPlanRow
+	if !human {
+		internal = m.srpDemand(ctx, c.CorpID)
+		internal = append(internal, m.storeDemand(ctx, c.CorpID)...)
+	}
 	internal = append(internal, m.ledgerDemand(ctx, c)...)
-	// A capital program's components and hull (corpprogram.go).
-	internal = append(internal, m.programDemand(ctx, c.CorpID)...)
-	committed, buildable := m.postBuildOrders(ctx, c, ch, facts, stationID, budget, internal)
-	budget -= committed
+	if !human {
+		// A capital program's components and hull (corpprogram.go).
+		internal = append(internal, m.programDemand(ctx, c.CorpID)...)
+	}
+	committed, buildable := m.postBuildOrders(ctx, c, ch, w.facts, w.stationID, w.budget, internal)
+	w.budget -= committed
+	if human {
+		return buildable
+	}
 	// The print fund saves its share of what is left before anything else spends it (corpfund.go).
-	budget -= m.feedFunds(ctx, c, ch, budget)
+	w.budget -= m.feedFunds(ctx, c, ch, w.budget)
 	// The capital program walks a stage (corpprogram.go): prints through the
 	// program fund, parts into Materials, the hull to its pilot.
-	m.ceoProgram(ctx, c, ch, facts, stationID)
-	// Every house with a copy line copies for sale what the roster buys from NPCs (corpcopydemand.go);
-	// one that leads with the research tag also copies every researched print (corpprintsale.go).
-	researchLed := len(facts.Policy.Tags) > 0 && facts.Policy.Tags[0] == "research"
+	m.ceoProgram(ctx, c, ch, w.facts, w.stationID)
+	return buildable
+}
+
+// prodResearch posts the library's research and copies, and sends the prints where they are wanted.
+func (m *Mod) prodResearch(ctx context.Context, c *corpCEO, ch Charter, w *prodWindow, buildable map[int64]bool) {
 	// Copies for sale spend job fees out of the same budget (corplibplan.go).
-	m.postLibraryPlans(ctx, c, ch, stationID, labBases, buildable, researchLed, budget+saleReserve)
+	m.postLibraryPlans(ctx, c, ch, w.stationID, w.labBases, buildable, w.researchLed, w.budget+w.saleReserve)
 	// The library split over the R&D bases and copies for the factory
 	// (corpprintmove.go).
-	m.printMoveDesk(ctx, c, ch, stationID, labBases)
-	m.notePrintBottlenecks(ctx, c, stationID)
-	m.markPrintsForSale(ctx, c, ch, stationID, researchLed)
-	if err := m.ceoBuyback(ctx, c, ch, budget); err != nil {
+	m.printMoveDesk(ctx, c, ch, w.stationID, w.labBases)
+	m.notePrintBottlenecks(ctx, c, w.stationID)
+	m.markPrintsForSale(ctx, c, ch, w.stationID, w.researchLed)
+}
+
+// prodProcure buys what the board is short of: materials, then a print.
+func (m *Mod) prodProcure(ctx context.Context, c *corpCEO, ch Charter, w *prodWindow) {
+	if err := m.ceoBuyback(ctx, c, ch, w.budget); err != nil {
 		m.logBot(c.CharID, logError, "ceo", "buyback: %v", err)
 	}
-	if budget > 0 {
-		m.postLibraryPurchase(ctx, c, ch, facts, stationID, budget)
+	if w.budget > 0 {
+		m.postLibraryPurchase(ctx, c, ch, w.facts, w.stationID, w.budget)
 		// An original to copy for the roster, when the product pass bought
 		// nothing (one purchase order at a time; corpcopydemand.go).
-		m.postCopyDemandPurchase(ctx, c, ch, stationID, budget)
+		m.postCopyDemandPurchase(ctx, c, ch, w.stationID, w.budget)
 	}
-	p, err := m.loadCorpPolicy(ctx, c.CorpID)
-	if err != nil {
-		return err
-	}
-	m.corpBoardMail(ctx, c, &p, m.boardExtras(ctx, c.CorpID, ch))
-	return m.saveCorpPolicyRow(ctx, p)
 }
 
 // sweepStaleWork voids orders that have sat a fortnight untouched, or whose

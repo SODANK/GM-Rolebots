@@ -109,7 +109,7 @@ func tradeListPrice(bestBid, bestAsk, landed, minMargin float64) float64 {
 // arrived, and post a new run when there is room for one.
 func (m *Mod) tradeDesk(ctx context.Context, c *corpCEO, ch Charter) error {
 	facts, err := getAnyCorpFacts(ctx, m.db, c.CorpID)
-	if err != nil || facts == nil || !tradeDeskTagged(facts.Policy.Tags) {
+	if err != nil || facts == nil || (c.Origin != ceoOriginHuman && !tradeDeskTagged(facts.Policy.Tags)) {
 		return nil
 	}
 	if !deskDue(c.CorpID, "tradedesk", tradeDeskEverySec) {
