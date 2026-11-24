@@ -216,8 +216,14 @@ func (m *Mod) handleIGBCorpManagement(w http.ResponseWriter, r *http.Request) {
 	pg := m.igbPageFor(r)
 	q := r.URL.Query()
 	if !m.memberRankIn(ctx, corpID, charID).Director {
-		say(igbF3("Management is for the CEO and the Directors of the corporation. What they have ordered is on the " +
+		// Every member sees the tab; the desk's key goes to the CEO and the Directors only.
+		var b strings.Builder
+		if q.Get("key") != "" {
+			b.WriteString(pg.ordersBanner(errPortalNotOfficer.Error()+".", true))
+		}
+		b.WriteString(igbF3("Management is for the CEO and the Directors of the corporation. What they have ordered is on the " +
 			`<a href="` + esp.IGBHost() + `/corp/ops">Operations</a> page.`))
+		say(b.String())
 		return
 	}
 	_, bot := managedCEO(corpID)
