@@ -129,6 +129,9 @@ func (p *mgPage) writeHeads(b *strings.Builder) {
 			face = esp.Portrait(h.CharID, 64)
 			who = igbF3("<b>"+esp.IGBText(p.m.charNameOr(p.ctx, h.CharID))+"</b>") + " " + p.pg.dim(p.kindOf(h.CharID)) +
 				"<br>" + p.pg.soft("since "+igbWhen(h.Since))
+			if h.Inherited() {
+				who += "<br>" + p.pg.soft("kept from before you took the chair")
+			}
 			if h.DeputyID != 0 {
 				who += "<br>" + p.pg.soft("deputy "+esp.IGBText(p.m.charNameOr(p.ctx, h.DeputyID)))
 			}

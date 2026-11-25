@@ -5,8 +5,10 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 
 	evedb "gurimoon/db"
+	"gurimoon/esp"
 )
 
 // Division heads: who a human CEO put in charge of what (Management, Appointments).
@@ -17,9 +19,14 @@ import (
 // with it, one row at a time: a portfolio in rolebot_corp_posts for a Director-headed department,
 // rolebot_corp_policy for Industry, the arm row at head tier with its role bundle for all. A bot CEO
 // deals its own heads (ceoRoles), so the rows are cleared when one takes the chair.
+//
+// The other way round nothing is cleared: a bot that a bot CEO put in charge of a division keeps it
+// when a person takes the chair (inheritHeads), until the CEO names somebody else or stands it down.
+// Such a row has setBy 0.
 
-// headFlag* are what a bot head may do beyond its division's orders. All off until the CEO ticks
-// them, because each touches people or goods in a way an order does not.
+// headFlag* are what a bot head may do beyond its division's orders. Off in an appointment until the
+// CEO ticks them, because each touches people or goods in a way an order does not. A head kept from a
+// bot CEO's day was already doing it and goes on (inheritHeads).
 const (
 	headFlagListStock = 1 << iota // Sales: list what is in the Trade and Production hangars
 	headFlagApplicant             // HR: answer applications
@@ -49,6 +56,9 @@ type corpHead struct {
 	Since    int64
 	Flags    int
 }
+
+// Inherited reports whether the head was kept from a bot CEO's day, not appointed by the chair. Pure.
+func (h corpHead) Inherited() bool { return h.SetBy == 0 }
 
 func ensureHeadTables(ctx context.Context, db *sql.DB) error {
 	_, err := db.ExecContext(ctx, `
@@ -130,6 +140,133 @@ func headRefusal(r memberRank, arm corpArm, botCEO bool) error {
 	return nil
 }
 
+// inheritRefusal is why a bot CEO's head may not stay one under a person, nil when it may. Pure. The
+// post it was dealt is its qualification: Industry is run by the Industry Director and Finance by the
+// Treasurer, and neither needs the Director role (armOfficerQuota).
+func inheritRefusal(r memberRank, arm corpArm, industryDirector bool) error {
+	err := headRefusal(r, arm, false)
+	if err != errHeadNotDirector {
+		return err
+	}
+	if (arm == armIndustry && industryDirector) || (arm == armFinance && r.Accountant) {
+		return nil
+	}
+	return err
+}
+
+// standsRefusal is why an appointment no longer holds, nil when it does.
+func (m *Mod) standsRefusal(ctx context.Context, h corpHead, r memberRank) error {
+	if !h.Inherited() {
+		return headRefusal(r, h.Arm, false)
+	}
+	ind := false
+	if h.Arm == armIndustry && !r.Director {
+		p, err := m.loadCorpPolicy(ctx, h.CorpID)
+		ind = err != nil || p.DirectorID == h.CharID // the database could not say: it stands
+	}
+	return inheritRefusal(r, h.Arm, ind)
+}
+
+// headsToInherit is the bots a bot CEO left at the head of a division nobody has been appointed to,
+// by division. Pure. A row the chair has written is the chair's word and not a head to keep, unless
+// the post says the bot CEO dealt it one afterwards: dismissHead clears the post, so a head the CEO
+// stood down never comes back. Of several, the longest in the division.
+func headsToInherit(cur map[corpArm]corpHead, rows map[int64]armRow, portfolio func(int64) string, industryDirector int64,
+	bot func(int64) bool) map[corpArm]int64 {
+
+	heads := map[int64]bool{}
+	for _, h := range cur {
+		heads[h.CharID] = true
+	}
+	out := map[corpArm]int64{}
+	for id, r := range rows {
+		if _, taken := cur[r.Arm]; taken || heads[id] || r.Tier != armTierHead || !validArm(r.Arm) || !bot(id) {
+			continue
+		}
+		if r.SetBy == postSetHuman {
+			port := portfolioOfArm(r.Arm)
+			dealt := (port != "" && portfolio(id) == port) || (r.Arm == armIndustry && id == industryDirector)
+			if !dealt {
+				continue
+			}
+		}
+		if best, ok := out[r.Arm]; ok {
+			b := rows[best]
+			if b.Since < r.Since || (b.Since == r.Since && best < id) {
+				continue
+			}
+		}
+		out[r.Arm] = id
+	}
+	return out
+}
+
+// inheritHeads keeps a bot CEO's bot heads at their desks under a person: each becomes an
+// appointment, options and all, which the CEO changes or ends like any other. Since is now, so what
+// the old chair's desks had posted is cleared off the boards (chairLeftovers) and the heads post
+// their own. Run by the human chair's pass.
+func (m *Mod) inheritHeads(ctx context.Context, corpID int64) {
+	cur, err := m.corpHeadsErr(ctx, corpID)
+	if err != nil || len(cur) == len(armOrder) {
+		return
+	}
+	rows, err := m.loadArmRows(ctx, corpID)
+	if err != nil {
+		return
+	}
+	ceoID := m.corpCEOID(ctx, corpID)
+	members, err := m.corpMembers(ctx, corpID, ceoID)
+	if err != nil {
+		return
+	}
+	flies := map[int64]bool{}
+	for _, cm := range members {
+		flies[cm.CharID] = !cm.Human() && cm.Enabled && m.botFlown(cm.CharID)
+	}
+	policy, err := m.loadCorpPolicy(ctx, corpID)
+	if err != nil {
+		return
+	}
+	posts := m.loadStaffRows(ctx, corpID)
+	found := headsToInherit(cur, rows, func(id int64) string { return posts[id].Portfolio }, policy.DirectorID,
+		func(id int64) bool { return flies[id] })
+	var kept []string
+	for _, a := range armOrder {
+		id, ok := found[a]
+		if !ok || ctx.Err() != nil {
+			continue
+		}
+		rank, err := m.memberRankErr(ctx, corpID, id)
+		if err != nil || inheritRefusal(rank, a, id == policy.DirectorID) != nil {
+			continue
+		}
+		h := corpHead{CorpID: corpID, Arm: a, CharID: id}
+		h.Flags, _ = headFlagOf(a)
+		if a == armIndustry && policy.DeputyID != id && flies[policy.DeputyID] {
+			h.DeputyID = policy.DeputyID
+		}
+		if err := m.installHead(ctx, h); err != nil {
+			rlogf("rolebots: keep head of %s in corp %d: %v", a, corpID, err)
+			continue
+		}
+		name := m.charNameOr(ctx, id)
+		m.humanLog(ctx, corpID, 0, "head", id, 0, "%s goes on heading %s under the new CEO", name, armLabel(a))
+		m.logBot(id, logInfo, "corp", "goes on heading %s under the new CEO", armLabel(a))
+		line := "<b>" + esp.IGBText(name) + "</b> heads " + esp.IGBText(armLabel(a)) + " and " + armDuty(a)
+		if _, label := headFlagOf(a); label != "" {
+			line += "; it " + label
+		}
+		kept = append(kept, line+".")
+	}
+	if len(kept) == 0 || !m.seatedByPerson(ctx, ceoID) {
+		return
+	}
+	m.mailPilot(ctx, ceoID, corpID, "Your division heads carry on",
+		"These pilots headed their divisions before you took the chair and go on doing so:<br><br>"+strings.Join(kept, "<br>")+
+			"<br><br>Your own orders stand over theirs. Change a head, or stand one down, on the "+
+			igbLink(managePath, "Management page")+" of the Corporate Portal.")
+}
+
 // headsDisplaced is which appointments a new one ends: whoever heads the division now, and the
 // pilot's own command of another. Pure.
 func headsDisplaced(cur map[corpArm]corpHead, h corpHead) []corpHead {
@@ -156,6 +293,11 @@ func (m *Mod) appointHead(ctx context.Context, h corpHead) error {
 	if h.DeputyID != 0 && (h.DeputyID == h.CharID || m.charCorpID(ctx, h.DeputyID) != h.CorpID) {
 		return errHeadNotMember
 	}
+	return m.installHead(ctx, h)
+}
+
+// installHead writes an appointment that has been found good.
+func (m *Mod) installHead(ctx context.Context, h corpHead) error {
 	for _, old := range headsDisplaced(m.corpHeads(ctx, h.CorpID), h) {
 		if err := m.dismissHead(ctx, old); err != nil {
 			return err
@@ -273,7 +415,7 @@ func (m *Mod) headsChanged(ctx context.Context, corpID int64) {
 	m.refreshArmIndex(ctx)
 }
 
-// pruneHeads stands down every head that left the corporation or lost the Director role. Run by the
+// pruneHeads stands down every head that left the corporation or lost what qualified it. Run by the
 // human chair's pass.
 func (m *Mod) pruneHeads(ctx context.Context, corpID int64) {
 	for _, h := range m.corpHeads(ctx, corpID) {
@@ -284,7 +426,7 @@ func (m *Mod) pruneHeads(ctx context.Context, corpID int64) {
 		if err != nil {
 			return // the database could not say; next pass
 		}
-		why := headRefusal(rank, h.Arm, false)
+		why := m.standsRefusal(ctx, h, rank)
 		if why == nil {
 			continue
 		}

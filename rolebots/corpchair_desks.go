@@ -13,9 +13,10 @@ import (
 // The human chair's desks: the pass over the corporations a person runs (corpchair.go).
 //
 // Every corporation's boards are kept: lines handed to buyers, claims that went stale taken back,
-// finished rows closed. Then each division the CEO has put a bot in charge of (corpheads.go) runs its
-// desk, with the same code a bot CEO's departments run, in the head's name. A division headed by a
-// person, or by nobody, orders nothing by itself.
+// finished rows closed. Then each division a bot is in charge of, appointed by the CEO or kept from a
+// bot CEO's day (corpheads.go), runs its desk, with the same code a bot CEO's departments run, in the
+// head's name. The CEO's own orders stand over a head's. A division headed by a person, or by nobody,
+// orders nothing by itself.
 //
 // What never runs here whoever is in charge: the think, tax, payroll, dividends and shares, offices
 // and headquarters, identity, diplomacy, war, sieges, planting or taking down a starbase, locking
@@ -93,6 +94,7 @@ func rotateFrom(ids []int64, from int64) []int64 {
 // humanChairDesks is one corporation's turn.
 func (m *Mod) humanChairDesks(ctx context.Context, corpID int64) {
 	m.pruneHeads(ctx, corpID)
+	m.inheritHeads(ctx, corpID)
 	c := m.deskCEO(ctx, corpID)
 	if c == nil {
 		return
@@ -117,7 +119,14 @@ func (m *Mod) humanChairDesks(ctx context.Context, corpID int64) {
 	m.chairBoards(ctx, c, ch)
 	for _, a := range armOrder {
 		h, ok := heads[a]
-		if !ok || ctx.Err() != nil || !m.botFlown(h.CharID) || popIsOffline(h.CharID) {
+		if !ok || ctx.Err() != nil || !m.botFlown(h.CharID) {
+			continue
+		}
+		if popIsOffline(h.CharID) {
+			// Its desk waits for it to log in, but the towers must not go dark meanwhile.
+			if a == armInfrastructure {
+				m.chairTowerFuel(ctx, c, ch)
+			}
 			continue
 		}
 		hc := humanChairCEO(corpID, h.CharID)
@@ -125,6 +134,17 @@ func (m *Mod) humanChairDesks(ctx context.Context, corpID int64) {
 		if err := m.chairDesk(withStaffActor(ctx, actor), hc, ch, h); err != nil {
 			m.logBot(h.CharID, logError, "ceo", "%s desk: %v", armLabel(a), err)
 		}
+	}
+}
+
+// chairTowerFuel posts the towers' fuel while their head is logged off, as a bot CEO's desks do
+// (towerUpkeep). The boards' own keeping (chairBoards) buys and hands out the lines.
+func (m *Mod) chairTowerFuel(ctx context.Context, c *corpCEO, ch Charter) {
+	if !StarbasePower() {
+		return
+	}
+	if plans, err := m.corpTowerPlans(ctx, c.CorpID, true); err == nil && len(plans) > 0 {
+		m.fuelerDesk(withInfraDesk(ctx), c, ch, plans)
 	}
 }
 

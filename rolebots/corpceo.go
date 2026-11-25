@@ -774,8 +774,11 @@ var ceoAdoptFailed sync.Map // corpID to error string
 
 // reconcileCEOSeats ties running a corporation to the pilot being an active
 // bot: an enabled rostered pilot in a player corporation's chair
-// (corporation.ceoID) runs it, and a deactivated or departed one hands it
-// back. Runs at the head of every CEO sweep.
+// (corporation.ceoID) runs it, and a deactivated, departed or replaced one
+// hands it back. A replaced one is not left to its own think, which does not
+// run while it is logged off or paused: until the chair is handed back, neither
+// its staff's desks nor a human chair's are worked. Runs at the head of every
+// CEO sweep.
 func (m *Mod) reconcileCEOSeats(ctx context.Context) {
 	rows, err := m.db.QueryContext(ctx, `
 		SELECT co.corporationID, co.ceoID
@@ -799,16 +802,23 @@ func (m *Mod) reconcileCEOSeats(ctx context.Context) {
 	}
 	rows.Close()
 
-	var drop []int64
+	type gone struct {
+		corpID int64
+		active bool
+	}
+	var drop []gone
 	if dr, err := m.db.QueryContext(ctx, `
-		SELECT rc.corporationID
+		SELECT rc.corporationID, COALESCE(b.enabled, 0) = 1
 		  FROM rolebot_ceos rc
 		  LEFT JOIN rolebot_characters b ON b.characterID = rc.characterID
-		 WHERE b.characterID IS NULL OR b.enabled = 0`); err == nil {
+		  LEFT JOIN corporation co ON co.corporationID = rc.corporationID
+		  LEFT JOIN rolebot_characters nb ON nb.characterID = co.ceoID AND nb.enabled = 1
+		 WHERE COALESCE(b.enabled, 0) = 0
+		    OR (co.ceoID <> rc.characterID AND nb.characterID IS NULL)`); err == nil {
 		for dr.Next() {
-			var id int64
-			if dr.Scan(&id) == nil {
-				drop = append(drop, id)
+			var g gone
+			if dr.Scan(&g.corpID, &g.active) == nil {
+				drop = append(drop, g)
 			}
 		}
 		dr.Close()
@@ -816,12 +826,16 @@ func (m *Mod) reconcileCEOSeats(ctx context.Context) {
 		rlogf("rolebots: CEO seats: %v", err)
 	}
 
-	for _, corpID := range drop {
+	for _, g := range drop {
 		if ctx.Err() != nil {
 			return
 		}
-		if err := m.removeCEO(ctx, corpID, "the CEO was deactivated"); err != nil {
-			rlogf("rolebots: CEO release corp %d: %v", corpID, err)
+		why := "the CEO was deactivated"
+		if g.active {
+			why = "somebody else is CEO now"
+		}
+		if err := m.removeCEO(ctx, g.corpID, why); err != nil {
+			rlogf("rolebots: CEO release corp %d: %v", g.corpID, err)
 		}
 	}
 	for _, s := range adopt {

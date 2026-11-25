@@ -11,7 +11,7 @@ import (
 
 // Who may order what on the Management page. The CEO commands every division; a division head
 // commands its own and sees no other; a Director nobody has given a division commands nothing. A
-// head is whoever the human CEO appointed (corpheads.go), or in a bot-run corporation the human the
+// head is whoever the human CEO appointed or kept (corpheads.go), or in a bot-run corporation the human the
 // bot CEO put in charge of a department (armPositions).
 //
 // The same rule is asked three times: when the page is drawn, when an order is filed, and when the
@@ -48,7 +48,7 @@ func holdsTrader(roles uint64) bool   { return roles&corp.RoleTrader != 0 }
 
 // memberRank is a pilot's standing in a corporation, read from the database in one go.
 type memberRank struct {
-	Member, CEO, Director bool
+	Member, CEO, Director, Accountant bool
 }
 
 // memberRankIn is memberRankErr for whoever may take "cannot say" as "no".
@@ -92,6 +92,7 @@ func (m *Mod) memberRankErr(ctx context.Context, corpID, charID int64) (memberRa
 		return r, err
 	}
 	r.Director = holdsDirector(info.Corprole)
+	r.Accountant = info.Corprole&corp.RoleAccountant != 0
 	return r, nil
 }
 
