@@ -95,6 +95,18 @@ func (tc *thinkCache) memberCorp(charID int64) (int64, bool) {
 	return 0, false
 }
 
+// memberRoles is a carried member's role mask as the think has it.
+func (tc *thinkCache) memberRoles(charID int64) (uint64, bool) {
+	tc.mu.Lock()
+	defer tc.mu.Unlock()
+	for i := range tc.members {
+		if tc.members[i].CharID == charID {
+			return tc.members[i].Roles, true
+		}
+	}
+	return 0, false
+}
+
 // traitsOf is a carried pilot's traits, a copy.
 func (tc *thinkCache) traitsOf(charID int64) (map[string]int, bool) {
 	tc.mu.Lock()

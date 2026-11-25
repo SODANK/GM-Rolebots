@@ -661,12 +661,14 @@ func (m *Mod) armPositions(ctx context.Context, corpID int64) map[int64]armPlace
 	// Under a human CEO the heads are the appointments (corpheads.go) and nothing else: a bot CEO's
 	// heads are among them once kept (inheritHeads).
 	_, human := humanChaired(corpID)
+	_, botCEO := managedCEO(corpID)
+	staffRows := m.loadStaffRows(ctx, corpID)
 	if human {
 		for a, h := range m.corpHeads(ctx, corpID) {
 			put(h.CharID, a, armTierHead)
 		}
 	} else {
-		for id, r := range m.loadStaffRows(ctx, corpID) {
+		for id, r := range staffRows {
 			put(id, armOfPortfolio(r.Portfolio), armTierHead)
 		}
 	}
@@ -687,7 +689,11 @@ func (m *Mod) armPositions(ctx context.Context, corpID int64) map[int64]armPlace
 			if rows.Scan(&id, &roles) != nil {
 				continue
 			}
-			switch officerPost(roles) {
+			post := officerPost(roles)
+			if botCEO {
+				post = officerPostOf(roles, staffRows[id].Post)
+			}
+			switch post {
 			case postTreasurer:
 				// The role alone heads nothing under a human CEO, or standing a Treasurer down
 				// would not last.

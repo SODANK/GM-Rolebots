@@ -18,13 +18,16 @@ import (
 //     CEO fills a quota that grows with the corporation (Charter.DirectorPer,
 //     PersonnelPer) from its most trusted members, and demotes as readily.
 //     Humans are candidates too (corpmembers.go); Director and Accountant carry
-//     wallet access, so nobody holds either before officerTenureDays.
+//     wallet access, so a human is dealt neither before officerTenureDays. An
+//     office somebody else gave a human stands: from a human the pass takes back
+//     only what it granted itself (corpofficers.go). A human who heads Industry
+//     or Finance holds Director with it.
 //   - Fleet seats: promoteCorp (corprank.go) runs for a bot-run corporation over
 //     the fleets its tags name and leaves hand-appointed seats alone.
 // Titles (corptitles.go) are then synced from both.
 
-// ceoRoleMask is the role bits this power owns. Anything else on a member's
-// row is left exactly as it was.
+// ceoRoleMask is the role bits this power owns on a bot, and deals to a human.
+// Anything else on a member's row is left exactly as it was.
 const ceoRoleMask = corp.RoleDirector | corp.RolePersonnelManager | corp.RoleAccountant
 
 // ceoSeatPassEverySec: the fleet-seat pass is the expensive half (a skill read
@@ -89,6 +92,15 @@ type roleMember struct {
 	Trust  float64
 	// Untenured marks a member too new for an office with wallet access.
 	Untenured bool
+
+	// The rest is read for humans only (corpofficers.go).
+	Human bool
+	// Given is the offices held that this pass did not grant, which it leaves alone.
+	Given uint64
+	// HeadsIndustry marks the Director of Industry with no department besides.
+	HeadsIndustry bool
+	// Treasurer marks the sitting Treasurer.
+	Treasurer bool
 }
 
 // officerQuota is how many of each officer a corporation of n members keeps.
@@ -102,8 +114,10 @@ func officerQuota(n int, ch Charter) (directors, personnel, accountants int) {
 }
 
 // dealOfficers hands the quota out by trust, most trusted first, one office
-// per member: directors, then personnel managers, then the accountant. Pure,
-// for the test.
+// per member: directors, then personnel managers, then the accountant. A human
+// who already heads Industry is dealt no second office, and one given Director
+// by hand is dealt no lesser one, unless it is the sitting Treasurer. Pure, for
+// the test.
 func dealOfficers(members []roleMember, directors, personnel, accountants int) map[int64]uint64 {
 	sorted := append([]roleMember(nil), members...)
 	sort.SliceStable(sorted, func(i, j int) bool {
@@ -118,7 +132,11 @@ func dealOfficers(members []roleMember, directors, personnel, accountants int) m
 			if n <= 0 {
 				return
 			}
-			if _, taken := out[rm.CharID]; taken || (needTenure && rm.Untenured) {
+			if _, taken := out[rm.CharID]; taken || (needTenure && rm.Untenured) || rm.HeadsIndustry {
+				continue
+			}
+			if rm.Given&corp.RoleDirector != 0 && bit != corp.RoleDirector &&
+				!(bit == corp.RoleAccountant && rm.Treasurer) {
 				continue
 			}
 			out[rm.CharID] = bit
@@ -161,6 +179,12 @@ func (m *Mod) ceoRoles(ctx context.Context, c *corpCEO, ch Charter) error {
 	var members []roleMember
 	now := win32Now()
 	ranks := m.meritRanksOf(ctx, c.CorpID) // empty with the ladder off
+	policy, _ := m.loadCorpPolicy(ctx, c.CorpID)
+	// Without the grants every office would read as given by hand, and the dealt ones would stay.
+	grants, err := m.loadOfficerGrants(ctx, c.CorpID)
+	if err != nil {
+		return errors.Join(append(errs, err)...)
+	}
 	for _, cm := range all {
 		if !cm.Eligible() {
 			continue
@@ -172,7 +196,7 @@ func (m *Mod) ceoRoles(ctx context.Context, c *corpCEO, ch Charter) error {
 		if r, ok := staffRows[cm.CharID]; ok {
 			perf = clampPerf(r.Perf)
 		}
-		members = append(members, roleMember{
+		rm := roleMember{
 			CharID: cm.CharID,
 			Name:   cm.Name,
 			Roles:  cm.Roles,
@@ -183,7 +207,15 @@ func (m *Mod) ceoRoles(ctx context.Context, c *corpCEO, ch Charter) error {
 			// The treasury guard is for players: a bot does not walk off with
 			// the wallet, and a young corporation must still have officers.
 			Untenured: officerUntenured(cm.Human(), cm.Since, now),
-		})
+			Human:     cm.Human(),
+		}
+		if rm.Human {
+			row := staffRows[cm.CharID]
+			rm.Given = cm.Roles & ceoRoleMask &^ grants[cm.CharID]
+			rm.HeadsIndustry = policy.DirectorID == cm.CharID && row.Portfolio == ""
+			rm.Treasurer = row.Post == postTreasurer && cm.Roles&corp.RoleAccountant != 0
+		}
+		members = append(members, rm)
 	}
 
 	// The arms (corparm.go): a Director is appointed per justified department
@@ -201,12 +233,16 @@ func (m *Mod) ceoRoles(ctx context.Context, c *corpCEO, ch Charter) error {
 		directors++
 	}
 	want := dealOfficers(members, directors, personnel, accountants)
-	policy, _ := m.loadCorpPolicy(ctx, c.CorpID)
-	for _, rm := range members {
+	// apply moves one member's offices to what the pass wants of them.
+	apply := func(rm *roleMember, want uint64) {
 		cur := rm.Roles & ceoRoleMask
-		next := want[rm.CharID]
+		next, grant := want, uint64(0)
+		if rm.Human {
+			next, grant = officerUpdate(cur, grants[rm.CharID], want)
+		}
 		if cur == next {
-			continue
+			m.keepOfficerGrant(ctx, c.CorpID, rm.CharID, grants, grant)
+			return
 		}
 		// A Director of Commerce stood down takes no corporation orders with it: they
 		// are cancelled while its Director bit still resolves to the corporation.
@@ -217,22 +253,46 @@ func (m *Mod) ceoRoles(ctx context.Context, c *corpCEO, ch Charter) error {
 		}
 		if err := m.setMemberRoles(ctx, rm.CharID, (rm.Roles&^ceoRoleMask)|next); err != nil {
 			errs = append(errs, fmt.Errorf("ceoRoles write %d: %w", rm.CharID, err))
-			continue
+			return
 		}
+		rm.Roles = (rm.Roles &^ ceoRoleMask) | next
+		m.keepOfficerGrant(ctx, c.CorpID, rm.CharID, grants, grant)
 		switch {
-		case next != 0:
+		case next&^cur != 0:
 			m.ceoLog(ctx, c, powerRoles, "promote", rm.CharID, 0,
-				"appointed %s %s of %s", rm.Name, officerName(next), facts.Name)
+				"appointed %s %s of %s", rm.Name, officerName(next&^cur), facts.Name)
 		default:
 			m.ceoLog(ctx, c, powerRoles, "demote", rm.CharID, 0,
-				"stood %s down as %s of %s", rm.Name, officerName(cur), facts.Name)
+				"stood %s down as %s of %s", rm.Name, officerName(cur&^next), facts.Name)
 		}
+	}
+	for i := range members {
+		rm := &members[i]
+		w := want[rm.CharID]
+		if headHoldsDirector(*rm, w, policy.DirectorID) {
+			w |= corp.RoleDirector
+		}
+		apply(rm, w)
 	}
 
 	// The departments: which director runs what (corpstaff.go).
 	needed := append(armNeededPortfolios(armJust), diplomacy...)
 	if err := m.ceoPortfolios(ctx, c, needed); err != nil {
 		errs = append(errs, fmt.Errorf("ceoRoles departments: %w", err))
+	} else {
+		// A Treasurer dealt this pass is on the books as one only now; Director on top before that
+		// would have read as a Director's post (officerPostOf). A Director of Industry picked below
+		// gets it from ceoIndustryStaff.
+		for i := range members {
+			rm := &members[i]
+			if !rm.Human || rm.Treasurer || want[rm.CharID] != corp.RoleAccountant || rm.Roles&corp.RoleAccountant == 0 {
+				continue
+			}
+			rm.Treasurer = true
+			if headHoldsDirector(*rm, want[rm.CharID], policy.DirectorID) {
+				apply(rm, want[rm.CharID]|corp.RoleDirector)
+			}
+		}
 	}
 
 	// The fleet-seat pass, at most daily, or sooner when a department head asks
@@ -357,11 +417,21 @@ func (m *Mod) setMemberRoles(ctx context.Context, charID int64, roles uint64) er
 		corpID = m.charCorpID(ctx, charID)
 	}
 	roles = m.stripGuardedTake(ctx, corpID, charID, roles)
+	view := roles
+	row, rowErr := m.readMemberRoleRow(ctx, charID)
+	if tc != nil && rowErr == nil {
+		// The caller worked from the members carried since the think began. Only its change is
+		// written, so a role somebody gave or took in the corp window meanwhile is not undone. The
+		// cache keeps the caller's view: later callers in the same think work from it too.
+		if base, ok := tc.memberRoles(charID); ok {
+			roles = m.stripGuardedTake(ctx, corpID, charID, rebaseRoles(base, roles, row.Corprole))
+		}
+	}
 	v := int64(roles)
 	u := &evedb.CorpMemberUpdate{Roles: &v}
 	// The client's role window shows hangar and container bits only per location, so what the
 	// corporation grants everywhere is mirrored into the HQ, Base and Other columns.
-	if row, err := m.readMemberRoleRow(ctx, charID); err == nil {
+	if rowErr == nil {
 		was := [3]uint64{row.AtHQ, row.AtBase, row.AtOther}
 		cols := mirrorLocationRoles(row.Corprole, roles, was)
 		if cols != was {
@@ -373,7 +443,7 @@ func (m *Mod) setMemberRoles(ctx context.Context, charID int64, roles uint64) er
 		return err
 	}
 	if tc != nil {
-		tc.noteRoles(charID, roles)
+		tc.noteRoles(charID, view)
 	}
 	if h := modapi.Corp().MemberRolesChanged; h != nil {
 		h(charID, old)

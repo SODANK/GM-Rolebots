@@ -274,6 +274,8 @@ func (m *Mod) corpTitlePlan(ctx context.Context, corpID int64, facts *CorpFacts,
 		if mt.Key == titleKindDirector {
 			if k := headKeyOfPortfolio(staffRows[mt.CharID].Portfolio); k != "" {
 				mt.Key = k
+			} else if humans == 1 && slotName[titleKindFactory] && holders[titleKindFactory][mt.CharID] {
+				mt.Key = titleKindFactory
 			}
 		}
 		// The starbase and Industry seats wear their seat when they hold no
@@ -498,6 +500,10 @@ func (m *Mod) titleHolders(ctx context.Context, corpID int64, facts *CorpFacts) 
 		add(titleKindCEO, facts.CEOID)
 	}
 
+	var staffRows map[int64]staffRow
+	if leadsHumans(corpID) {
+		staffRows = m.loadStaffRows(ctx, corpID)
+	}
 	rows, err := m.db.QueryContext(ctx, `
 		SELECT ch.characterID, COALESCE(r.corprole, 0)
 		  FROM character_ ch
@@ -513,6 +519,8 @@ func (m *Mod) titleHolders(ctx context.Context, corpID int64, facts *CorpFacts) 
 			continue // the CEO holds RoleAll; its title is the chair's
 		}
 		switch {
+		case officerPostOf(roles, staffRows[id].Post) == postTreasurer:
+			add(titleKindTreasurer, id)
 		case roles&corp.RoleDirector != 0:
 			add(titleKindDirector, id)
 		case roles&corp.RolePersonnelManager != 0:

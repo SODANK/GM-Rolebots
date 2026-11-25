@@ -2331,6 +2331,9 @@ func ensureTables(ctx context.Context, db *sql.DB) error {
 		return err
 	}
 	// Who a human CEO put in charge of each division (corpheads.go), and the pay its wallet owes (corpowed.go).
+	if err := ensureOfficerGrantTable(ctx, db); err != nil {
+		return err
+	}
 	if err := ensureHeadTables(ctx, db); err != nil {
 		return err
 	}

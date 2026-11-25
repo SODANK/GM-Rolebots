@@ -613,8 +613,13 @@ func (m *Mod) installCEO(ctx context.Context, charID, corpID int64, origin, by s
 	if err := saveCEO(ctx, m.db, c); err != nil {
 		return err
 	}
-	if _, was := humanChaired(corpID); was {
+	_, was := humanChaired(corpID)
+	if was {
 		m.closeChairOrders(ctx, corpID, charID)
+	}
+	if was || (oldCEO != charID && m.seatedByPerson(ctx, oldCEO)) {
+		// Whatever offices the members hold now, a person left them holding.
+		m.forgetOfficerGrants(ctx, corpID)
 	}
 	m.refreshCEOIndex(ctx)
 	m.refreshHumanChairIndex(ctx)

@@ -259,6 +259,7 @@ func (m *Mod) leaveCorpSteps(ctx context.Context, charID, corpID int64) {
 		`DELETE FROM rolebot_corp_bench WHERE characterID = ? AND corporationID = ?`,
 		`DELETE FROM rolebot_corp_grants WHERE characterID = ? AND corporationID = ?`,
 		`DELETE FROM rolebot_corp_pos_grants WHERE characterID = ? AND corporationID = ?`,
+		`DELETE FROM rolebot_corp_officer_grants WHERE characterID = ? AND corporationID = ?`,
 		`DELETE FROM rolebot_corp_invites WHERE characterID = ? AND corporationID = ?`,
 		`DELETE FROM rolebot_corp_merit WHERE characterID = ? AND corporationID = ?`,
 		`DELETE FROM rolebot_corp_merit_log WHERE characterID = ? AND corporationID = ?`,

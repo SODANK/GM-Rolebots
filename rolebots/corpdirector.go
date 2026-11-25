@@ -206,6 +206,9 @@ func (m *Mod) ceoIndustryStaff(ctx context.Context, c *corpCEO, ch Charter, fact
 			// The take roles open the library to carrying prints out; a
 			// director that new runs the factory without them.
 			want = directorRoles &^ directorTakeRoles
+		case cd.CharID == director && cd.Human:
+			// The head of a division holds Director (headHoldsDirector): Management asks for it.
+			want = directorRoles | corp.RoleDirector
 		case cd.CharID == director:
 			want = directorRoles
 		case cd.CharID == deputy:

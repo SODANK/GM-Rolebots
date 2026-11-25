@@ -249,7 +249,17 @@ func officerPost(roles uint64) string {
 	return ""
 }
 
+// officerPostOf is officerPost in a corporation a bot CEO runs, where a Treasurer may hold Director
+// too (headHoldsDirector, or by hand) and is still the Treasurer. dealt is the post on its row. Pure.
+func officerPostOf(roles uint64, dealt string) string {
+	if dealt == postTreasurer && roles&corp.RoleAccountant != 0 {
+		return postTreasurer
+	}
+	return officerPost(roles)
+}
+
 type staffRow struct {
+	Post           string
 	Portfolio      string
 	PortfolioSince int64
 	Perf           float64
@@ -260,7 +270,7 @@ type staffRow struct {
 func (m *Mod) loadStaffRows(ctx context.Context, corpID int64) map[int64]staffRow {
 	out := map[int64]staffRow{}
 	for id, p := range m.familyPostsOf(ctx, corpID, famOfficer) {
-		out[id] = staffRow{Portfolio: p.Portfolio, PortfolioSince: p.Since, Perf: p.Perf, PerfAt: p.ReviewAt, Metric: p.Metric}
+		out[id] = staffRow{Post: p.Post, Portfolio: p.Portfolio, PortfolioSince: p.Since, Perf: p.Perf, PerfAt: p.ReviewAt, Metric: p.Metric}
 	}
 	return out
 }
@@ -274,8 +284,12 @@ func (m *Mod) loadCorpStaff(ctx context.Context, corpID, ceoID int64) (*corpStaf
 	}
 	rows := m.loadStaffRows(ctx, corpID)
 	s := &corpStaff{CorpID: corpID, CEOID: ceoID, CEOName: m.charNameOr(ctx, ceoID)}
+	_, botCEO := managedCEO(corpID)
 	for _, cm := range members {
 		post := officerPost(cm.Roles)
+		if botCEO {
+			post = officerPostOf(cm.Roles, rows[cm.CharID].Post)
+		}
 		if post == "" || !cm.Eligible() {
 			continue
 		}
@@ -498,8 +512,14 @@ func (m *Mod) ceoPortfolios(ctx context.Context, c *corpCEO, needed []string) er
 		return err
 	}
 	now := clock.Unix()
+	industry := m.corpDirectorOf(ctx, c.CorpID)
 	var cands []portfolioCand
 	for _, d := range s.Directors {
+		// A human Director of Industry holds the role for that post and heads that division; a
+		// second department would take Industry off its Management page.
+		if d.Human && d.CharID == industry && d.Portfolio == "" {
+			continue
+		}
 		fit := map[string]float64{}
 		for _, port := range []string{portSecurity, portOperations, portCommerce, portHR, portDiplomacy, portInfrastructure, portResearch} {
 			fit[port] = portfolioFit(d.Ident, port) * d.Perf
