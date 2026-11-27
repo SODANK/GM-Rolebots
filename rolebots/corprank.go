@@ -561,6 +561,10 @@ func (m *Mod) promoteCorp(ctx context.Context, corpID int64) (string, error) {
 		return "", err
 	}
 	activities := corpFleetActivities(facts.Policy)
+	if memo, ok := armMemoOf(corpID); ok {
+		// A Mining arm the tags do not seat (a laboratory's) still needs a fleet to deliver.
+		activities = armFleetActivities(activities, memo.Justified)
+	}
 	if facts.Player && !managed {
 		activities = chairActs
 	}

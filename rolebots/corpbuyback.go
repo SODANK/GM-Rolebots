@@ -531,9 +531,30 @@ func (m *Mod) corpWantsMemberOre(ctx context.Context, corpID int64) bool {
 
 // ── the deputy's refinery chore ──────────────────────────────────────────────
 
+// pickOreRefiner is who refines the corporation's ore: the Deputy (Factory Overseer), else
+// the Industry Director when the Deputy is a person or the seat is empty. Only a bot is ever
+// picked, since the chore is a bot's; a human refines from the corporation hangar itself
+// (reprocessingSvc takes a division the member may take from). 0 when neither is a bot. Pure.
+func pickOreRefiner(deputy, director int64, isBot func(int64) bool) int64 {
+	for _, id := range []int64{deputy, director} {
+		if id != 0 && isBot(id) {
+			return id
+		}
+	}
+	return 0
+}
+
+// corpOreRefiner is pickOreRefiner over the corporation's industry staff.
+func (m *Mod) corpOreRefiner(ctx context.Context, corpID int64, p corpPolicyRow) int64 {
+	return pickOreRefiner(p.DeputyID, p.DirectorID, func(id int64) bool {
+		return m.isSynthetic(id) && m.charCorpID(ctx, id) == corpID
+	})
+}
+
 // corpRefineChore refines the corporation's held ore into its minerals, when
-// the deputy is docked at the factory. Kept ore only: stock the ore desk is
-// selling stays whole for the market.
+// its refiner (corpOreRefiner: the deputy, else the Industry Director) is docked
+// at the factory. Kept ore only: stock the ore desk is selling stays whole for
+// the market.
 func (m *Mod) corpRefineChore(ctx context.Context, b *botRun) {
 	if b == nil || b.CorpID == 0 {
 		return
@@ -542,7 +563,7 @@ func (m *Mod) corpRefineChore(ctx context.Context, b *botRun) {
 		return
 	}
 	p, err := m.loadCorpPolicy(ctx, b.CorpID)
-	if err != nil || p.DeputyID != b.CharID || p.OreShare <= 0 {
+	if err != nil || p.OreShare <= 0 || m.corpOreRefiner(ctx, b.CorpID, p) != b.CharID {
 		return
 	}
 	stationID, officeID := m.corpFactoryOffice(ctx, b.CorpID)

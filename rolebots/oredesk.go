@@ -279,10 +279,10 @@ func (m *Mod) openBuildOrderValues(ctx context.Context, corpID int64) ([]buildOr
 }
 
 // corpRefineYield is the net yield the corporation's refiner gets at its
-// factory: the deputy's hand when there is one (corpdirector.go), else the
-// default.
+// factory: the hand of the bot that refines (corpOreRefiner: the deputy, else
+// the Industry Director), else the default.
 func (m *Mod) corpRefineYield(ctx context.Context, corpID int64, p corpPolicyRow) float64 {
-	who := p.DeputyID
+	who := m.corpOreRefiner(ctx, corpID, p)
 	if who == 0 {
 		return oreDeskDefaultYield
 	}

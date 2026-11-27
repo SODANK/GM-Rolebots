@@ -48,6 +48,11 @@ const (
 	armAuxSalesKeep       = 0.25
 	armAuxSalesMin        = 2
 	armAuxSalesFocusShare = 2.0 / 3
+	// armLabMiningIndustry and armLabMiningMembers: a laboratory (factoryMining) opens a Mining arm
+	// only once its Industry arm has this many members and the corporation this many. Its rock
+	// feeds the factory, so the factory's own people come first.
+	armLabMiningIndustry = 2
+	armLabMiningMembers  = 15
 )
 
 // armMinMembers is the membership at which an arm can be staffed at all.
@@ -79,6 +84,9 @@ type armSignals struct {
 	Wallet       float64
 	// Towers is the corporation's active tower plans, planned to running.
 	Towers int
+	// IndustryStaffed is how many members the Industry arm holds now (the last pass's placement),
+	// which a laboratory waits on before it mines (factoryMining).
+	IndustryStaffed int
 }
 
 // Tag sets justification reads (hasAnyTag, corpdoctrine.go).
@@ -87,6 +95,10 @@ var (
 	// R&D exists where the corporation says it is a laboratory.
 	armResearchTags = map[string]bool{"research": true}
 	armSalesTags    = map[string]bool{"trade": true, "retail": true, "hauling": true, "industry": true, "shipbuilding": true}
+	// armBuildHouseTags are the factory outfits (armFocusTags' Industry tags): they dig their
+	// own rock beside the factory (factoryMining).
+	armBuildHouseTags = map[string]bool{"industry": true, "shipbuilding": true, "cartelindustry": true,
+		"construction": true, "chemical": true}
 )
 
 func (s armSignals) directiveShare(a corpArm) float64 {
@@ -111,7 +123,8 @@ func armJustified(a corpArm, s armSignals) bool {
 		return hasAnyTag(s.Tags, armResearchTags) &&
 			(s.HasFactory || s.IndDirector || industryTagged(s.Tags))
 	case armMining:
-		return hasAnyTag(s.Tags, armMiningTags) || s.directiveShare(a) > 0 || s.Demand[portOperations] > 0.2
+		return hasAnyTag(s.Tags, armMiningTags) || s.directiveShare(a) > 0 || s.Demand[portOperations] > 0.2 ||
+			factoryMining(s)
 	case armSecurity:
 		return doctrineFromTags(s.Tags) != DoctrineNone || s.War || s.directiveShare(a) > 0 ||
 			s.Demand[portSecurity] > 0.2
@@ -125,6 +138,45 @@ func armJustified(a corpArm, s armSignals) bool {
 		return s.Wallet >= armFinanceWalletISK
 	}
 	return false
+}
+
+// factoryMining reports whether a corporation mines to feed its own factory. Pure.
+//
+// An industrial house (a build tag) raises a Mining arm beside its Industry arm: the factory
+// needs rock, and the Operations desk that would measure the hunger exists only once the arm
+// does, so waiting on Demand would never open it. A laboratory (research leads, or research
+// with no build tag) builds its Industry arm first and mines only once that arm is staffed
+// (armLabMiningIndustry) and there are people to spare (armLabMiningMembers). Either way the
+// Industry arm itself must be justified. A corporation founded before this reads the same
+// signals on its next roles pass, so it grows the arm then (dealArms moves members over).
+func factoryMining(s armSignals) bool {
+	if !armJustified(armIndustry, s) {
+		return false
+	}
+	lab := hasAnyTag(s.Tags, armResearchTags) &&
+		((len(s.Tags) > 0 && s.Tags[0] == "research") || !hasAnyTag(s.Tags, armBuildHouseTags))
+	if lab {
+		return s.IndustryStaffed >= armLabMiningIndustry && s.Members >= armLabMiningMembers
+	}
+	return hasAnyTag(s.Tags, armBuildHouseTags)
+}
+
+// armFleetActivities is a corporation's fleet seats (corpFleetActivities) plus a mining seat
+// when its Mining arm is justified and its tags deal none: a laboratory's miners deliver to the
+// corporation only from a seated fleet (corpOreRun). Mining leads, as in corpFleetActivities.
+// Pure.
+func armFleetActivities(acts []string, justified []corpArm) []string {
+	for _, a := range acts {
+		if a == ActMining {
+			return acts
+		}
+	}
+	for _, a := range justified {
+		if a == armMining {
+			return append([]string{ActMining}, acts...)
+		}
+	}
+	return acts
 }
 
 // justifiedArms is every justified arm, in armOrder.
@@ -642,6 +694,7 @@ func (m *Mod) gatherArmSignals(ctx context.Context, c *corpCEO, facts *CorpFacts
 			s.Towers = len(plans)
 		}
 	}
+	s.IndustryStaffed = armCount(c.CorpID, armIndustry)
 	return s
 }
 
