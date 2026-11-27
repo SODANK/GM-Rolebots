@@ -10,7 +10,10 @@ package rolebots
 // through stampAbstractPvP. departCommit marks a projection departing and stands its guns
 // down; actOnPilot wraps every act on a pilot.
 
-import "gurimoon/modapi"
+import (
+	"gurimoon/destiny"
+	"gurimoon/modapi"
+)
 
 // crimewatchRetrySec is how long a locked bot waits before asking again.
 const crimewatchRetrySec = 5
@@ -85,6 +88,28 @@ func (eb *embodiedBot) actOnPilot(act func()) bool {
 	}
 	act()
 	return true
+}
+
+// notePilotAggression is the law for one aggressive act of a projection on a pilot (bot or
+// player): the core's crimewatch entry, through the function a player's guns use, then its
+// legality ladder, which raises the global criminal flag, the gate and station guns and CONCORD
+// for an unlawful act. Called when the act starts (a gun cycle, a drone order, an ewar cycle),
+// not when it lands, so the victim may answer at once; repeat calls are cheap (the core
+// throttles the rebroadcast and charges once per pair). The abstract tier's engagement ledger
+// hears it too, so a victim who later meets this bot off-grid may still answer lawfully.
+// Callers on a pilot hold actOnPilot.
+func (m *Mod) notePilotAggression(eb *embodiedBot, target *destiny.Entity) {
+	if eb == nil || eb.ent == nil || eb.ss == nil || target == nil || !target.IsPlayer {
+		return
+	}
+	h := modapi.PvP()
+	if h.NotePlayerAggression != nil {
+		h.NotePlayerAggression(eb.ent, target, eb.ss)
+	}
+	if h.PoliceCrime != nil {
+		h.PoliceCrime(eb.ent, target, eb.ss)
+	}
+	noteEngagement(eb.charID, target.Slim.CharID, target.Slim.CorpID)
 }
 
 // stampAbstractPvP records an abstract-tier PvP act: aggressor's lock, both

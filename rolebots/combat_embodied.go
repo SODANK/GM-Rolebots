@@ -1944,6 +1944,11 @@ func (m *Mod) runWeaponCycles(eb *embodiedBot, l *combatLoadout, target *destiny
 		return false
 	}
 
+	// Aggression is the activation, not the hit: a gun that opens on a pilot flags its owner before the
+	// roll, so a cycle that misses or a missile still in flight is already a crime, and a victim who
+	// fires back in that window is defending (the crimewatch entry exists). Once per pass, at the
+	// first gun that actually cycles; a departing ship opens on nobody (crimewatch.go).
+	flagged := !target.IsPlayer
 	for _, w := range l.weapons {
 		if now.Before(w.nextFireAt) {
 			continue
@@ -1970,6 +1975,13 @@ func (m *Mod) runWeaponCycles(eb *embodiedBot, l *combatLoadout, target *destiny
 			continue
 		}
 
+		if !flagged {
+			if !eb.actOnPilot(func() { m.notePilotAggression(eb, target) }) {
+				m.stopAllFire(eb, l)
+				return false
+			}
+			flagged = true
+		}
 		w.nextFireAt = now.Add(time.Duration(w.CycleSec * float64(time.Second)))
 		m.startWeaponFire(eb, w, target.ID)
 
@@ -2162,16 +2174,9 @@ func (m *Mod) landDamage(eb *embodiedBot, target *destiny.Entity, applied float6
 		m.npc.SyncHPToDB(target.ID)
 	} else if target.IsPlayer {
 		target.RecordKillHit(eb.ent, weaponTypeID, applied, destroyed)
-		// Shooting a pilot is a crime recorded by the core's own crimewatch: the flag and the police run through the
-		// functions a player's guns use (modapi.PvPHooks), so a rolebot lives under the law its victims do.
-		if eb.ss != nil {
-			if note := modapi.PvP().NotePlayerAggression; note != nil {
-				note(eb.ent, target, eb.ss)
-			}
-			if police := modapi.PvP().PoliceCrime; police != nil {
-				police(eb.ent, target, eb.ss)
-			}
-		}
+		// The flag went up when the gun opened on the pilot (runWeaponCycles); this refreshes it, and covers a
+		// missile that was already in flight when the guns stood down.
+		m.notePilotAggression(eb, target)
 	}
 
 	m.broadcastDamageState(eb, target)
@@ -2530,13 +2535,8 @@ func (m *Mod) landEwar(eb *embodiedBot, ew *botEwarModule, target *destiny.Entit
 
 	// Holding a pilot down is the aggression: the same hooks a gun hit runs (landDamage), every cycle, since the core
 	// throttles rebroadcasts and claims the security charge once per pair (flaggedPilotsOnGrid reads a pointer as a criminal).
-	if target.IsPlayer && eb.ss != nil && eb.ent != nil {
-		if note := modapi.PvP().NotePlayerAggression; note != nil {
-			note(eb.ent, target, eb.ss)
-		}
-		if police := modapi.PvP().PoliceCrime; police != nil {
-			police(eb.ent, target, eb.ss)
-		}
+	if target.IsPlayer {
+		m.notePilotAggression(eb, target)
 	}
 	// The victim's side (a jam's lock break, a damp's stat push, the jam bar) every cycle, as the
 	// player loops do; the bar is keyed on the triple, so a re-send refreshes it.

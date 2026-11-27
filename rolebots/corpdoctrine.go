@@ -20,8 +20,9 @@ const (
 	// not go looking or leave home.
 	DoctrineDefence
 	// DoctrineSecurity is a navy, customs office or police force: it patrols, holds
-	// checkpoints, runs down pilots with a price and fights rivals it meets past the
-	// policed line. It never raids and never shoots neutrals.
+	// checkpoints, runs down pilots with a price and fights rivals it meets where the
+	// shot is no crime (a flag, an outlaw, a war, or nullsec). It never raids, never
+	// shoots neutrals and never commits a crime, lowsec included (roeAllows).
 	DoctrineSecurity
 	// DoctrineMercenary is guns for hire: everything Security may do, plus roaming
 	// into other space to find work and an appetite for worthwhile neutrals.
@@ -66,7 +67,7 @@ func (d Doctrine) Blurb() string {
 	case DoctrineDefence:
 		return "Clears its own belts and covers its own haulers. Never leaves home ground."
 	case DoctrineSecurity:
-		return "Patrols, holds checkpoints, runs down marks. Fights rivals it meets; does not raid and does not shoot neutrals."
+		return "Patrols, holds checkpoints, runs down marks. Fights rivals only where it is no crime; does not raid and does not shoot neutrals."
 	case DoctrineMercenary:
 		return "Goes looking. Roams rival space and will take on a neutral worth the trouble."
 	case DoctrinePredation:
@@ -80,6 +81,13 @@ func (d Doctrine) Blurb() string {
 // only thing separating Security from Mercenary.
 func (d Doctrine) Raids() bool {
 	return d == DoctrineMercenary || d == DoctrinePredation
+}
+
+// Lawful reports whether this doctrine keeps within the law wherever there is one: a navy,
+// police force or an employer's own guard never opens fire where the shot would be a crime
+// (roeAllows). Mercenaries and cartels accept the record for the work.
+func (d Doctrine) Lawful() bool {
+	return d == DoctrineSecurity || d == DoctrineDefence
 }
 
 // NeutralMul scales the neutral-engagement nerve roll (roe.go). Zero means a

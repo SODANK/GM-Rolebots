@@ -106,6 +106,35 @@ func TestRoeAllowsWar(t *testing.T) {
 	}
 }
 
+// A navy or police wing commits no crime in lowsec: a grudge is not a flag. The tester case was
+// a Republic Security Services pilot opening on an unflagged pilot at a 0.4 gate.
+func TestRoeAllowsLawfulDoctrineInLowsec(t *testing.T) {
+	for _, doc := range []Doctrine{DoctrineSecurity, DoctrineDefence} {
+		if ok, nerve, _ := roeAllows(StanceHostile, doc, BandLow, false, false, false); ok || nerve {
+			t.Errorf("%s shot an unflagged hostile in lowsec", doc)
+		}
+		if ok, _, _ := roeAllows(StanceNeutral, doc, BandLow, false, false, false); ok {
+			t.Errorf("%s shot an unflagged neutral in lowsec", doc)
+		}
+		if ok, _, _ := roeAllows(StanceNeutral, doc, BandLow, true, false, false); !ok {
+			t.Errorf("%s must still shoot a criminal in lowsec", doc)
+		}
+		if ok, _, _ := roeAllows(StanceNeutral, doc, BandLow, false, true, false); !ok {
+			t.Errorf("%s must still shoot an outlaw in lowsec", doc)
+		}
+		if ok, _, _ := roeAllows(StanceHostile, doc, BandLow, false, false, true); !ok {
+			t.Errorf("%s must still shoot a war target in lowsec", doc)
+		}
+		if ok, _, _ := roeAllows(StanceHostile, doc, BandNull, false, false, false); !ok {
+			t.Errorf("%s still fights rivals in nullsec", doc)
+		}
+	}
+	// Guns for hire take the record for the work.
+	if ok, _, _ := roeAllows(StanceHostile, DoctrineMercenary, BandLow, false, false, false); !ok {
+		t.Error("a mercenary still fights a hostile in lowsec")
+	}
+}
+
 func TestAssistAllows(t *testing.T) {
 	if ok, _, _ := assistAllows(assistDuty, DoctrineDefence, BandPoliced, false, false, false, true); !ok {
 		t.Error("a corpmate's war enemy may be engaged")

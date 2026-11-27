@@ -106,6 +106,14 @@ func piracyOpportunity(m *Mod, ctx context.Context, b *botRun) (float64, string)
 	if f == 0 {
 		return 0, why
 	}
+	// A lawful employer (a Security or Defence wing) does not keep pirates on its roster: the
+	// doctrine's whole promise is that its guns commit no crime (roeAllows). Only a classified
+	// corporation answers; an NPC corporation has no doctrine row and leaves it to the pilot.
+	if b.CorpID != 0 {
+		if doc, _, known := m.corpDoctrineOf(ctx, b.CorpID); known && doc.Lawful() {
+			return 0, "employer's " + doc.String() + " doctrine forbids piracy"
+		}
+	}
 	// A cartel's raiding strength is capped like any wing (corpwing.go): predation
 	// sets the doctrine and industrial tags cut the wing to a quarter.
 	if ok, reason := m.wingAllows(ctx, b); !ok {

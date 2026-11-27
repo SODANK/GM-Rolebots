@@ -8,6 +8,7 @@ import (
 
 	evedb "gurimoon/db"
 	"gurimoon/destiny"
+	"gurimoon/modapi"
 	"gurimoon/seclaw"
 )
 
@@ -164,6 +165,9 @@ func concordLeaveSec(c *pvpCombatant) float64 {
 // band's delay ends dies; one that is gone keeps its flag (criminalcarry.go).
 // Skipped for a system a player has loaded: its grid has the real response.
 func (m *Mod) abstractConcord(ctx context.Context, offenders []*pvpCombatant, sysID int64, fightSec float64, gone bool) {
+	// The crime flags the pilot whatever comes next, in every band the ladder charged it in:
+	// lowsec has no CONCORD but its gate and station guns, and everybody, may shoot a criminal.
+	m.flagAbstractOffenders(offenders, sysID)
 	if len(offenders) == 0 || !concordOn() || m.systemProjected(sysID) {
 		return
 	}
@@ -190,6 +194,28 @@ func (m *Mod) abstractConcord(ctx context.Context, offenders []*pvpCombatant, sy
 			continue
 		}
 		m.concordKill(ctx, off, sysID, security)
+	}
+}
+
+// flagAbstractOffenders raises the global criminal flag on every live pilot an abstract charge
+// found guilty. The flag is carried (criminalcarry.go), so a projection born from the pilot
+// later enters space flagged, and a projection already standing in sysID gets it in the core's
+// table at once. Without it a bot that committed a crime off-grid embodied clean, and a pilot
+// who shot it was billed as the aggressor.
+func (m *Mod) flagAbstractOffenders(offenders []*pvpCombatant, sysID int64) {
+	now := clock.Unix()
+	enter := modapi.PvP().CriminalEntered
+	for _, off := range offenders {
+		if off == nil || off.CharID == 0 || (off.abstractCombatant != nil && off.EHP <= 0) {
+			continue
+		}
+		rememberCriminal(off.CharID, now)
+		if enter == nil {
+			continue
+		}
+		if eb := liveProjection(off.CharID); eb != nil && eb.ent != nil && eb.ss != nil && eb.systemID == sysID {
+			enter(eb.ent, eb.ss, now)
+		}
 	}
 }
 

@@ -132,8 +132,23 @@ func (m *Mod) droneEngage(eb *embodiedBot, l *combatLoadout, tgt *destiny.Entity
 		eb.droneTarget, eb.droneEngagedN = tgt.ID, len(ids)
 	}
 	eb.mu.Unlock()
-	if !same {
+	if same {
+		return
+	}
+	if !tgt.IsPlayer {
 		h.Engage(ids, eb.shipID, tgt.ID)
+		return
+	}
+	// Sending the flight at a pilot is the aggression, ahead of the first drone hit (the core
+	// flags a drone's shot only when it lands): a victim who fires back while the drones close is
+	// defending. A departing ship sends its drones at nobody (crimewatch.go).
+	if !eb.actOnPilot(func() {
+		m.notePilotAggression(eb, tgt)
+		h.Engage(ids, eb.shipID, tgt.ID)
+	}) {
+		eb.mu.Lock()
+		eb.droneTarget, eb.droneEngagedN = 0, 0
+		eb.mu.Unlock()
 	}
 }
 

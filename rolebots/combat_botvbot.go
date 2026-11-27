@@ -650,6 +650,12 @@ func (m *Mod) chargeAbstractKillers(ctx context.Context, victim *pvpCombatant, k
 		if k == nil || k.Dealt <= 0 {
 			continue
 		}
+		// The victim had aggressed this killer in an earlier pass (engagements.go): an answer, not a murder.
+		if victimHadEngaged(victim.CharID, k.CharID, k.CorpID) {
+			m.logBot(k.CharID, logInfo, "security",
+				"killing %s was lawful (%s)", victim.Name, seclaw.ExemptEngaged)
+			continue
+		}
 		applied, why := hit(nil, seclaw.KillFacts{
 			KillerCharID:     k.CharID,
 			KillerCorpID:     k.CorpID,
@@ -677,7 +683,22 @@ func (m *Mod) chargeAbstractKillers(ctx context.Context, victim *pvpCombatant, k
 // aggressors charged, which abstractConcord answers.
 // See docs/comment-notes-b02.md#abstract-aggression.
 func (m *Mod) chargeAbstractAggression(ctx context.Context, aggressors, victims []*pvpCombatant, sysID int64) []*pvpCombatant {
-	// Every exchange is a PvP act, lawful or not: crimewatch timers first.
+	// Every exchange is a PvP act, lawful or not: crimewatch timers first. A victim who had
+	// aggressed this shooter earlier (engagements.go) is answered lawfully; the ledger is read for
+	// that before this fight writes its own entries, which run the other way.
+	answering := map[[2]int64]bool{}
+	for _, a := range aggressors {
+		if a == nil || a.CharID == 0 || a.Dealt <= 0 {
+			continue
+		}
+		for _, v := range victims {
+			if v != nil && v.CharID != 0 && v.CharID != a.CharID && v.Taken > 0 {
+				if victimHadEngaged(v.CharID, a.CharID, a.CorpID) {
+					answering[[2]int64{a.CharID, v.CharID}] = true
+				}
+			}
+		}
+	}
 	for _, a := range aggressors {
 		if a == nil || a.CharID == 0 || a.Dealt <= 0 {
 			continue
@@ -685,6 +706,7 @@ func (m *Mod) chargeAbstractAggression(ctx context.Context, aggressors, victims 
 		for _, v := range victims {
 			if v != nil && v.CharID != 0 && v.CharID != a.CharID && v.Taken > 0 {
 				stampAbstractPvP(a.CharID, v.CharID)
+				noteEngagement(a.CharID, v.CharID, v.CorpID)
 			}
 		}
 	}
@@ -704,6 +726,11 @@ func (m *Mod) chargeAbstractAggression(ctx context.Context, aggressors, victims 
 		charged := false
 		for _, v := range victims {
 			if v == nil || v.CharID == 0 || v.CharID == a.CharID || v.Taken <= 0 {
+				continue
+			}
+			if answering[[2]int64{a.CharID, v.CharID}] {
+				m.logBot(a.CharID, logInfo, "security",
+					"opening fire on %s was lawful (%s)", v.Name, seclaw.ExemptEngaged)
 				continue
 			}
 			applied, why := hit(nil, seclaw.KillFacts{

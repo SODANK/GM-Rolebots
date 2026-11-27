@@ -159,6 +159,14 @@ func roeAllows(st Stance, doc Doctrine, band SecBand, targetCriminal, targetOutl
 	if band == BandPoliced {
 		return false, false, "policed space"
 	}
+	// A lawful wing (Security, Defence) commits no crime: in lowsec an unflagged pilot is
+	// protected by the gate guns and the security record whatever this pilot thinks of them, so
+	// a grudge, a corporate rivalry or a faction feud is fought only past the law, in nullsec.
+	// The flag, outlaw and war rungs above are its lawful targets here; being shot at is the
+	// aggressor path's business (hostilesOnGrid), not this table's.
+	if band == BandLow && doc.Lawful() {
+		return false, false, "would be a crime"
+	}
 
 	switch st {
 	case StanceHostile:
